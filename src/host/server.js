@@ -2,7 +2,7 @@
 // Слушает только 127.0.0.1 — наружу пойдём через relay (см. README).
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, readdirSync, openSync, mkdirSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -342,12 +342,20 @@ const handlers = {
   restart_server() {
     console.log('restart requested');
     broadcast({ type: 'server_restarting' });
+    // stdio копии — в файлы: молчаливая смерть наследника недиагностируема
+    const logDir = join(homedir(), '.remaude');
+    mkdirSync(logDir, { recursive: true });
+    const out = openSync(join(logDir, 'server.log'), 'a');
+    const err = openSync(join(logDir, 'server.err.log'), 'a');
     const child = spawn(process.execPath, [fileURLToPath(import.meta.url)], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', out, err],
       cwd: dirname(dirname(dirname(fileURLToPath(import.meta.url)))),
+      windowsHide: true,
     });
+    child.on('error', (e) => console.error('restart spawn failed:', e));
     child.unref();
+    console.log(`restart: spawned pid ${child.pid}`);
     setTimeout(() => process.exit(0), 300);
   },
 };
@@ -388,6 +396,9 @@ process.on('uncaughtException', (e) => console.error('uncaught:', e));
 process.on('unhandledRejection', (e) => console.error('unhandled rejection:', e));
 
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+// ws переизлучает ошибки httpServer на себя; без слушателя это роняет процесс
+// раньше, чем сработает наш listen-ретрай ниже (проверено experiments/listen-retry-min.mjs)
+wss.on('error', () => {});
 wss.on('connection', (ws) => {
   clients.add(ws);
   send(ws, stateSnapshot());
@@ -431,5 +442,5 @@ httpServer.on('error', (e) => {
   }
 });
 httpServer.listen(PORT, '127.0.0.1', () => {
-  console.log(`remaude host: http://localhost:${PORT}`);
+  console.log(`[${new Date().toISOString()}] remaude host: http://localhost:${PORT} (pid ${process.pid})`);
 });
