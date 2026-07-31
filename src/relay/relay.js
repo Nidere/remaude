@@ -109,6 +109,12 @@ function hasHosts(email) {
   return Object.values(state.hosts).some((h) => h.email === email);
 }
 
+/** A guest owns no hosts but still reaches someone else's machine. */
+function isGuestSomewhere(email) {
+  for (const links of hostLinks.values()) for (const link of links) if ((link.shareEmails ?? []).includes(email)) return true;
+  return false;
+}
+
 /**
  * The client's public IP. Caddy proxies to 127.0.0.1, so we trust X-Forwarded-For
  * only when the socket came from Caddy itself — otherwise the header can be forged.
@@ -116,8 +122,15 @@ function hasHosts(email) {
 function clientIp(req) {
   const socketIp = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
   if (socketIp === '127.0.0.1' || socketIp === '::1') {
-    const xff = (req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
-    if (xff) return xff.replace(/^::ffff:/, '');
+    // Caddy *appends* the real peer to whatever the client sent, so the last
+    // element is the trustworthy one; the first is attacker-controlled and was
+    // enough to fake "same network as the host" and skip device approval.
+    const chain = String(req.headers['x-forwarded-for'] ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const last = chain.at(-1);
+    if (last) return last.replace(/^::ffff:/, '');
   }
   return socketIp;
 }
@@ -146,8 +159,11 @@ function readPendingId(req) {
   return /(?:^|;\s*)rmd_device_pending=([^;]+)/.exec(req.headers.cookie ?? '')?.[1] ?? null;
 }
 
+// Session and device cookies are signed with the same key, so without a type
+// tag a stolen session cookie could be replayed as a device cookie — defeating
+// the very gate that exists to backstop a stolen session.
 function makeDeviceCookie(email) {
-  const payload = Buffer.from(JSON.stringify({ email, iat: Date.now() })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ typ: 'device', email, iat: Date.now() })).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
 
@@ -157,7 +173,8 @@ function readDevice(req) {
   const [payload, sig] = m[1].split('.');
   if (!payload || !sig || sign(payload) !== sig) return null;
   try {
-    return JSON.parse(Buffer.from(payload, 'base64url').toString()).email ?? null;
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return data.typ === 'device' ? (data.email ?? null) : null;
   } catch {
     return null;
   }
@@ -443,7 +460,12 @@ const httpServer = createServer(async (req, res) => {
     // is exactly the onboarding of a new user.
     // We trust the device if: the cookie is already there; the account still has no hosts (onboarding);
     // or it is behind the same NAT as the owner's host — that is, at home.
-    const deviceOk = readDevice(req) === email || !hasHosts(email) || sameNetworkAsHost(email, req);
+    // The onboarding exemption must not cover guests: they own no hosts, yet
+    // they reach someone else's machine — so "nothing to protect" is false.
+    const deviceOk =
+      readDevice(req) === email ||
+      (!hasHosts(email) && !isGuestSomewhere(email)) ||
+      sameNetworkAsHost(email, req);
     // bootstrap trust (an account without hosts) has to materialize into a cookie right away,
     // otherwise /ws, which checks the cookie strictly, will not let a fresh guest in
     const bootstrapCookie =

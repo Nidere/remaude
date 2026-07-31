@@ -30,6 +30,7 @@ import {
   searchSessionFile,
   slugFor,
   collectImages,
+  isSessionId,
 } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
 
@@ -132,6 +133,7 @@ function saveOpenChats() {
 
 /** The shared path for opening a saved session (open_session and the auto-restore at startup). */
 function openSavedSession(projectPath, sessionId, { permissionMode, title } = {}) {
+  if (!isSessionId(sessionId)) throw new Error('bad session id');
   for (const chat of agent.allChats()) {
     if (chat.sessionId === sessionId || chat.resumeId === sessionId) return chat;
   }
@@ -193,7 +195,8 @@ agent.on('chat_message', ({ chatId, msg }) => {
     sendChatMeta(chatId);
     // nobody has this chat on screen — worth buzzing the phone. Merely having a
     // tab open elsewhere must not silence it, or the push never fires at all.
-    if (![...clients].some((c) => c.watching === chatId)) {
+    // a guest reading the chat must not silence the owner's own phone
+    if (![...clients].some((c) => !c.guest && c.watching === chatId)) {
       let title = null;
       try {
         title = findChat(chatId).title;
@@ -877,8 +880,11 @@ const handlers = {
 
   /** The project's sessions saved on disk (including ones created in VS Code/the CLI). */
   list_sessions(ws, { projectPath }) {
+    const abs = resolve(projectPath);
     const live = {};
-    for (const chat of agent.allChats()) {
+    // only this project's live chats: the map used to name every session on the
+    // machine, which told a guest what else exists here
+    for (const chat of agent.projects.get(abs)?.chats.values() ?? []) {
       if (chat.sessionId) live[chat.sessionId] = chat.id;
       if (chat.resumeId) live[chat.resumeId] = chat.id;
     }
@@ -1289,6 +1295,23 @@ const httpServer = createServer(async (req, res) => {
     // or simply curl it — both land here
     if (url.pathname === '/connect') {
       const wantsHtml = (req.headers.accept ?? '').includes('text/html');
+      // A bare GET here was a one-click hijack: any page could fetch this URL
+      // and silently re-pair the machine to an attacker's relay, which then owns
+      // it. A browser now has to confirm, and the confirmation is a POST.
+      if (wantsHtml && req.method !== 'POST') {
+        const relay = url.searchParams.get('relay') ?? config.relay?.url ?? RELAY_DEFAULT_URL;
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(
+          `<!doctype html><meta charset="utf-8"><title>remaude · connect</title>
+<style>body{background:#14151a;color:#d8dae4;font:15px/1.6 system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.box{max-width:460px;text-align:center;padding:24px}h1{color:#7aa2f7;font-size:20px}b{color:#e0af68}
+button{background:#7aa2f7;color:#10141f;border:0;border-radius:8px;padding:11px 24px;font:inherit;font-weight:600;cursor:pointer;margin-top:14px}</style>
+<div class="box"><h1>connect this computer?</h1>
+<p>It will be linked to <b>${String(relay).replace(/[<>&"]/g, '')}</b>, and whoever controls that address will be able to open chats here.</p>
+<p>If you did not just ask for this, close the page.</p>
+<form method="post"><button type="submit">Connect</button></form></div>`
+        );
+        return;
+      }
       try {
         const { base, email } = await redeemInvite(url.searchParams.get('token'), url.searchParams.get('relay'));
         console.log(`paired with ${base} as ${email}`);
@@ -1322,7 +1345,30 @@ const httpServer = createServer(async (req, res) => {
 process.on('uncaughtException', (e) => console.error('uncaught:', e));
 process.on('unhandledRejection', (e) => console.error('unhandled rejection:', e));
 
-const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+/**
+ * Any page in the user's browser can open ws://127.0.0.1:7699 — browsers do not
+ * apply CORS to WebSockets, and a local socket that trusts everyone is owner
+ * rights for whatever site they happen to be reading. Only our own origins are
+ * allowed; requests without an Origin header (curl, the test scripts) are not
+ * browser-driven and stay allowed.
+ */
+function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    const { hostname, port } = new URL(origin);
+    const local = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+    return local && (port === String(PORT) || port === '');
+  } catch {
+    return false;
+  }
+}
+
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: '/ws',
+  verifyClient: ({ req }) => originAllowed(req),
+});
 // ws re-emits the httpServer's errors on itself; without a listener that kills the process
 // before our listen retry below can kick in (verified in experiments/listen-retry-min.mjs)
 wss.on('error', () => {});
@@ -1363,6 +1409,12 @@ function dispatch(ws, raw) {
       // a guest may start chats in a shared project, but never reach another one
       if (msg.projectPath && !guestProjectPaths(ws.guest).includes(resolve(msg.projectPath)))
         throw new Error('no access to this project');
+      // Arguments other than the two ids above decide privileges too. A guest
+      // asking for bypassPermissions would get a session that never prompts the
+      // owner — that is code execution on this machine, so pin the safe values.
+      if (msg.permissionMode) msg.permissionMode = 'default';
+      delete msg.model; // and no picking the expensive model on someone else's account
+      if (msg.scope === 'project' && !guestProjectPaths(ws.guest).length) msg.scope = 'chat';
     }
     // async handlers must deliver their errors to the client too
     Promise.resolve(handlers[msg.type]?.(ws, msg)).catch((e) =>

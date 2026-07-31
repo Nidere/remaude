@@ -202,8 +202,18 @@ export function collectImages(file, { limit = 500 } = {}) {
   return images.reverse();
 }
 
+/**
+ * A session id is a uuid and nothing else. Without this check a crafted id is a
+ * path: "../<other project>/<uuid>" would walk out of the project's folder and
+ * hand a guest transcripts they were never given.
+ */
+export function isSessionId(id) {
+  return typeof id === 'string' && /^[0-9a-fA-F-]{8,64}$/.test(id) && !id.includes('..');
+}
+
 /** Full path to a session's transcript, or null if it does not exist. */
 export function sessionFile(cwd, sessionId) {
+  if (!isSessionId(sessionId)) return null;
   const dir = sessionDir(cwd);
   if (!dir) return null;
   const file = join(dir, `${sessionId}.jsonl`);
@@ -249,7 +259,8 @@ export function mapEntry(entry, { defaultAuthor = null } = {}) {
  * to render.
  */
 export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
-  const file = sessionFile(cwd, sessionId);
+  const file = sessionFile(cwd, sessionId); // validates the id
+
   if (!file) return [];
   const messages = [];
   for (const line of readFileSync(file, 'utf-8').split('\n')) {
