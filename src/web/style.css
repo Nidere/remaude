@@ -644,6 +644,7 @@ body.guest .chat-actions { display: none !important; }
 #input {
   flex: 1;
   resize: none;
+  overflow-y: hidden; /* авторазмер сам растит высоту; скролл включаем на пределе */
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;

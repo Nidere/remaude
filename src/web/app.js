@@ -626,7 +626,7 @@ function sendMessage() {
   if (!content) return;
   send({ type: 'send', chatId: activeChatId, content });
   $('input').value = '';
-  $('input').style.height = 'auto';
+  autoGrowInput($('input'));
   attachments.length = 0;
   renderAttachments();
   const chat = chats.get(activeChatId);
@@ -705,9 +705,13 @@ $('input').addEventListener('keydown', (e) => {
     sendMessage();
   }
 });
+function autoGrowInput(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  el.style.overflowY = el.scrollHeight > 200 ? 'auto' : 'hidden';
+}
 $('input').addEventListener('input', function () {
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+  autoGrowInput(this);
 });
 
 // Любую вставленную картинку нормализуем в PNG (Windows-буфер может отдать bmp

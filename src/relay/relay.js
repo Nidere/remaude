@@ -97,6 +97,39 @@ function hasHosts(email) {
   return Object.values(state.hosts).some((h) => h.email === email);
 }
 
+/**
+ * Публичный IP клиента. Caddy проксирует на 127.0.0.1, поэтому X-Forwarded-For
+ * доверяем только когда сокет пришёл от него самого — иначе заголовок подделывается.
+ */
+function clientIp(req) {
+  const socketIp = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+  if (socketIp === '127.0.0.1' || socketIp === '::1') {
+    const xff = (req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
+    if (xff) return xff.replace(/^::ffff:/, '');
+  }
+  return socketIp;
+}
+
+/** Сравнение сетей: IPv4 — точное совпадение, IPv6 — префикс /64 (адрес у каждого свой). */
+function sameNetwork(a, b) {
+  if (!a || !b) return false;
+  // страховка: если XFF вдруг не проставлен, все выглядят как loopback — не доверяем никому
+  if (a === '127.0.0.1' || a === '::1' || b === '127.0.0.1' || b === '::1') return false;
+  if (a === b) return true;
+  if (a.includes(':') && b.includes(':')) {
+    const prefix = (ip) => ip.toLowerCase().split(':').slice(0, 4).join(':');
+    return prefix(a) === prefix(b);
+  }
+  return false;
+}
+
+/** Устройство сидит за тем же NAT, что и хост пользователя → дома. */
+function sameNetworkAsHost(email, req) {
+  const ip = clientIp(req);
+  for (const link of hostLinks.get(email) ?? []) if (sameNetwork(ip, link.ip)) return true;
+  return false;
+}
+
 function readPendingId(req) {
   return /(?:^|;\s*)rmd_device_pending=([^;]+)/.exec(req.headers.cookie ?? '')?.[1] ?? null;
 }
@@ -333,7 +366,9 @@ const httpServer = createServer(async (req, res) => {
     // -- доверенное устройство. Пока у аккаунта нет хостов, гейт не нужен
     // (нечего защищать) — первое устройство доверяется автоматически, это
     // и есть онбординг нового пользователя.
-    const deviceOk = readDevice(req) === email || !hasHosts(email);
+    // Доверяем устройству, если: кука уже есть; аккаунт ещё без хостов (онбординг);
+    // или оно за тем же NAT, что и хост владельца — то есть дома.
+    const deviceOk = readDevice(req) === email || !hasHosts(email) || sameNetworkAsHost(email, req);
     // бутстрап-доверие (аккаунт без хостов) должен сразу материализоваться в куку,
     // иначе /ws, который проверяет куку жёстко, не пустит свежего гостя
     const bootstrapCookie =
@@ -417,7 +452,7 @@ httpServer.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, BASE_URL);
   if (url.pathname === '/ws') {
     const email = readSession(req);
-    if (!email || readDevice(req) !== email) {
+    if (!email || (readDevice(req) !== email && !sameNetworkAsHost(email, req))) {
       socket.destroy();
       return;
     }
@@ -429,7 +464,7 @@ httpServer.on('upgrade', (req, socket, head) => {
       socket.destroy();
       return;
     }
-    wssHost.handleUpgrade(req, socket, head, (ws) => attachHost(ws, info));
+    wssHost.handleUpgrade(req, socket, head, (ws) => attachHost(ws, info, clientIp(req)));
   } else {
     socket.destroy();
   }
@@ -459,11 +494,11 @@ function attachBrowser(ws, email) {
   });
 }
 
-function attachHost(ws, info) {
-  const link = { ws, name: info.name, clients: new Map() };
+function attachHost(ws, info, ip) {
+  const link = { ws, name: info.name, ip, clients: new Map() };
   if (!hostLinks.has(info.email)) hostLinks.set(info.email, new Set());
   hostLinks.get(info.email).add(link);
-  console.log(`host online: ${info.name} (${info.email})`);
+  console.log(`host online: ${info.name} (${info.email}) from ${ip}`);
   ws.on('message', (raw) => {
     let msg;
     try {
