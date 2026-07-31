@@ -595,25 +595,10 @@ const handlers = {
    * A single "code from the website" field: if the host is not paired yet, this pairs the host;
    * if it is paired, this approves a new device (the same mechanism, seen from the other side).
    */
-  async pair_relay(ws, { code, url }) {
-    if (config.relay?.token) {
-      pendingDeviceApprovals.set(String(code).trim(), ws);
-      relayLink.approveDevice(code);
-      return;
-    }
-    const base = String(url ?? config.relay?.url ?? RELAY_DEFAULT_URL ?? '').replace(/\/$/, '');
-    if (!base) throw new Error('no relay address is set (specify it in the settings)');
-    const res = await fetch(base + '/pair', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code: String(code).trim(), name: hostname() }),
-    });
-    if (!res.ok) throw new Error('the relay did not accept the code (expired or mistyped)');
-    const { token } = await res.json();
-    config.relay = { url: base, token };
-    saveConfig(config);
-    startRelay();
-    handlers.get_settings(ws);
+  async pair_relay(ws, { code }) {
+    if (!config.relay?.token) throw new Error('this host is not paired yet — use the invite link from the relay UI');
+    pendingDeviceApprovals.set(String(code).trim(), ws);
+    relayLink.approveDevice(code);
   },
 
   set_settings(ws, { userName: newName, projectsRoot: newRoot }) {
@@ -670,8 +655,48 @@ function send(ws, obj) {
 
 // ---------- HTTP (static files) ----------
 
+/**
+ * Redeem the one-time token from the relay's invite link: the host learns which
+ * relay (and thereby which account) it belongs to, and keeps the token it gets
+ * back. This is the only moment identity crosses over to this machine, which is
+ * why the route lives on localhost only.
+ */
+async function redeemInvite(token, relayUrl) {
+  const base = String(relayUrl ?? config.relay?.url ?? RELAY_DEFAULT_URL ?? '').replace(/\/$/, '');
+  if (!base) throw new Error('the invite link carries no relay address');
+  const res = await fetch(base + '/pair', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: String(token).trim(), name: hostname() }),
+  });
+  if (!res.ok) throw new Error('the relay rejected this invite link (expired or already used)');
+  const { token: hostToken, email } = await res.json();
+  config.relay = { url: base, token: hostToken };
+  saveConfig(config);
+  startRelay();
+  broadcast({ type: 'relay_status', paired: true, connected: false });
+  return { base, email };
+}
+
 const httpServer = createServer(async (req, res) => {
   try {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+
+    // the invite link from the relay UI: open it in a browser on this machine
+    // or simply curl it — both land here
+    if (url.pathname === '/connect') {
+      const wantsHtml = (req.headers.accept ?? '').includes('text/html');
+      try {
+        const { base, email } = await redeemInvite(url.searchParams.get('token'), url.searchParams.get('relay'));
+        console.log(`paired with ${base} as ${email}`);
+        if (wantsHtml) res.writeHead(302, { location: '/' }).end();
+        else res.writeHead(200, { 'content-type': 'text/plain' }).end(`paired with ${base} as ${email}\n`);
+      } catch (e) {
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end(`${e.message}\n`);
+      }
+      return;
+    }
+
     const path = req.url === '/' ? '/index.html' : req.url.split('?')[0];
     const file = join(WEB_ROOT, path);
     if (!file.startsWith(WEB_ROOT) || !existsSync(file) || !statSync(file).isFile()) {

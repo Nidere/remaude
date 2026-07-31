@@ -12,9 +12,38 @@ const hasKeyboard = window.matchMedia('(hover: hover)').matches;
 
 let ws;
 let activeChatId = null;
-let cachedProjects = [];
-const chats = new Map(); // chatId -> {projectPath, status, feedEl, streamEl, streamText, chips:Map, subagents:Map, historyRequested}
+const chats = new Map(); // chatId -> {hostId, projectPath, status, feedEl, streamEl, streamText, chips:Map, subagents:Map, historyRequested}
 const attachments = []; // {mediaType, data(base64), url}
+
+// Several hosts are served over one socket: own ones plus other people's hosts
+// that shared chats with us. Everything from a host is tagged with its id, and
+// commands carry it back so they reach the right machine. A relay that predates
+// multiplexing sends no tag at all — then everything lives under LOCAL_HOST.
+const LOCAL_HOST = 'local';
+let knownHosts = []; // [{id, name, owner, own}] as reported by the relay
+const hostStates = new Map(); // hostId -> {projects, guest}
+const hostKey = (id) => id ?? LOCAL_HOST;
+
+/** Send a command to the host that owns this chat. */
+function sendTo(hostId, obj) {
+  send(hostId && hostId !== LOCAL_HOST ? { ...obj, _host: hostId } : obj);
+}
+
+function chatHostId(chatId) {
+  return chats.get(chatId)?.hostId ?? LOCAL_HOST;
+}
+
+/** The first host we own — that's where "add project" and settings apply. */
+function ownHostId() {
+  for (const [hostId, st] of hostStates) if (!st.guest) return hostId;
+  return LOCAL_HOST;
+}
+
+/** Is the active chat on someone else's host? Then the UI stays read-and-write only. */
+function activeIsGuest() {
+  const hostId = chatHostId(activeChatId);
+  return Boolean(hostStates.get(hostId)?.guest);
+}
 
 // ---------- WS ----------
 
@@ -47,10 +76,19 @@ function send(obj) {
 // ---------- incoming ----------
 
 const handlers = {
-  state({ projects, guest }) {
-    cachedProjects = projects;
-    document.body.classList.toggle('guest', Boolean(guest));
-    renderSidebar(projects);
+  hosts({ hosts }) {
+    knownHosts = hosts;
+    // hosts that went away take their chats with them
+    const alive = new Set(hosts.map((h) => h.id));
+    for (const id of [...hostStates.keys()]) if (!alive.has(id)) hostStates.delete(id);
+    renderSidebar();
+  },
+
+  state({ projects, guest, _host }) {
+    hostStates.set(hostKey(_host), { projects, guest: Boolean(guest) });
+    // guest mode is per host now: the UI is restricted only while the active
+    // chat belongs to someone else's host
+    renderSidebar();
     // after a page reload we return to the last open chat;
     // after a server restart the ids differ — look it up by session id
     if (!activeChatId) {
@@ -108,9 +146,9 @@ const handlers = {
     const allow = el('button', 'perm-allow', 'Allow');
     const deny = el('button', 'perm-deny', 'Deny');
     allow.onclick = () =>
-      send({ type: 'permission_response', requestId, result: { behavior: 'allow', updatedInput: input } });
+      sendTo(chatHostId(chatId), { type: 'permission_response', requestId, result: { behavior: 'allow', updatedInput: input } });
     deny.onclick = () =>
-      send({ type: 'permission_response', requestId, result: { behavior: 'deny', message: 'Denied by the user' } });
+      sendTo(chatHostId(chatId), { type: 'permission_response', requestId, result: { behavior: 'deny', message: 'Denied by the user' } });
     buttons.append(allow, deny);
     box.append(buttons);
     appendTo(chatId, box);
@@ -151,7 +189,7 @@ const handlers = {
     if (chatId === activeChatId) scrollToBottom(true);
   },
 
-  root_listing({ root, dirs, added, error }) {
+  root_listing({ root, dirs, added, error, _host }) {
     const addedSet = new Set(added.map((p) => p.toLowerCase()));
     const sep = root.includes('\\') ? '\\' : '/';
     openModal(
@@ -164,13 +202,13 @@ const handlers = {
               label: name,
               muted: isAdded,
               check: isAdded,
-              onclick: isAdded ? null : () => send({ type: 'add_from_root', name }),
+              onclick: isAdded ? null : () => sendTo(hostKey(_host), { type: 'add_from_root', name }),
             };
           })
     );
   },
 
-  sessions({ projectPath, sessions, live }) {
+  sessions({ projectPath, sessions, live, _host }) {
     openModal(
       `Past chats · ${shortPath(projectPath)}`,
       sessions.length
@@ -181,7 +219,7 @@ const handlers = {
             onclick: live[s.id]
               ? () => selectChat(live[s.id])
               : () =>
-                  send({
+                  sendTo(hostKey(_host), {
                     type: 'open_session',
                     projectPath,
                     sessionId: s.id,
@@ -264,7 +302,7 @@ function requestHistory(chatId) {
   const chat = getChat(chatId);
   if (chat.historyRequested) return;
   chat.historyRequested = true;
-  send({ type: 'history', chatId });
+  sendTo(chatHostId(chatId), { type: 'history', chatId });
 }
 
 function selectChat(chatId) {
@@ -292,6 +330,8 @@ function selectChat(chatId) {
   updateComposerButtons(chat.status);
   document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
   const cur = chats.get(chatId);
+  // host controls stay hidden while we are looking at someone else's chat
+  document.body.classList.toggle('guest', activeIsGuest());
   cur.unread = 0;
   updateChatItem(chatId);
   updateTabState();
@@ -476,36 +516,60 @@ function openModal(title, items) {
 
 // ---------- sidebar ----------
 
-function renderSidebar(projects) {
+function renderSidebar() {
   const root = $('projects');
   root.innerHTML = '';
-  for (const p of projects) {
+  // own hosts first, then other people's, each as its own section
+  const sections = [...hostStates.entries()].sort(
+    (a, b) => Number(a[1].guest) - Number(b[1].guest) || a[0].localeCompare(b[0])
+  );
+  const multi = sections.length > 1 || knownHosts.length > 1;
+  for (const [hostId, hostState] of sections) {
+    const meta = knownHosts.find((h) => h.id === hostId);
+    if (multi) {
+      // shared hosts are labelled by their owner's email, own ones by machine name
+      const label = hostState.guest ? (meta?.owner ?? 'shared') : (meta?.name ?? 'this computer');
+      root.append(el('div', `host-head${hostState.guest ? ' guest' : ''}`, label));
+    }
+    renderHostProjects(root, hostId, hostState);
+  }
+  renderAddHost(root);
+}
+
+function renderHostProjects(root, hostId, hostState) {
+  for (const p of hostState.projects) {
     const proj = el('div', 'project', '');
 
     const head = el('div', 'project-head', '');
     const name = el('span', 'project-name', p.path.split(/[\\/]/).filter(Boolean).pop());
     name.title = p.path;
-    const actions = el('span', 'project-actions', '');
-    const btnNew = el('button', '', '+');
-    btnNew.title = 'new chat';
-    btnNew.onclick = () => send({ type: 'create_chat', projectPath: p.path, permissionMode: $('permission-mode').value });
-    const btnOld = el('button', '', '⏳');
-    btnOld.title = 'past chats';
-    btnOld.onclick = () => send({ type: 'list_sessions', projectPath: p.path });
-    const btnClose = el('button', 'project-close', '✕');
-    btnClose.title = 'remove project from the sidebar (files and sessions stay)';
-    btnClose.onclick = () => {
-      if (confirm(`Remove “${shortPath(p.path)}” from the sidebar? Open chats will close; nothing is deleted on disk.`))
-        send({ type: 'close_project', path: p.path });
-    };
-    actions.append(btnNew, btnOld, btnClose);
-    head.append(name, actions);
     proj.append(head);
+    if (!hostState.guest) {
+      const actions = el('span', 'project-actions', '');
+      const btnNew = el('button', '', '+');
+      btnNew.title = 'new chat';
+      btnNew.onclick = () =>
+        sendTo(hostId, { type: 'create_chat', projectPath: p.path, permissionMode: $('permission-mode').value });
+      const btnOld = el('button', '', '⏳');
+      btnOld.title = 'past chats';
+      btnOld.onclick = () => sendTo(hostId, { type: 'list_sessions', projectPath: p.path });
+      const btnClose = el('button', 'project-close', '✕');
+      btnClose.title = 'remove project from the sidebar (files and sessions stay)';
+      btnClose.onclick = () => {
+        if (confirm(`Remove “${shortPath(p.path)}” from the sidebar? Open chats will close; nothing is deleted on disk.`))
+          sendTo(hostId, { type: 'close_project', path: p.path });
+      };
+      actions.append(btnNew, btnOld, btnClose);
+      head.append(name, actions);
+    } else {
+      head.append(name);
+    }
 
     const filter = $('search').value.trim().toLowerCase();
     let visibleChats = 0;
     for (const c of p.chats) {
       const chat = getChat(c.id, p.path);
+      chat.hostId = hostId;
       chat.status = c.status;
       chat.title = c.title;
       chat.sessionId = c.sessionId;
@@ -526,23 +590,25 @@ function renderSidebar(projects) {
         item.append(el('span', 'unread-badge', String(chat.unread)));
       }
 
-      const actions = el('span', 'chat-actions', '');
-      const btnRename = el('button', '', '✏');
-      btnRename.title = 'rename';
-      btnRename.onclick = (e) => {
-        e.stopPropagation();
-        const name = prompt('Chat name:', c.title ?? '');
-        if (name?.trim()) send({ type: 'rename_chat', chatId: c.id, title: name.trim() });
-      };
-      const btnHide = el('button', '', '✕');
-      btnHide.title = 'close chat (the session stays on disk)';
-      btnHide.onclick = (e) => {
-        e.stopPropagation();
-        if (confirm('Close this chat? The session stays — reopen it via “past chats”.'))
-          send({ type: 'hide_chat', chatId: c.id });
-      };
-      actions.append(btnRename, btnHide);
-      item.append(actions);
+      if (!hostState.guest) {
+        const actions = el('span', 'chat-actions', '');
+        const btnRename = el('button', '', '✏');
+        btnRename.title = 'rename';
+        btnRename.onclick = (e) => {
+          e.stopPropagation();
+          const name = prompt('Chat name:', c.title ?? '');
+          if (name?.trim()) sendTo(hostId, { type: 'rename_chat', chatId: c.id, title: name.trim() });
+        };
+        const btnHide = el('button', '', '✕');
+        btnHide.title = 'close chat (the session stays on disk)';
+        btnHide.onclick = (e) => {
+          e.stopPropagation();
+          if (confirm('Close this chat? The session stays — reopen it via “past chats”.'))
+            sendTo(hostId, { type: 'hide_chat', chatId: c.id });
+        };
+        actions.append(btnRename, btnHide);
+        item.append(actions);
+      }
 
       if (c.id === activeChatId) item.classList.add('active');
       item.onclick = () => selectChat(c.id);
@@ -551,6 +617,50 @@ function renderSidebar(projects) {
     if (filter && !visibleChats && !p.path.toLowerCase().includes(filter)) continue;
     root.append(proj);
   }
+}
+
+/** "Add host": the relay mints a one-time invite link to open (or curl) on that machine. */
+function renderAddHost(root) {
+  const btn = el('button', 'add-host', '＋ add host');
+  btn.title = 'connect another computer to this account';
+  btn.onclick = async () => {
+    try {
+      const res = await fetch('/api/host-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      if (!res.ok) throw new Error('the relay declined to issue an invite link');
+      const { url, expiresInMinutes } = await res.json();
+      showInvite(url, expiresInMinutes);
+    } catch (e) {
+      alert(`${e.message}. Adding hosts works through the relay, not on localhost.`);
+    }
+  };
+  root.append(btn);
+}
+
+function showInvite(url, minutes) {
+  $('picker-title').textContent = 'Connect a new host';
+  const list = $('picker-list');
+  list.innerHTML = '';
+  list.append(
+    el(
+      'div',
+      'invite-hint',
+      `On the computer you want to connect, open this link in a browser — or run it through curl in a terminal. It works once and expires in ${minutes} minutes.`
+    )
+  );
+  const box = el('div', 'invite-url', url);
+  list.append(box);
+  const copy = el('button', 'invite-copy', 'Copy link');
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      copy.textContent = 'Copied ✓';
+    } catch {
+      // clipboard may be blocked — selecting the text is the fallback
+      getSelection().selectAllChildren(box);
+    }
+  };
+  list.append(copy);
+  $('picker').hidden = false;
 }
 
 function updateChatItem(chatId) {
@@ -636,7 +746,7 @@ function sendMessage() {
   if (!activeChatId) return;
   const content = currentContent();
   if (!content) return;
-  send({ type: 'send', chatId: activeChatId, content });
+  sendTo(chatHostId(activeChatId), { type: 'send', chatId: activeChatId, content });
   $('input').value = '';
   autoGrowInput($('input'));
   attachments.length = 0;
@@ -709,7 +819,7 @@ function setModeSelect(mode) {
 }
 
 $('send-btn').onclick = sendMessage;
-$('stop-btn').onclick = () => activeChatId && send({ type: 'interrupt', chatId: activeChatId });
+$('stop-btn').onclick = () => activeChatId && sendTo(chatHostId(activeChatId), { type: 'interrupt', chatId: activeChatId });
 
 $('input').addEventListener('keydown', (e) => {
   if (hasKeyboard && e.key === 'Enter' && !e.shiftKey) {
@@ -761,7 +871,7 @@ $('input').addEventListener('paste', (e) => {
   }
 });
 
-$('pick-project').onclick = () => send({ type: 'list_root' });
+$('pick-project').onclick = () => sendTo(ownHostId(), { type: 'list_root' });
 $('picker-cancel').onclick = () => ($('picker').hidden = true);
 $('picker').addEventListener('click', (e) => {
   if (e.target.id === 'picker') $('picker').hidden = true;
@@ -771,13 +881,13 @@ $('add-project-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const path = $('add-project-path').value.trim();
   if (!path) return;
-  send({ type: 'add_project', path });
+  sendTo(ownHostId(), { type: 'add_project', path });
   $('add-project-path').value = '';
 });
 
 $('permission-mode').addEventListener('change', function () {
   setModeSelect(this.value);
-  if (activeChatId) send({ type: 'set_permission_mode', chatId: activeChatId, mode: this.value });
+  if (activeChatId) sendTo(chatHostId(activeChatId), { type: 'set_permission_mode', chatId: activeChatId, mode: this.value });
 });
 
 // lightbox: clicking any image in the feed opens a full-screen view
@@ -797,8 +907,8 @@ $('share-btn').onclick = () => {
   if (!activeChatId) return;
   const email = prompt('Who gets access (email)? Empty string revokes access for everyone:');
   if (email === null) return;
-  if (email.trim()) send({ type: 'share_chat', chatId: activeChatId, email: email.trim() });
-  else send({ type: 'unshare_chat', chatId: activeChatId });
+  if (email.trim()) sendTo(chatHostId(activeChatId), { type: 'share_chat', chatId: activeChatId, email: email.trim() });
+  else sendTo(chatHostId(activeChatId), { type: 'unshare_chat', chatId: activeChatId });
 };
 
 // mobile menu
@@ -817,10 +927,10 @@ $('scroll-down').onclick = () => scrollToBottom(true);
 
 // model and effort of the active chat
 $('model-select').addEventListener('change', function () {
-  if (activeChatId && this.value) send({ type: 'set_model', chatId: activeChatId, model: this.value });
+  if (activeChatId && this.value) sendTo(chatHostId(activeChatId), { type: 'set_model', chatId: activeChatId, model: this.value });
 });
 $('effort-select').addEventListener('change', function () {
-  if (activeChatId && this.value) send({ type: 'set_effort', chatId: activeChatId, effort: this.value });
+  if (activeChatId && this.value) sendTo(chatHostId(activeChatId), { type: 'set_effort', chatId: activeChatId, effort: this.value });
 });
 
 // settings
@@ -838,18 +948,16 @@ function renderClaudeAuth(status) {
   }
 }
 
-$('claude-login-btn').onclick = () => send({ type: 'claude_login_start' });
+$('claude-login-btn').onclick = () => sendTo(ownHostId(), { type: 'claude_login_start' });
 $('claude-login-send').onclick = () => {
   const code = $('claude-login-code').value.trim();
-  if (code) send({ type: 'claude_login_code', code });
+  if (code) sendTo(ownHostId(), { type: 'claude_login_code', code });
 };
 
 function renderRelayStatus(relay) {
   const node = $('relay-status');
   if (!node) return;
-  $('set-relay-url').value = relay?.url ?? '';
-  $('set-relay-url').parentElement.hidden = Boolean(relay?.paired); // once paired there is no reason to change the address
-  if (!relay?.paired) node.textContent = 'relay: not paired';
+  if (!relay?.paired) node.textContent = 'relay: not paired — connect this host from the relay UI';
   else node.textContent = relay.connected ? 'relay: connected ✓' : 'relay: paired, no connection…';
   node.className = relay?.connected ? 'ok' : '';
 }
@@ -857,11 +965,11 @@ function renderRelayStatus(relay) {
 $('pair-btn').onclick = () => {
   const code = $('set-pair-code').value.trim();
   if (!code) return;
-  send({ type: 'pair_relay', code, url: $('set-relay-url').value.trim() || undefined });
+  sendTo(ownHostId(), { type: 'pair_relay', code });
   $('set-pair-code').value = '';
 };
 
-$('settings-btn').onclick = () => send({ type: 'get_settings' });
+$('settings-btn').onclick = () => sendTo(ownHostId(), { type: 'get_settings' });
 $('settings-cancel').onclick = () => ($('settings').hidden = true);
 $('settings').addEventListener('click', (e) => {
   if (e.target.id === 'settings') $('settings').hidden = true;
@@ -876,7 +984,7 @@ $('settings-save').onclick = () => {
 };
 
 // chat search — filtering over the cached last state
-$('search').addEventListener('input', () => renderSidebar(cachedProjects));
+$('search').addEventListener('input', () => renderSidebar());
 
 // Safari ignores user-scalable=no in a tab — suppress pinch manually.
 // Images are viewed in the lightbox anyway, so zoom is not needed.
@@ -911,7 +1019,7 @@ $('notify-btn').onclick = async function () {
 
 $('restart-server').onclick = () => {
   if (confirm('Restart the server? Live chats will close (resumable via “past chats”).')) {
-    send({ type: 'restart_server' });
+    sendTo(ownHostId(), { type: 'restart_server' });
     $('settings').hidden = true;
   }
 };

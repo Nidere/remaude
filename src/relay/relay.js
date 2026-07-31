@@ -48,6 +48,14 @@ if (!state.vapid) {
   saveState();
 }
 if (!state.pushSubs) state.pushSubs = {}; // email -> [subscription]
+// hosts paired before multiplexing have no id — give them one, the UI groups by it
+let hostsMigrated = false;
+for (const entry of Object.values(state.hosts ?? {}))
+  if (!entry.id) {
+    entry.id = randomUUID();
+    hostsMigrated = true;
+  }
+if (hostsMigrated) saveState();
 webpush.setVapidDetails(
   `mailto:${process.env.CONTACT_EMAIL ?? 'admin@example.com'}`,
   state.vapid.publicKey,
@@ -174,22 +182,6 @@ const hostLinks = new Map(); // email -> Set<link>; link = {ws, name, clients: M
 const pairCodes = new Map(); // code -> {email, exp}
 const oauthStates = new Map(); // state -> exp
 
-function firstHostLink(email) {
-  for (const link of hostLinks.get(email) ?? []) return link;
-  return null;
-}
-
-/** Someone else's host link that has chats shared with this email: {link, sessions}. */
-function sharedLinkFor(email) {
-  for (const [ownerEmail, links] of hostLinks) {
-    if (ownerEmail === email) continue;
-    for (const link of links) {
-      const sessions = (link.shares ?? []).filter((s) => s.emails?.includes(email)).map((s) => s.sessionId);
-      if (sessions.length) return { link, sessions };
-    }
-  }
-  return null;
-}
 
 // ---------- pages ----------
 
@@ -201,11 +193,6 @@ code{font-size:32px;letter-spacing:6px;background:#242732;padding:12px 20px;bord
 const loginPage = () => `<!doctype html><meta charset="utf-8"><title>remaude</title>${PAGE_STYLE}
 <div class="box"><h1>remaude</h1><p>Sign-in for insiders only.</p><a class="btn" href="/auth/google">Sign in with Google</a></div>`;
 
-const pairPage = (code) => `<!doctype html><meta charset="utf-8"><title>remaude · pairing</title>${PAGE_STYLE}
-<div class="box"><h1>host pairing</h1>
-<p>On the machine with Claude Code open the local remaude (localhost:7699) → ⚙ settings → “Relay pairing” and enter the code:</p>
-<code>${code}</code>
-<p class="dim">The code lives for 10 minutes. Once paired, refresh this page.</p></div>`;
 
 const deniedPage = (email) => `<!doctype html><meta charset="utf-8"><title>remaude</title>${PAGE_STYLE}
 <div class="box"><h1>not letting you in</h1><p>${email} is not on the list. If this is a mistake — ask the owner to add you.</p></div>`;
@@ -295,7 +282,7 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
-    // -- host pairing (no session: the host sends a one-time code) --
+    // -- host pairing: the host redeems the one-time token from the invite link --
     if (url.pathname === '/pair' && req.method === 'POST') {
       const { code, name } = JSON.parse(await readBody(req));
       const entry = pairCodes.get(String(code));
@@ -305,7 +292,12 @@ const httpServer = createServer(async (req, res) => {
       }
       pairCodes.delete(String(code));
       const token = randomBytes(32).toString('hex');
-      state.hosts[token] = { email: entry.email, name: String(name ?? 'host').slice(0, 60), createdAt: new Date().toISOString() };
+      state.hosts[token] = {
+        id: randomUUID(),
+        email: entry.email,
+        name: String(name ?? 'host').slice(0, 60),
+        createdAt: new Date().toISOString(),
+      };
       saveState();
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ token, email: entry.email }));
       return;
@@ -336,6 +328,25 @@ const httpServer = createServer(async (req, res) => {
         saveState();
       }
       res.writeHead(200).end('{}');
+      return;
+    }
+
+    // -- invite link for a new host: open it (or curl it) on the host machine --
+    if (url.pathname === '/api/host-link' && req.method === 'POST') {
+      if (!email || readDevice(req) !== email) {
+        res.writeHead(401).end();
+        return;
+      }
+      const token = randomBytes(24).toString('base64url');
+      pairCodes.set(token, { email, exp: Date.now() + 600e3 });
+      const { port } = JSON.parse((await readBody(req)) || '{}');
+      const hostPort = Number(port) || 7699;
+      res.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          url: `http://localhost:${hostPort}/connect?token=${token}&relay=${encodeURIComponent(BASE_URL)}`,
+          expiresInMinutes: 10,
+        })
+      );
       return;
     }
 
@@ -425,21 +436,9 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
+    // The UI is served to every authorised user, with or without hosts: adding
+    // the first host happens inside it, through an invite link.
     if (url.pathname === '/') {
-      if (!firstHostLink(email) && sharedLinkFor(email)) {
-        // no host of their own, but there are shared chats — we let them into the UI as a guest
-        res
-          .writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache', ...bootstrapCookie })
-          .end(await readFile(join(WEB_ROOT, 'index.html')));
-        return;
-      }
-      if (!firstHostLink(email)) {
-        // the host is not connected: we show the pairing code
-        const code = String(randomInt(100000, 999999));
-        pairCodes.set(code, { email, exp: Date.now() + 600e3 });
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...bootstrapCookie }).end(pairPage(code));
-        return;
-      }
       res
         .writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache', ...bootstrapCookie })
         .end(await readFile(join(WEB_ROOT, 'index.html')));
@@ -482,35 +481,115 @@ httpServer.on('upgrade', (req, socket, head) => {
   }
 });
 
-function attachBrowser(ws, email) {
-  let link = firstHostLink(email);
-  let guest = null;
-  if (!link) {
-    const shared = sharedLinkFor(email);
-    if (shared) {
-      link = shared.link;
-      guest = { email, sessions: shared.sessions };
+/**
+ * Every host this account may talk to: its own ones plus other people's hosts
+ * that shared chats with it. A browser is attached to all of them at once, so
+ * own and shared chats live side by side in one UI.
+ */
+function linksFor(email) {
+  const result = [];
+  for (const link of hostLinks.get(email) ?? []) result.push({ link, guest: null });
+  for (const [ownerEmail, links] of hostLinks) {
+    if (ownerEmail === email) continue;
+    for (const link of links) {
+      const sessions = (link.shares ?? []).filter((s) => s.emails?.includes(email)).map((s) => s.sessionId);
+      if (sessions.length) result.push({ link, guest: { email, sessions } });
     }
   }
-  if (!link) {
-    ws.close(4503, 'host offline');
-    return;
+  return result;
+}
+
+const browsers = new Set(); // live browser sockets, for host list updates
+
+function hostsSnapshot(email) {
+  return {
+    type: 'hosts',
+    hosts: linksFor(email).map(({ link, guest }) => ({
+      id: link.hostId,
+      name: link.name,
+      owner: link.ownerEmail,
+      own: !guest,
+    })),
+  };
+}
+
+/** Open a tunnel slot on every host currently available to this browser. */
+function syncSlots(ws) {
+  const wanted = new Map(linksFor(ws.email).map(({ link, guest }) => [link.hostId, { link, guest }]));
+
+  for (const [hostId, slot] of ws.slots) {
+    if (wanted.has(hostId)) continue; // still available
+    slot.link.clients.delete(slot.id);
+    if (slot.link.ws.readyState === slot.link.ws.OPEN)
+      slot.link.ws.send(JSON.stringify({ t: 'close', id: slot.id }));
+    ws.slots.delete(hostId);
   }
-  const id = randomUUID();
-  link.clients.set(id, ws);
-  link.ws.send(JSON.stringify({ t: 'open', id, guest }));
-  ws.on('message', (raw) => link.ws.send(JSON.stringify({ t: 'msg', id, data: raw.toString() })));
-  ws.on('close', () => {
-    link.clients.delete(id);
-    if (link.ws.readyState === link.ws.OPEN) link.ws.send(JSON.stringify({ t: 'close', id }));
+
+  for (const [hostId, { link, guest }] of wanted) {
+    if (ws.slots.has(hostId)) continue;
+    const id = randomUUID();
+    link.clients.set(id, ws);
+    ws.slots.set(hostId, { link, id });
+    link.ws.send(JSON.stringify({ t: 'open', id, guest }));
+  }
+
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(hostsSnapshot(ws.email)));
+}
+
+function attachBrowser(ws, email) {
+  ws.email = email;
+  ws.slots = new Map(); // hostId -> {link, id}
+  browsers.add(ws);
+  syncSlots(ws);
+
+  ws.on('message', (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    // _host routes the command to the host that owns the chat; without it we
+    // fall back to the first slot, which keeps single-host clients working
+    const slot = msg._host ? ws.slots.get(msg._host) : ws.slots.values().next().value;
+    if (!slot) return;
+    delete msg._host;
+    slot.link.ws.send(JSON.stringify({ t: 'msg', id: slot.id, data: JSON.stringify(msg) }));
   });
+
+  ws.on('close', () => {
+    for (const slot of ws.slots.values()) {
+      slot.link.clients.delete(slot.id);
+      if (slot.link.ws.readyState === slot.link.ws.OPEN)
+        slot.link.ws.send(JSON.stringify({ t: 'close', id: slot.id }));
+    }
+    browsers.delete(ws);
+  });
+  ws.on('error', () => {});
+}
+
+/** A host came or went: re-attach every browser that may see it. */
+function refreshBrowsers() {
+  for (const ws of browsers) if (ws.readyState === ws.OPEN) syncSlots(ws);
+}
+
+/** Tag a host message with its origin, so the browser can group chats by host. */
+function tagged(data, hostId) {
+  try {
+    const obj = JSON.parse(data);
+    obj._host = hostId;
+    return JSON.stringify(obj);
+  } catch {
+    return data;
+  }
 }
 
 function attachHost(ws, info, ip) {
-  const link = { ws, name: info.name, ip, clients: new Map() };
+  const link = { ws, name: info.name, ip, hostId: info.id, ownerEmail: info.email, clients: new Map() };
   if (!hostLinks.has(info.email)) hostLinks.set(info.email, new Set());
   hostLinks.get(info.email).add(link);
   console.log(`host online: ${info.name} (${info.email}) from ${ip}`);
+  refreshBrowsers();
   ws.on('message', (raw) => {
     let msg;
     try {
@@ -520,13 +599,15 @@ function attachHost(ws, info, ip) {
     }
     if (msg.t === 'msg') {
       const client = link.clients.get(msg.id);
-      if (client?.readyState === client?.OPEN) client.send(msg.data);
+      if (client?.readyState === client?.OPEN) client.send(tagged(msg.data, link.hostId));
     } else if (msg.t === 'cast') {
-      for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(msg.data);
-    } else if (msg.t === 'push') {
-      pushToUser(info.email, { url: BASE_URL, ...msg.payload });
+      const data = tagged(msg.data, link.hostId);
+      for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(data);
     } else if (msg.t === 'shares') {
       link.shares = Array.isArray(msg.shares) ? msg.shares : [];
+      refreshBrowsers(); // a new share may open a slot for the guest right away
+    } else if (msg.t === 'push') {
+      pushToUser(info.email, { url: BASE_URL, ...msg.payload });
     } else if (msg.t === 'approve_device') {
       // a code from an untrusted device entered on a trusted one → we approve it
       const code = String(msg.code ?? '').trim();
@@ -541,8 +622,10 @@ function attachHost(ws, info, ip) {
   });
   ws.on('close', () => {
     hostLinks.get(info.email)?.delete(link);
-    for (const client of link.clients.values()) client.close(4504, 'host disconnected');
+    // the browser stays connected: it simply loses this host's slot and chats
+    for (const client of link.clients.values()) client.slots?.delete(link.hostId);
     console.log(`host offline: ${info.name} (${info.email})`);
+    refreshBrowsers();
   });
   ws.on('error', () => {});
 }
