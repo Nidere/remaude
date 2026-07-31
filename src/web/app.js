@@ -360,7 +360,7 @@ function renderSdkMessage(chatId, msg) {
 
   if (msg.type === 'result') {
     dropStream(chat);
-    const meta = el('div', 'msg-meta', `${fmtTime(msg.timestamp)} · ${(msg.duration_ms / 1000).toFixed(1)}s`);
+    const meta = el('div', 'msg-meta', `${(msg.duration_ms / 1000).toFixed(1)}s`);
     if (msg.total_cost_usd != null)
       meta.title = `расчётный эквивалент API: $${msg.total_cost_usd.toFixed(2)} — при подписке не списывается, реальный расход виден в виджете лимитов`;
     chat.feedEl.append(meta);
