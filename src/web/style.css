@@ -404,6 +404,16 @@ body.guest .chat-actions { display: none !important; }
 }
 #notify-btn:hover { border-color: var(--accent); color: var(--text); }
 
+#notify-status:empty { display: none; }
+#notify-status {
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 6px 2px 0;
+  color: var(--dim);
+}
+#notify-status.ok { color: var(--green); }
+#notify-status.warn { color: var(--yellow); }
+
 #restart-server {
   display: block;
   width: 100%;

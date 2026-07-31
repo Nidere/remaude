@@ -1192,25 +1192,42 @@ function reportFocus() {
 document.addEventListener('visibilitychange', reportFocus);
 
 // push notifications — relay only (localhost has no subscription backend)
+function notifyStatus(text, ok = false) {
+  const node = $('notify-status');
+  node.textContent = text;
+  node.className = ok ? 'ok' : text ? 'warn' : '';
+}
+
 $('notify-btn').onclick = async function () {
   try {
+    notifyStatus('');
     const keyRes = await fetch('/api/push/key');
-    if (!keyRes.ok) throw new Error('notifications work only via relay (not on localhost)');
+    if (!keyRes.ok) throw new Error('notifications only work through the relay, not on localhost');
     const { publicKey } = await keyRes.json();
-    if ((await Notification.requestPermission()) !== 'granted') throw new Error('notification permission was not granted');
+
+    // A blocked site never sees a prompt again: requestPermission returns
+    // "denied" instantly, so say where to undo it instead of blaming the user.
+    if (Notification.permission === 'denied')
+      throw new Error('notifications are blocked for this site — allow them in the browser’s site settings (padlock icon in the address bar), then press again');
+    if (Notification.permission !== 'granted' && (await Notification.requestPermission()) !== 'granted')
+      throw new Error('permission dismissed — press again and choose “Allow”');
+
     const reg = await navigator.serviceWorker.ready;
     const raw = atob(publicKey.replace(/-/g, '+').replace(/_/g, '/'));
     const appKey = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+    const sub =
+      (await reg.pushManager.getSubscription()) ??
+      (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey }));
     const saveRes = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(sub),
     });
-    if (!saveRes.ok) throw new Error('could not save the subscription');
+    if (!saveRes.ok) throw new Error('the relay did not accept the subscription');
     this.textContent = '🔔 Notifications enabled ✓';
+    notifyStatus('this device will get notifications', true);
   } catch (e) {
-    alert(e.message);
+    notifyStatus(e.message);
   }
 };
 
