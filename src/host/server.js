@@ -3,7 +3,7 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -42,6 +42,10 @@ async function saveConfig(config) {
 // ---------- состояние ----------
 
 const config = loadConfig();
+
+// Имя автора сообщений (задел под групповые чаты): userName в host.json,
+// по умолчанию — имя пользователя ОС.
+const userName = config.userName ?? userInfo().username;
 
 // Корень проектов: настраивается в ~/.remaude/host.json (projectsRoot),
 // по умолчанию — Documents\Projects, если есть, иначе домашняя папка.
@@ -229,7 +233,13 @@ const handlers = {
         broadcast(stateSnapshot());
       }
     }
-    const userMsg = { type: 'user', parent_tool_use_id: null, message: { role: 'user', content } };
+    const userMsg = {
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content },
+      timestamp: new Date().toISOString(),
+      author: userName,
+    };
     pushHistory(chatId, userMsg);
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
   },

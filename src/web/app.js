@@ -260,6 +260,7 @@ function renderSdkMessage(chatId, msg) {
       if (block.type === 'text' && block.text.trim()) {
         const node = el('div', 'msg msg-assistant md-body', '');
         node.innerHTML = mdToHtml(block.text);
+        node.title = msg.timestamp ? new Date(msg.timestamp).toLocaleString() : new Date().toLocaleString();
         const copyBtn = el('button', 'copy-btn', '⧉');
         copyBtn.title = 'скопировать как markdown';
         const source = block.text;
@@ -289,6 +290,7 @@ function renderSdkMessage(chatId, msg) {
     }
     // обычное сообщение пользователя
     const bubble = el('div', 'msg msg-user', '');
+    if (msg.author) bubble.append(el('div', 'msg-author', msg.author));
     if (typeof content === 'string') bubble.textContent = content;
     else
       for (const block of content ?? []) {
@@ -299,6 +301,7 @@ function renderSdkMessage(chatId, msg) {
           bubble.append(img);
         }
       }
+    bubble.append(el('span', 'msg-time', fmtTime(msg.timestamp)));
     chat.feedEl.append(bubble);
     scrollToBottom();
     return;
@@ -306,7 +309,7 @@ function renderSdkMessage(chatId, msg) {
 
   if (msg.type === 'result') {
     dropStream(chat);
-    const meta = el('div', 'msg-meta', `${(msg.duration_ms / 1000).toFixed(1)}s`);
+    const meta = el('div', 'msg-meta', `${fmtTime(msg.timestamp)} · ${(msg.duration_ms / 1000).toFixed(1)}s`);
     if (msg.total_cost_usd != null)
       meta.title = `расчётный эквивалент API: $${msg.total_cost_usd.toFixed(2)} — при подписке не списывается, реальный расход виден в виджете лимитов`;
     chat.feedEl.append(meta);
@@ -534,6 +537,11 @@ function appendTo(chatId, node) {
 
 function shortPath(p) {
   return p.split(/[\\/]/).filter(Boolean).slice(-2).join('/');
+}
+
+function fmtTime(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function scrollToBottom(force = false) {

@@ -97,6 +97,7 @@ export function loadHistory(cwd, sessionId) {
       type: entry.type,
       message: entry.message,
       parent_tool_use_id: entry.isSidechain ? (entry.parentToolUseId ?? 'past-sidechain') : null,
+      timestamp: entry.timestamp ?? null,
     });
   }
   return messages;
