@@ -866,15 +866,29 @@ const handlers = {
     send(ws, { type: 'share_result', chatId, emails });
   },
 
-  unshare_chat(ws, { chatId }) {
+  /** Who this chat is shared with right now — for the share dialog. */
+  list_shares(ws, { chatId }) {
+    const chat = findChat(chatId);
+    const sid = chat.sessionId ?? chat.resumeId;
+    send(ws, { type: 'share_result', chatId, emails: (sid && config.shares?.[sid]) ?? [], sessionId: sid ?? null });
+  },
+
+  /** Revoke one guest, or everyone when no email is given. */
+  unshare_chat(ws, { chatId, email }) {
     const chat = findChat(chatId);
     const sid = chat.sessionId ?? chat.resumeId;
     if (sid && config.shares?.[sid]) {
-      delete config.shares[sid];
+      if (email) {
+        const clean = String(email).trim().toLowerCase();
+        config.shares[sid] = config.shares[sid].filter((e) => e !== clean);
+        if (!config.shares[sid].length) delete config.shares[sid];
+      } else {
+        delete config.shares[sid];
+      }
       saveConfig(config);
       announceShares();
     }
-    send(ws, { type: 'share_result', chatId, emails: [] });
+    send(ws, { type: 'share_result', chatId, emails: (sid && config.shares?.[sid]) ?? [] });
   },
 
   /**

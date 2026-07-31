@@ -391,7 +391,8 @@ const handlers = {
   },
 
   share_result({ chatId, emails }) {
-    alert(emails.length ? `Chat access: ${emails.join(', ')}` : 'Access revoked for everyone');
+    if (chatId !== activeChatId) return;
+    renderShares(emails);
   },
 
   server_restarting() {
@@ -1450,13 +1451,45 @@ document.addEventListener('keydown', (e) => {
 });
 
 // sharing the active chat
+// ---------- sharing ----------
+
+function renderShares(emails) {
+  const list = $('share-list');
+  list.innerHTML = '';
+  if (!emails.length) {
+    list.append(el('div', 'share-empty', 'not shared with anyone yet'));
+    return;
+  }
+  for (const email of emails) {
+    const row = el('div', 'share-row', '');
+    row.append(el('span', 'share-avatar', email[0].toUpperCase()));
+    row.append(el('span', 'share-email', email));
+    const drop = el('button', 'share-drop', '✕');
+    drop.title = 'revoke access';
+    drop.onclick = () => sendTo(chatHostId(activeChatId), { type: 'unshare_chat', chatId: activeChatId, email });
+    row.append(drop);
+    list.append(row);
+  }
+}
+
 $('share-btn').onclick = () => {
   if (!activeChatId) return;
-  const email = prompt('Who gets access (email)? Empty string revokes access for everyone:');
-  if (email === null) return;
-  if (email.trim()) sendTo(chatHostId(activeChatId), { type: 'share_chat', chatId: activeChatId, email: email.trim() });
-  else sendTo(chatHostId(activeChatId), { type: 'unshare_chat', chatId: activeChatId });
+  $('share-list').innerHTML = '<div class="share-empty">loading…</div>';
+  $('share-email').value = '';
+  $('share-panel').hidden = false;
+  sendTo(chatHostId(activeChatId), { type: 'list_shares', chatId: activeChatId });
 };
+$('share-close').onclick = () => ($('share-panel').hidden = true);
+$('share-panel').addEventListener('click', (e) => {
+  if (e.target.id === 'share-panel') $('share-panel').hidden = true;
+});
+$('share-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const email = $('share-email').value.trim();
+  if (!email || !activeChatId) return;
+  sendTo(chatHostId(activeChatId), { type: 'share_chat', chatId: activeChatId, email });
+  $('share-email').value = '';
+});
 
 // mobile menu
 $('menu-btn').onclick = () => {
