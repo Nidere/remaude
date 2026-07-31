@@ -4,6 +4,12 @@ import { mdToHtml } from './md.js';
 const $ = (id) => document.getElementById(id);
 const feedHost = $('feed');
 
+// A pointer that can hover means a real keyboard: Enter sends and opening a chat
+// may focus the composer. On touch devices Enter inserts a newline instead (the
+// on-screen return key is the only way to break a line) and nothing is focused,
+// so the keyboard stops covering the transcript.
+const hasKeyboard = window.matchMedia('(hover: hover)').matches;
+
 let ws;
 let activeChatId = null;
 let cachedProjects = [];
@@ -291,9 +297,7 @@ function selectChat(chatId) {
   updateTabState();
   syncHeaderSelects(cur);
   closeSidebar();
-  // focus only where a keyboard is already there: on touch devices this would
-  // pop the on-screen keyboard over the transcript every time a chat is opened
-  if (window.matchMedia('(hover: hover)').matches) $('input').focus();
+  if (hasKeyboard) $('input').focus();
   scrollToBottom(true);
 }
 
@@ -708,7 +712,7 @@ $('send-btn').onclick = sendMessage;
 $('stop-btn').onclick = () => activeChatId && send({ type: 'interrupt', chatId: activeChatId });
 
 $('input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (hasKeyboard && e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
