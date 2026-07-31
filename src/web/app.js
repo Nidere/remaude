@@ -1215,10 +1215,9 @@ $('notify-btn').onclick = async function () {
 };
 
 $('restart-server').onclick = () => {
-  if (confirm('Restart the server? Live chats will close (resumable via “past chats”).')) {
-    sendTo(ownHostId(), { type: 'restart_server' });
-    $('settings').hidden = true;
-  }
+  // no confirmation: open chats reopen themselves, so a restart costs nothing
+  sendTo(ownHostId(), { type: 'restart_server' });
+  $('settings').hidden = true;
 };
 
 setModeSelect($('permission-mode').value); // highlight bypass on startup
