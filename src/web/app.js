@@ -123,7 +123,7 @@ function bootFromCache() {
   feedHost.innerHTML = '';
   feedHost.append(chat.feedEl);
   for (const m of saved.msgs) renderSdkMessage(chatId, m, true);
-  scrollToBottom(true);
+  scrollToBottomSettled();
 }
 
 function cachedTranscript(chatId) {
@@ -305,7 +305,7 @@ const handlers = {
     chat.fromCache = false;
     for (const m of messages) renderSdkMessage(chatId, m);
     if (chatId === activeChatId) {
-      scrollToBottom(true);
+      scrollToBottomSettled();
       cacheTranscript(chatId);
     }
   },
@@ -429,7 +429,7 @@ function requestHistory(chatId) {
     if (cached) {
       chat.fromCache = true;
       for (const m of cached) renderSdkMessage(chatId, m, true);
-      if (chatId === activeChatId) scrollToBottom(true);
+      if (chatId === activeChatId) scrollToBottomSettled();
     }
   }
   sendTo(chatHostId(chatId), { type: 'history', chatId });
@@ -469,7 +469,7 @@ function selectChat(chatId) {
   syncHeaderSelects(cur);
   closeSidebar();
   if (hasKeyboard) $('input').focus();
-  scrollToBottom(true);
+  scrollToBottomSettled();
 }
 
 function syncHeaderSelects(chat) {
@@ -953,6 +953,18 @@ function shortPath(p) {
 function fmtTime(ts) {
   const d = ts ? new Date(ts) : new Date();
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * Pinning the feed to the bottom takes more than one attempt: right after a
+ * re-render the layout is not final — web fonts land, code blocks and images
+ * reflow — and a single scroll leaves you stranded mid-conversation.
+ */
+function scrollToBottomSettled() {
+  scrollToBottom(true);
+  requestAnimationFrame(() => scrollToBottom(true));
+  document.fonts?.ready?.then(() => scrollToBottom(true));
+  setTimeout(() => scrollToBottom(true), 250);
 }
 
 function scrollToBottom(force = false) {
