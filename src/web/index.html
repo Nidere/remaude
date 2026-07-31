@@ -66,6 +66,8 @@
     <div id="feed"></div>
     <button id="scroll-down" title="Jump to latest" hidden>↓</button>
 
+    <div id="activity" hidden><span class="activity-dot"></span><span id="activity-text"></span></div>
+
     <footer id="composer">
       <div id="attachments"></div>
       <div id="composer-row">
@@ -99,14 +101,14 @@
           <button class="att-tab" data-tab="docs">📄 Docs</button>
         </div>
         <div id="att-controls">
-          <select id="att-scope">
-            <option value="chat">this chat</option>
-            <option value="project">whole project</option>
-          </select>
-          <select id="att-filter">
-            <option value="all">all images</option>
-            <option value="mine">mine only</option>
-          </select>
+          <div class="seg" id="att-scope">
+            <button data-value="chat" class="active">this chat</button>
+            <button data-value="project">project</button>
+          </div>
+          <div class="seg" id="att-filter">
+            <button data-value="all" class="active">all</button>
+            <button data-value="mine">mine</button>
+          </div>
           <button id="att-close">✕</button>
         </div>
       </div>

@@ -197,6 +197,10 @@ const handlers = {
 
   state({ projects, guest, _host }) {
     hostStates.set(hostKey(_host), { projects, guest: Boolean(guest) });
+    // A snapshot is only true at the moment it arrives; live status then comes
+    // from chat_status. Store it here so a later repaint (an agent update, say)
+    // does not resurrect a stale "idle" from this frozen snapshot.
+    for (const p of projects) for (const c of p.chats) getChat(c.id, p.path).status = c.status;
     // guest mode is per host now: the UI is restricted only while the active
     // chat belongs to someone else's host
     renderSidebar();
@@ -241,7 +245,11 @@ const handlers = {
 
   chat_status({ chatId, status }) {
     const chat = chats.get(chatId);
-    if (chat) chat.status = status;
+    if (chat) {
+      chat.status = status;
+      if (status !== 'thinking' && status !== 'waiting_permission') chat.activity = null;
+      if (chatId === activeChatId) renderActivity(chat);
+    }
     updateStatusDot(chatId, status);
     if (chatId === activeChatId) updateComposerButtons(status);
     updateTabState();
@@ -574,6 +582,9 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
         node.append(copyBtn);
         chat.feedEl.append(node);
       } else if (block.type === 'tool_use') {
+        // even with tools hidden, something has to say the work is moving
+        chat.activity = toolSummary(block);
+        if (chatId === activeChatId) renderActivity(chat);
         const chip = makeChip(`${block.name}`, JSON.stringify(block.input, null, 2).slice(0, 4000));
         chat.chips.set(block.id, chip);
         chat.feedEl.append(chip);
@@ -640,6 +651,40 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
     chat.feedEl.append(meta);
     scrollToBottom();
   }
+}
+
+/** A short "what is happening right now" line for the activity strip. */
+function toolSummary(block) {
+  const i = block.input ?? {};
+  const file = (p) => String(p).split(/[\\/]/).pop();
+  switch (block.name) {
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+      return `${block.name} · ${file(i.file_path ?? '')}`;
+    case 'Bash':
+    case 'PowerShell':
+      return `${block.name} · ${String(i.description ?? i.command ?? '').slice(0, 60)}`;
+    case 'Grep':
+    case 'Glob':
+      return `${block.name} · ${String(i.pattern ?? '').slice(0, 40)}`;
+    case 'Agent':
+      return `Agent · ${String(i.description ?? '').slice(0, 50)}`;
+    case 'WebFetch':
+    case 'WebSearch':
+      return `${block.name} · ${String(i.url ?? i.query ?? '').slice(0, 50)}`;
+    default:
+      return block.name;
+  }
+}
+
+function renderActivity(chat) {
+  const busy = chat?.status === 'thinking' || chat?.status === 'waiting_permission';
+  const strip = $('activity');
+  strip.hidden = !busy;
+  if (!busy) return;
+  $('activity-text').textContent =
+    chat.status === 'waiting_permission' ? 'waiting for your permission' : (chat.activity ?? 'thinking…');
 }
 
 function dropStream(chat) {
@@ -842,7 +887,6 @@ function renderHostProjects(root, hostId, hostState) {
     for (const c of p.chats) {
       const chat = getChat(c.id, p.path);
       chat.hostId = hostId;
-      chat.status = c.status;
       chat.title = c.title;
       chat.sessionId = c.sessionId;
       if (c.model) chat.model = c.model;
@@ -853,7 +897,7 @@ function renderHostProjects(root, hostId, hostState) {
 
       const item = el('div', 'chat-item', '');
       item.dataset.chatId = c.id;
-      const dot = el('span', `status-dot ${c.status}`, '');
+      const dot = el('span', `status-dot ${chat.status ?? c.status}`, ''); // live status wins over the snapshot
       const label = el('span', 'chat-label', labelText);
       item.append(dot, label);
 
@@ -912,6 +956,23 @@ function renderHostProjects(root, hostId, hostState) {
 
 let attState = { tab: 'images', images: [], docs: [], total: 0, offset: 0 };
 
+/** Segmented toggle: reads the active button, or flips to a new value. */
+function seg(id, value) {
+  const box = $(id);
+  if (value === undefined) return box.querySelector('.active')?.dataset.value;
+  for (const b of box.children) b.classList.toggle('active', b.dataset.value === value);
+  return value;
+}
+
+function bindSeg(id, onChange) {
+  for (const button of $(id).children)
+    button.onclick = () => {
+      if (button.classList.contains('active')) return;
+      seg(id, button.dataset.value);
+      onChange(button.dataset.value);
+    };
+}
+
 function openAttachments() {
   if (!activeChatId) return;
   attState = { ...attState, images: [], docs: [], total: 0, offset: 0 };
@@ -924,7 +985,7 @@ function requestAttachments(offset) {
   sendTo(chatHostId(activeChatId), {
     type: 'attachments',
     chatId: activeChatId,
-    scope: $('att-scope').value,
+    scope: seg('att-scope'),
     offset,
   });
 }
@@ -935,7 +996,7 @@ function renderAttachments2() {
   $('att-filter').hidden = attState.tab !== 'images';
 
   if (attState.tab === 'images') {
-    const mineOnly = $('att-filter').value === 'mine';
+    const mineOnly = seg('att-filter') === 'mine';
     const shown = attState.images.filter((i) => !mineOnly || i.mine);
     if (!shown.length) {
       body.append(el('div', 'att-empty', 'no images here yet'));
@@ -1593,8 +1654,8 @@ for (const tab of document.querySelectorAll('.att-tab'))
     attState.tab = tab.dataset.tab;
     renderAttachments2();
   };
-$('att-scope').onchange = () => openAttachments();
-$('att-filter').onchange = () => renderAttachments2();
+bindSeg('att-scope', () => openAttachments());
+bindSeg('att-filter', () => renderAttachments2());
 $('doc-close').onclick = () => ($('doc-viewer').hidden = true);
 $('doc-viewer').addEventListener('click', (e) => {
   if (e.target.id === 'doc-viewer') $('doc-viewer').hidden = true;

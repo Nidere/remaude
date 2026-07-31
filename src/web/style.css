@@ -268,6 +268,33 @@ body {
 
 #sidebar-footer { padding: 8px 10px; border-top: 1px solid var(--border); }
 
+/* ---------- activity strip ---------- */
+/* With tools hidden the feed goes silent while work happens; this line is the
+   proof of life, and it names what is running right now. */
+
+#activity[hidden] { display: none; }
+#activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+}
+#activity-text { overflow: hidden; text-overflow: ellipsis; }
+.activity-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yellow);
+  animation: pulse 1.2s infinite;
+  flex-shrink: 0;
+}
+
 /* ---------- share dialog ---------- */
 
 #share-panel[hidden] { display: none; }
@@ -428,14 +455,30 @@ body {
 }
 .att-tab.active { border-color: var(--accent); color: var(--text); }
 #att-controls { display: flex; gap: 6px; align-items: center; }
-#att-scope, #att-filter {
+
+/* segmented toggle: two states side by side, no dropdown to open */
+.seg {
+  display: inline-flex;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  padding: 5px 6px;
-  font-size: 12px;
+  border-radius: 7px;
+  padding: 2px;
+  gap: 2px;
 }
+.seg[hidden] { display: none; }
+.seg button {
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--dim);
+  padding: 5px 11px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.seg button:hover { color: var(--text); }
+.seg button.active { background: var(--bg-3); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
 #att-close, #doc-close {
   background: none;
   border: 1px solid var(--border);
