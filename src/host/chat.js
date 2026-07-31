@@ -36,6 +36,15 @@ export class Chat extends EventEmitter {
         model,
         includePartialMessages: true,
         canUseTool: async (toolName, input, { signal, suggestions }) => {
+          // Интерактивных опросников в remaude нет (и пользователь их ненавидит) —
+          // заставляем модель переспросить обычным текстом. Хук срабатывает даже в bypass.
+          if (toolName === 'AskUserQuestion') {
+            return {
+              behavior: 'deny',
+              message:
+                'Интерактивные опросники здесь не поддерживаются. Задай все свои вопросы обычным текстом в ответе, нумерованным списком, и продолжай после ответа пользователя.',
+            };
+          }
           if (!onPermissionRequest) return { behavior: 'allow', updatedInput: input };
           this.#setStatus('waiting_permission');
           try {
