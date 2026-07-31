@@ -8,8 +8,13 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
+  <div id="sidebar-overlay" hidden></div>
   <aside id="sidebar">
-    <div id="logo">remaude</div>
+    <div id="logo-row">
+      <div id="logo">remaude</div>
+      <button id="settings-btn" title="Настройки">⚙</button>
+    </div>
+    <input id="search" placeholder="поиск по чатам" spellcheck="false" />
     <div id="projects"></div>
     <button id="pick-project" title="Открыть системный диалог выбора папки на хосте">📁 добавить проект</button>
     <form id="add-project-form">
@@ -20,8 +25,24 @@
 
   <main id="main">
     <header id="header">
+      <button id="menu-btn" title="Меню">☰</button>
       <div id="chat-title">выбери или создай чат</div>
       <div id="header-right">
+        <select id="model-select" title="Модель чата">
+          <option value="">модель</option>
+          <option value="fable">fable</option>
+          <option value="opus">opus</option>
+          <option value="sonnet">sonnet</option>
+          <option value="haiku">haiku</option>
+        </select>
+        <select id="effort-select" title="Усилия (reasoning effort)">
+          <option value="">усилия</option>
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
         <div id="chat-meta" title="модель · усилия · заполненность контекста"></div>
         <label id="hide-tools-label"><input type="checkbox" id="hide-tools" /> скрыть инструменты</label>
         <select id="permission-mode" title="Режим разрешений">
@@ -37,6 +58,7 @@
     </header>
 
     <div id="feed"></div>
+    <button id="scroll-down" title="К свежим сообщениям" hidden>↓</button>
 
     <footer id="composer">
       <div id="attachments"></div>
@@ -49,6 +71,18 @@
   </main>
 
   <div id="lightbox" hidden><img alt="" /></div>
+
+  <div id="settings" hidden>
+    <div id="settings-box">
+      <div id="settings-title">Настройки</div>
+      <label>Имя (подпись сообщений)<input id="set-username" spellcheck="false" /></label>
+      <label>Корень проектов<input id="set-root" spellcheck="false" /></label>
+      <div id="settings-actions">
+        <button id="settings-save">Сохранить</button>
+        <button id="settings-cancel">Отмена</button>
+      </div>
+    </div>
+  </div>
 
   <div id="picker" hidden>
     <div id="picker-box">

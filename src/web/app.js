@@ -6,6 +6,7 @@ const feedHost = $('feed');
 
 let ws;
 let activeChatId = null;
+let cachedProjects = [];
 const chats = new Map(); // chatId -> {projectPath, status, feedEl, streamEl, streamText, chips:Map, subagents:Map, historyRequested}
 const attachments = []; // {mediaType, data(base64), url}
 
@@ -41,6 +42,7 @@ function send(obj) {
 
 const handlers = {
   state({ projects }) {
+    cachedProjects = projects;
     renderSidebar(projects);
     // после перезагрузки страницы возвращаемся в последний открытый чат
     if (!activeChatId) {
@@ -55,6 +57,13 @@ const handlers = {
 
   chat_message({ chatId, msg }) {
     renderSdkMessage(chatId, msg);
+    // непрочитанное: содержательные события в неактивных чатах
+    if (chatId !== activeChatId && (msg.type === 'assistant' || msg.type === 'result')) {
+      const chat = getChat(chatId);
+      chat.unread = (chat.unread ?? 0) + (msg.type === 'result' ? 1 : 0);
+      updateChatItem(chatId);
+      updateTabState();
+    }
   },
 
   chat_status({ chatId, status }) {
@@ -62,6 +71,7 @@ const handlers = {
     if (chat) chat.status = status;
     updateStatusDot(chatId, status);
     if (chatId === activeChatId) updateComposerButtons(status);
+    updateTabState();
   },
 
   chat_error({ chatId, error }) {
@@ -103,7 +113,10 @@ const handlers = {
     chat.mode = permissionMode;
     chat.effort = effort;
     chat.context = context;
-    if (chatId === activeChatId) renderMeta(chat);
+    if (chatId === activeChatId) {
+      renderMeta(chat);
+      syncHeaderSelects(chat);
+    }
   },
 
   limits({ limits }) {
@@ -162,6 +175,12 @@ const handlers = {
 
   server_restarting() {
     $('conn-dot').classList.remove('on');
+  },
+
+  settings({ userName, projectsRoot }) {
+    $('set-username').value = userName ?? '';
+    $('set-root').value = projectsRoot ?? '';
+    $('settings').hidden = false;
   },
 
   error({ message }) {
@@ -223,8 +242,20 @@ function selectChat(chatId) {
   renderMeta(chat);
   updateComposerButtons(chat.status);
   document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
+  const cur = chats.get(chatId);
+  cur.unread = 0;
+  updateChatItem(chatId);
+  updateTabState();
+  syncHeaderSelects(cur);
+  closeSidebar();
   $('input').focus();
   scrollToBottom(true);
+}
+
+function syncHeaderSelects(chat) {
+  const shortModel = (chat.model ?? '').replace(/^claude-/, '').replace(/-[\d.]+.*$/, '');
+  $('model-select').value = ['fable', 'opus', 'sonnet', 'haiku'].includes(shortModel) ? shortModel : '';
+  $('effort-select').value = chat.effortOverride ?? '';
 }
 
 // ---------- рендер SDK-сообщений ----------
@@ -409,23 +440,81 @@ function renderSidebar(projects) {
     head.append(name, actions);
     proj.append(head);
 
+    const filter = $('search').value.trim().toLowerCase();
+    let visibleChats = 0;
     for (const c of p.chats) {
       const chat = getChat(c.id, p.path);
       chat.status = c.status;
       chat.title = c.title;
       if (c.model) chat.model = c.model;
       if (c.permissionMode) chat.mode = c.permissionMode;
+      const labelText = c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'новый');
+      if (filter && !labelText.toLowerCase().includes(filter) && !p.path.toLowerCase().includes(filter)) continue;
+      visibleChats++;
+
       const item = el('div', 'chat-item', '');
       item.dataset.chatId = c.id;
       const dot = el('span', `status-dot ${c.status}`, '');
-      const label = el('span', 'chat-label', c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'новый'));
+      const label = el('span', 'chat-label', labelText);
       item.append(dot, label);
+
+      if (chat.unread) {
+        item.classList.add('unread');
+        item.append(el('span', 'unread-badge', String(chat.unread)));
+      }
+
+      const actions = el('span', 'chat-actions', '');
+      const btnRename = el('button', '', '✏');
+      btnRename.title = 'переименовать';
+      btnRename.onclick = (e) => {
+        e.stopPropagation();
+        const name = prompt('Название чата:', c.title ?? '');
+        if (name?.trim()) send({ type: 'rename_chat', chatId: c.id, title: name.trim() });
+      };
+      const btnHide = el('button', '', '✕');
+      btnHide.title = 'закрыть чат (сессия останется на диске)';
+      btnHide.onclick = (e) => {
+        e.stopPropagation();
+        if (confirm('Закрыть чат? Сессия останется, откроешь через «прошлые чаты».'))
+          send({ type: 'hide_chat', chatId: c.id });
+      };
+      actions.append(btnRename, btnHide);
+      item.append(actions);
+
       if (c.id === activeChatId) item.classList.add('active');
       item.onclick = () => selectChat(c.id);
       proj.append(item);
     }
+    if (filter && !visibleChats && !p.path.toLowerCase().includes(filter)) continue;
     root.append(proj);
   }
+}
+
+function updateChatItem(chatId) {
+  const chat = chats.get(chatId);
+  const item = document.querySelector(`.chat-item[data-chat-id="${chatId}"]`);
+  if (!item || !chat) return;
+  item.classList.toggle('unread', Boolean(chat.unread));
+  item.querySelector('.unread-badge')?.remove();
+  if (chat.unread) item.insertBefore(el('span', 'unread-badge', String(chat.unread)), item.querySelector('.chat-actions'));
+}
+
+// ---------- вкладка: заголовок + favicon ----------
+
+const FAVICON_BASE =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%F0%9F%92%AC%3C/text%3E%3C/svg%3E";
+const FAVICON_ALERT =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%F0%9F%92%AC%3C/text%3E%3Ccircle cx='12.5' cy='3.5' r='3.5' fill='%23f7768e'/%3E%3C/svg%3E";
+
+function updateTabState() {
+  let waiting = false;
+  let unread = 0;
+  for (const chat of chats.values()) {
+    if (chat.status === 'waiting_permission') waiting = true;
+    unread += chat.unread ?? 0;
+  }
+  document.title = waiting ? '● ждёт разрешения — remaude' : unread ? `(${unread}) remaude` : 'remaude';
+  document.querySelector('link[rel="icon"]').href = waiting || unread ? FAVICON_ALERT : FAVICON_BASE;
 }
 
 function updateStatusDot(chatId, status) {
@@ -549,6 +638,11 @@ function scrollToBottom(force = false) {
   if (force || nearBottom) feedHost.scrollTop = feedHost.scrollHeight;
 }
 
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  $('sidebar-overlay').hidden = true;
+}
+
 function setModeSelect(mode) {
   const sel = $('permission-mode');
   sel.value = mode;
@@ -628,6 +722,49 @@ $('lightbox').onclick = () => ($('lightbox').hidden = true);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('lightbox').hidden = true;
 });
+
+// мобильное меню
+$('menu-btn').onclick = () => {
+  document.getElementById('sidebar').classList.add('open');
+  $('sidebar-overlay').hidden = false;
+};
+$('sidebar-overlay').onclick = closeSidebar;
+
+// кнопка «вниз»
+feedHost.addEventListener('scroll', () => {
+  const nearBottom = feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight < 200;
+  $('scroll-down').hidden = nearBottom;
+});
+$('scroll-down').onclick = () => scrollToBottom(true);
+
+// модель и усилия активного чата
+$('model-select').addEventListener('change', function () {
+  if (activeChatId && this.value) send({ type: 'set_model', chatId: activeChatId, model: this.value });
+});
+$('effort-select').addEventListener('change', function () {
+  if (!activeChatId || !this.value) return;
+  send({ type: 'set_effort', chatId: activeChatId, effort: this.value });
+  const chat = chats.get(activeChatId);
+  if (chat) chat.effortOverride = this.value;
+});
+
+// настройки
+$('settings-btn').onclick = () => send({ type: 'get_settings' });
+$('settings-cancel').onclick = () => ($('settings').hidden = true);
+$('settings').addEventListener('click', (e) => {
+  if (e.target.id === 'settings') $('settings').hidden = true;
+});
+$('settings-save').onclick = () => {
+  send({
+    type: 'set_settings',
+    userName: $('set-username').value.trim(),
+    projectsRoot: $('set-root').value.trim(),
+  });
+  $('settings').hidden = true;
+};
+
+// поиск по чатам — фильтрация по кэшу последнего state
+$('search').addEventListener('input', () => renderSidebar(cachedProjects));
 
 $('restart-server').onclick = () => {
   if (confirm('Перезапустить сервер? Живые чаты закроются (возобновимы через «прошлые чаты»).'))

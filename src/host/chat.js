@@ -103,6 +103,12 @@ export class Chat extends EventEmitter {
 
   async setModel(model) {
     await this.#query.setModel(model);
+    this.model = model ?? null; // фактическое имя уточнится из следующего init/usage
+  }
+
+  async setEffort(level) {
+    await this.#query.applyFlagSettings({ effortLevel: level });
+    this.effort = level;
   }
 
   async accountInfo() {

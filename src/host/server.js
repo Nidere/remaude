@@ -45,11 +45,11 @@ const config = loadConfig();
 
 // Имя автора сообщений (задел под групповые чаты): userName в host.json,
 // по умолчанию — имя пользователя ОС.
-const userName = config.userName ?? userInfo().username;
+let userName = config.userName ?? userInfo().username;
 
 // Корень проектов: настраивается в ~/.remaude/host.json (projectsRoot),
 // по умолчанию — Documents\Projects, если есть, иначе домашняя папка.
-const projectsRoot =
+let projectsRoot =
   config.projectsRoot ??
   (existsSync(join(homedir(), 'Documents', 'Projects')) ? join(homedir(), 'Documents', 'Projects') : homedir());
 const clients = new Set();
@@ -120,7 +120,7 @@ async function sendChatMeta(chatId) {
     chatId,
     model: chat.model,
     permissionMode: chat.permissionMode,
-    effort: hostEffort,
+    effort: chat.effort ?? hostEffort,
     context,
   });
 }
@@ -294,6 +294,46 @@ const handlers = {
     refreshLimits(true);
   },
 
+  rename_chat(ws, { chatId, title }) {
+    findChat(chatId).title = String(title).slice(0, 80);
+    broadcast(stateSnapshot());
+  },
+
+  /** Закрыть чат и убрать из сайдбара; транскрипт остаётся, возобновим через open_session. */
+  hide_chat(ws, { chatId }) {
+    const chat = findChat(chatId);
+    chat.close();
+    for (const p of agent.projects.values()) p.chats.delete(chatId);
+    chatHistories.delete(chatId);
+    broadcast(stateSnapshot());
+  },
+
+  async set_model(ws, { chatId, model }) {
+    await findChat(chatId).setModel(model);
+    sendChatMeta(chatId);
+  },
+
+  async set_effort(ws, { chatId, effort }) {
+    await findChat(chatId).setEffort(effort);
+    sendChatMeta(chatId);
+  },
+
+  get_settings(ws) {
+    send(ws, { type: 'settings', userName, projectsRoot });
+  },
+
+  set_settings(ws, { userName: newName, projectsRoot: newRoot }) {
+    if (newName) {
+      userName = newName;
+      config.userName = newName;
+    }
+    if (newRoot && existsSync(newRoot) && statSync(newRoot).isDirectory()) {
+      projectsRoot = resolve(newRoot);
+      config.projectsRoot = projectsRoot;
+    }
+    saveConfig(config);
+  },
+
   /**
    * Самоперезапуск: порождаем отвязанную копию себя и выходим. Копия
    * ретраит listen, пока мы не отпустим порт. Все живые SDK-сессии умирают —
@@ -368,7 +408,10 @@ wss.on('connection', (ws) => {
     let msg;
     try {
       msg = JSON.parse(raw);
-      handlers[msg.type]?.(ws, msg);
+      // async-обработчики тоже должны доносить ошибки до клиента
+      Promise.resolve(handlers[msg.type]?.(ws, msg)).catch((e) =>
+        send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type })
+      );
     } catch (e) {
       send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type });
     }
