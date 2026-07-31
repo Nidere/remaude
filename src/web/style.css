@@ -1082,11 +1082,11 @@ body.guest .chat-actions { display: none !important; }
 .edit-actions button:hover { color: var(--text); }
 .edit-actions button:last-child:hover { color: var(--red); }
 
-/* rows follow the finger instead of scrolling the sidebar */
+/* The sidebar must stay scrollable in edit mode: touch-action is set on the row
+   only once a drag has actually begun (see makeDraggable). */
 body.editing .chat-item,
 body.editing .project,
 body.editing .host-head {
-  touch-action: none;
   user-select: none;
 }
 body.editing .chat-item,
@@ -1097,7 +1097,14 @@ body.editing .host-head {
 body.editing .host-actions { display: none; }
 body.editing .chat-item { background: var(--bg-3); border-radius: 6px; }
 body.editing .project { outline: 1px dashed var(--border); border-radius: 8px; padding-bottom: 4px; }
-.dragging { opacity: 0.6; cursor: grabbing !important; }
+.dragging {
+  opacity: 0.75;
+  cursor: grabbing !important;
+  transform: scale(1.02);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  position: relative;
+  z-index: 2;
+}
 body.editing .agent-item { display: none; } /* agents are not editable */
 
 /* subagent rows: informational only, nested a level deeper than chats */
@@ -1281,3 +1288,43 @@ body.guest .add-host { display: none; }
   font-weight: 600;
   cursor: pointer;
 }
+
+/* ---------- touch: fingers are not mice ---------- */
+
+@media (hover: none) {
+  /* every icon button gets a thumb-sized target */
+  .edit-actions button,
+  .att-doc-drop,
+  .share-drop,
+  .project-actions button,
+  .host-actions button,
+  #att-btn,
+  #share-btn,
+  #settings-btn,
+  #edit-btn,
+  #att-close,
+  #doc-close,
+  #share-close,
+  #menu-btn {
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+  .edit-actions { gap: 10px; }
+  .project-actions, .host-actions { gap: 8px; }
+  .chat-item { padding-top: 10px; padding-bottom: 10px; }
+  /* the copy button never appears without hover — show it always */
+  .copy-btn { opacity: 1; }
+}
+
+/* panels must fit the *visible* viewport, not the tallest one the URL bar allows */
+#att-box { max-height: 86dvh; }
+#doc-box, #att-box { max-height: 92dvh; }
+#share-box, #settings-box { max-height: 90dvh; display: flex; flex-direction: column; }
+#share-list { max-height: none; flex: 1; }
+#settings-box { overflow-y: auto; }
+#picker-box { max-height: 80dvh; }
+#lightbox img { max-height: 96dvh; }
+
+#doc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#att-controls { flex-wrap: wrap; }

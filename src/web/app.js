@@ -339,14 +339,19 @@ const handlers = {
     if (text != null) {
       $('doc-title').textContent = name;
       $('doc-body').innerHTML = mdToHtml(text);
+      $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;
       return;
     }
-    // not markdown: hand it to the browser as a download
+    // not markdown: hand it to the browser as a download. A blob URL survives an
+    // installed PWA, where a huge data: navigation is a dead end.
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes]));
     const a = document.createElement('a');
-    a.href = `data:application/octet-stream;base64,${base64}`;
+    a.href = url;
     a.download = name;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   },
 
   artifact_added({ artifact }) {
@@ -1157,26 +1162,51 @@ function makeDraggable(row, group, onDrop) {
   row.dataset.sortGroup = group;
   row.addEventListener('pointerdown', (e) => {
     if (!editMode || e.button > 0 || e.target.closest('button')) return;
-    e.preventDefault();
+    // A chat lives inside its project, and both are draggable: without this one
+    // finger would start two drags in two groups and commit both.
+    e.stopPropagation();
     const parent = row.parentElement;
     const siblings = () => [...parent.querySelectorAll(`[data-sort-group="${group}"]`)];
-    row.classList.add('dragging');
+    const startY = e.clientY;
+    let dragging = false;
+    let moved = false;
+
+    // The drag only begins after a deliberate movement, so a finger can still
+    // scroll the sidebar and a plain tap does not silently reorder anything.
+    const begin = () => {
+      dragging = true;
+      row.classList.add('dragging');
+      row.style.touchAction = 'none';
+    };
 
     // Listeners live on the window, not on the row: moving a node in the DOM
     // drops its pointer capture, and the drag would freeze after the first swap.
     const onMove = (ev) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientY - startY) < 8) return; // still might be a scroll
+        begin();
+      }
+      ev.preventDefault();
+      // keep dragging past the visible edge: nudge the sidebar along
+      const box = document.getElementById('sidebar');
+      const rectBox = box.getBoundingClientRect();
+      if (ev.clientY < rectBox.top + 60) box.scrollTop -= 12;
+      else if (ev.clientY > rectBox.bottom - 60) box.scrollTop += 12;
+
       const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(`[data-sort-group="${group}"]`);
       if (!target || target === row || target.parentElement !== parent) return;
       const rect = target.getBoundingClientRect();
       const after = ev.clientY > rect.top + rect.height / 2;
       parent.insertBefore(row, after ? target.nextSibling : target);
+      moved = true;
     };
     const onUp = () => {
       row.classList.remove('dragging');
+      row.style.touchAction = '';
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
-      onDrop(siblings().map((n) => n.dataset.sortId));
+      if (moved) onDrop(siblings().map((n) => n.dataset.sortId)); // a tap is not a reorder
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1660,6 +1690,24 @@ for (const tab of document.querySelectorAll('.att-tab'))
 bindSeg('att-scope', () => openAttachments());
 bindSeg('att-filter', () => renderAttachments2());
 $('doc-close').onclick = () => ($('doc-viewer').hidden = true);
+
+// On a phone the backdrop around a full-screen panel is a few pixels wide, and
+// the system back gesture would otherwise close the whole app. Every open panel
+// takes a history entry, so "back" closes it instead.
+const PANELS = ['attachments-panel', 'doc-viewer', 'share-panel', 'picker', 'settings', 'lightbox'];
+for (const id of PANELS) {
+  const node = $(id);
+  if (!node) continue;
+  new MutationObserver(() => {
+    if (!node.hidden && history.state?.panel !== id) history.pushState({ panel: id }, '');
+  }).observe(node, { attributes: true, attributeFilter: ['hidden'] });
+}
+window.addEventListener('popstate', () => {
+  for (const id of PANELS) {
+    const node = $(id);
+    if (node && !node.hidden) node.hidden = true;
+  }
+});
 $('doc-viewer').addEventListener('click', (e) => {
   if (e.target.id === 'doc-viewer') $('doc-viewer').hidden = true;
 });

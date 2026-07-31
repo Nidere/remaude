@@ -412,12 +412,26 @@ function trackAgents(chatId, msg) {
       // A background agent answers twice on the same tool_use_id: first
       // "launched" with its id, then the real report minutes later. Only the
       // second one means it is done — the first used to hide the row instantly.
-      if (resultText(block).slice(0, 200).toLowerCase().includes('async agent launched')) {
+      const text = resultText(block);
+      if (text.slice(0, 200).toLowerCase().includes('async agent launched')) {
         agent.async = true;
+        // remember the id the harness will name it by when it finishes
+        agent.agentId = /agentid:\s*([0-9a-z]+)/i.exec(text)?.[1] ?? null;
         changed = true;
         continue;
       }
       if (finishAgent(chatId, block.tool_use_id, block.is_error ? 'failed' : 'done')) changed = true;
+    }
+  }
+
+  // A background agent's completion does not always come back as a tool_result
+  // on the original id — the harness may only announce it by agent id. Anything
+  // naming a running agent's id counts as its report, or the row runs forever.
+  if (msg.type === 'user') {
+    const blob = JSON.stringify(content);
+    for (const agent of agentsOf(chatId).values()) {
+      if (agent.status !== 'running' || !agent.agentId) continue;
+      if (blob.includes(agent.agentId) && finishAgent(chatId, agent.id, 'done')) changed = true;
     }
   }
 
@@ -545,6 +559,9 @@ function drainTail(chatId, tail) {
       }
     }
     pushHistory(chatId, msg);
+    // the same bookkeeping as the live stream: a completion we only see on disk
+    // still has to close the agent's row
+    if (msg.type === 'assistant' || msg.type === 'user') trackAgents(chatId, msg);
     broadcast({ type: 'chat_message', chatId, msg });
   }
 }
