@@ -23,6 +23,7 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json',
 };
 
 // ---------- конфиг (список проектов) ----------
@@ -76,6 +77,11 @@ const agent = new HostAgent({
         pendingPermissions.get(requestId)?.resolve({ behavior: 'deny', message: 'aborted' });
       });
       broadcast({ type: 'permission_request', requestId, chatId: chat.id, toolName, input, suggestions });
+      relayLink?.push({
+        title: 'remaude: ждёт разрешения',
+        body: `${toolName} · ${chat.title ?? 'чат'}`,
+        tag: `perm-${chat.id}`,
+      });
     }),
 });
 
@@ -136,6 +142,16 @@ agent.on('chat_message', ({ chatId, msg }) => {
   if (msg.type === 'result') {
     refreshLimits(true);
     sendChatMeta(chatId);
+    // никто не смотрит — стоит пискнуть на телефон
+    if (clients.size === 0) {
+      let title = null;
+      try {
+        title = findChat(chatId).title;
+      } catch {
+        /* чат мог закрыться */
+      }
+      relayLink?.push({ title: 'remaude: готово', body: title ?? 'задача завершена', tag: `done-${chatId}` });
+    }
   }
 });
 

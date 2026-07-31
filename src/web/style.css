@@ -333,6 +333,21 @@ body {
 #limits .warn { color: var(--yellow); }
 #limits .crit { color: var(--red); }
 
+#notify-btn {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--dim);
+  padding: 7px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+#notify-btn:hover { border-color: var(--accent); color: var(--text); }
+
 #restart-server {
   display: block;
   width: 100%;

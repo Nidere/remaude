@@ -57,6 +57,11 @@ export class RelayLink extends EventEmitter {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'cast', data }));
   }
 
+  /** Попросить relay отправить push-уведомление владельцу хоста. */
+  push(payload) {
+    if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'push', payload }));
+  }
+
   stop() {
     this.#stopped = true;
     this.#ws?.close();

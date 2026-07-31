@@ -20,18 +20,23 @@ $envContent = @(
 $tmpEnv = "$env:TEMP\remaude-relay.env"
 [IO.File]::WriteAllText($tmpEnv, $envContent + "`n", [Text.UTF8Encoding]::new($false))
 
-# 2. код + окружение на сервер
+# 2. код + окружение на сервер. package.json у relay свой, минимальный:
+# корневой тянет весь Agent SDK, который на nano-инстансе не нужен и не влезает.
+$relayPkg = '{"name":"remaude-relay","private":true,"type":"module","dependencies":{"ws":"^8.21.1","web-push":"^3.6.7"}}'
+$tmpPkg = "$env:TEMP\remaude-relay-pkg.json"
+[IO.File]::WriteAllText($tmpPkg, $relayPkg, [Text.UTF8Encoding]::new($false))
 ssh @sshOpts $target 'mkdir -p /opt/remaude/src'
 scp @sshOpts -r "$repo\src\relay" "$repo\src\web" "${target}:/opt/remaude/src/"
-scp @sshOpts "$repo\package.json" "$repo\package-lock.json" "${target}:/opt/remaude/"
+scp @sshOpts $tmpPkg "${target}:/opt/remaude/package.json"
 scp @sshOpts $tmpEnv "${target}:/opt/remaude/.env"
-Remove-Item $tmpEnv -Force
+Remove-Item $tmpEnv, $tmpPkg -Force
 
 # 3. зависимости + systemd + caddy
 $remote = @'
 set -e
 cd /opt/remaude
-npm ci --omit=dev 2>&1 | tail -1
+rm -rf node_modules package-lock.json
+npm install --omit=dev --no-audit --no-fund 2>&1 | tail -1
 chmod 600 .env
 sudo tee /etc/systemd/system/remaude-relay.service > /dev/null <<'UNIT'
 [Unit]

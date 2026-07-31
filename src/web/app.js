@@ -795,6 +795,32 @@ $('settings-save').onclick = () => {
 // поиск по чатам — фильтрация по кэшу последнего state
 $('search').addEventListener('input', () => renderSidebar(cachedProjects));
 
+// PWA: service worker (нужен для установки и push)
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+// push-уведомления — только через relay (у localhost нет подписочного бэка)
+$('notify-btn').onclick = async function () {
+  try {
+    const keyRes = await fetch('/api/push/key');
+    if (!keyRes.ok) throw new Error('уведомления работают только через remaude.nidere.com');
+    const { publicKey } = await keyRes.json();
+    if ((await Notification.requestPermission()) !== 'granted') throw new Error('разрешение на уведомления не дано');
+    const reg = await navigator.serviceWorker.ready;
+    const raw = atob(publicKey.replace(/-/g, '+').replace(/_/g, '/'));
+    const appKey = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+    const saveRes = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(sub),
+    });
+    if (!saveRes.ok) throw new Error('не удалось сохранить подписку');
+    this.textContent = '🔔 Уведомления включены ✓';
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
 $('restart-server').onclick = () => {
   if (confirm('Перезапустить сервер? Живые чаты закроются (возобновимы через «прошлые чаты»).')) {
     send({ type: 'restart_server' });

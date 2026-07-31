@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>remaude</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%F0%9F%92%AC%3C/text%3E%3C/svg%3E" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <meta name="theme-color" content="#1c1e26" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -83,6 +89,7 @@
           <button id="pair-btn">Привязать</button>
         </div>
       </div>
+      <button id="notify-btn" title="Push при запросах разрешений и завершении задач (работает через remaude.nidere.com)">🔔 Включить уведомления</button>
       <button id="restart-server" title="Живые чаты закроются, вернёшь их через «прошлые чаты»">⟳ Перезапустить сервер</button>
       <div id="settings-actions">
         <button id="settings-save">Сохранить</button>

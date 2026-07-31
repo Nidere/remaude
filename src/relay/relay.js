@@ -9,6 +9,7 @@ import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHmac, randomBytes, randomUUID, randomInt } from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import webpush from 'web-push';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const BASE_URL = process.env.BASE_URL ?? 'https://remaude.nidere.com';
@@ -27,6 +28,7 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json',
 };
 
 // ---------- состояние (cookie-секрет + токены хостов) ----------
@@ -40,6 +42,31 @@ try {
 if (!state.cookieSecret) {
   state.cookieSecret = randomBytes(32).toString('hex');
   saveState();
+}
+if (!state.vapid) {
+  state.vapid = webpush.generateVAPIDKeys();
+  saveState();
+}
+if (!state.pushSubs) state.pushSubs = {}; // email -> [subscription]
+webpush.setVapidDetails('mailto:nikita@nidere.com', state.vapid.publicKey, state.vapid.privateKey);
+
+async function pushToUser(email, payload) {
+  const subs = state.pushSubs[email] ?? [];
+  const body = JSON.stringify(payload);
+  let dirty = false;
+  for (const sub of [...subs]) {
+    try {
+      await webpush.sendNotification(sub, body, { TTL: 3600 });
+    } catch (e) {
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        subs.splice(subs.indexOf(sub), 1); // подписка умерла — вычищаем
+        dirty = true;
+      } else {
+        console.error('push failed:', e.statusCode ?? e.message);
+      }
+    }
+  }
+  if (dirty) saveState();
 }
 function saveState() {
   mkdirSync(dirname(STATE_PATH), { recursive: true });
@@ -194,6 +221,34 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === '/api/push/key') {
+      if (!email) {
+        res.writeHead(401).end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ publicKey: state.vapid.publicKey }));
+      return;
+    }
+
+    if (url.pathname === '/api/push/subscribe' && req.method === 'POST') {
+      if (!email) {
+        res.writeHead(401).end();
+        return;
+      }
+      const sub = JSON.parse(await readBody(req));
+      if (!sub?.endpoint) {
+        res.writeHead(400).end();
+        return;
+      }
+      const subs = (state.pushSubs[email] ??= []);
+      if (!subs.some((s) => s.endpoint === sub.endpoint)) {
+        subs.push(sub);
+        saveState();
+      }
+      res.writeHead(200).end('{}');
+      return;
+    }
+
     if (url.pathname === '/api/me') {
       if (!email) {
         res.writeHead(401).end();
@@ -300,6 +355,8 @@ function attachHost(ws, info) {
       if (client?.readyState === client?.OPEN) client.send(msg.data);
     } else if (msg.t === 'cast') {
       for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(msg.data);
+    } else if (msg.t === 'push') {
+      pushToUser(info.email, { url: BASE_URL, ...msg.payload });
     }
   });
   ws.on('close', () => {
