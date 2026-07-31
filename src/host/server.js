@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { HostAgent } from './agent.js';
 import { listSessions, loadHistory } from './transcripts.js';
@@ -282,6 +283,23 @@ const handlers = {
   get_limits() {
     refreshLimits(true);
   },
+
+  /**
+   * Самоперезапуск: порождаем отвязанную копию себя и выходим. Копия
+   * ретраит listen, пока мы не отпустим порт. Все живые SDK-сессии умирают —
+   * они возобновляемы через open_session.
+   */
+  restart_server() {
+    console.log('restart requested');
+    broadcast({ type: 'server_restarting' });
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url)], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: dirname(dirname(dirname(fileURLToPath(import.meta.url)))),
+    });
+    child.unref();
+    setTimeout(() => process.exit(0), 300);
+  },
 };
 
 function findChat(chatId) {
@@ -348,6 +366,17 @@ wss.on('connection', (ws) => {
   ws.on('close', () => clients.delete(ws));
 });
 
+// Ретрай listen: при самоперезапуске новая копия ждёт, пока старая отпустит порт.
+let listenAttempts = 0;
+httpServer.on('error', (e) => {
+  if (e.code === 'EADDRINUSE' && listenAttempts < 40) {
+    listenAttempts++;
+    setTimeout(() => httpServer.listen(PORT, '127.0.0.1'), 500);
+  } else {
+    console.error('listen failed:', e.message);
+    process.exit(1);
+  }
+});
 httpServer.listen(PORT, '127.0.0.1', () => {
   console.log(`remaude host: http://localhost:${PORT}`);
 });
