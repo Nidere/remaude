@@ -160,6 +160,10 @@ const handlers = {
     );
   },
 
+  server_restarting() {
+    $('conn-dot').classList.remove('on');
+  },
+
   error({ message }) {
     if (activeChatId) appendTo(activeChatId, el('div', 'error-banner', `ошибка: ${message}`));
     else alert(message);
@@ -616,6 +620,11 @@ $('lightbox').onclick = () => ($('lightbox').hidden = true);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('lightbox').hidden = true;
 });
+
+$('restart-server').onclick = () => {
+  if (confirm('Перезапустить сервер? Живые чаты закроются (возобновимы через «прошлые чаты»).'))
+    send({ type: 'restart_server' });
+};
 
 setModeSelect($('permission-mode').value); // подсветка bypass при старте
 

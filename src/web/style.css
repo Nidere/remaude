@@ -189,6 +189,18 @@ body {
 #limits .warn { color: var(--yellow); }
 #limits .crit { color: var(--red); }
 
+#restart-server {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--dim);
+  width: 24px;
+  height: 22px;
+  cursor: pointer;
+  padding: 0;
+}
+#restart-server:hover { border-color: var(--accent); color: var(--text); }
+
 #conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); }
 #conn-dot.on { background: var(--green); }
 
