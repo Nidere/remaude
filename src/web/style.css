@@ -728,6 +728,7 @@ body {
     row-gap: 6px;
   }
   #model-select, #effort-select, #permission-mode { font-size: 11px; padding: 3px 3px; max-width: 80px; }
+  #hide-tools-label { font-size: 11px; }
   #sidebar {
     position: fixed;
     top: 0;
@@ -740,7 +741,6 @@ body {
   }
   #sidebar.open { transform: translateX(0); }
   #header { padding: 8px 10px; gap: 8px; }
-  #hide-tools-label { display: none; }
   #limits { font-size: 10px; }
   #chat-meta { font-size: 10px; }
   #feed { padding: 10px; }
