@@ -445,8 +445,10 @@ function renderSdkMessage(chatId, msg) {
       for (const block of content) if (block.type === 'tool_result') attachToolResult(chat, block);
       return;
     }
-    // an ordinary user message
+    // an ordinary user message; already on screen if we drew it optimistically
+    if (msg.localId && chat.feedEl.querySelector(`[data-local-id="${msg.localId}"]`)) return;
     const bubble = el('div', 'msg msg-user', '');
+    if (msg.localId) bubble.dataset.localId = msg.localId;
     if (msg.author) bubble.append(el('div', 'msg-author', msg.author));
     if (typeof content === 'string') bubble.append(document.createTextNode(content));
     else
@@ -773,7 +775,17 @@ function sendMessage() {
   if (!activeChatId) return;
   const content = currentContent();
   if (!content) return;
-  sendTo(chatHostId(activeChatId), { type: 'send', chatId: activeChatId, content });
+  // draw the bubble at once instead of waiting for the echo to travel
+  // browser → relay → host → back; the echo is then skipped by this id
+  const localId = crypto.randomUUID();
+  renderSdkMessage(activeChatId, {
+    type: 'user',
+    parent_tool_use_id: null,
+    message: { role: 'user', content },
+    timestamp: new Date().toISOString(),
+    localId,
+  });
+  sendTo(chatHostId(activeChatId), { type: 'send', chatId: activeChatId, content, localId });
   $('input').value = '';
   autoGrowInput($('input'));
   attachments.length = 0;

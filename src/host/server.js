@@ -451,7 +451,7 @@ const handlers = {
     send(ws, { type: 'chat_created', chatId: chat.id, projectPath: chat.cwd });
   },
 
-  send(ws, { chatId, content }) {
+  send(ws, { chatId, content, localId }) {
     const chat = findChat(chatId);
     chat.send(content);
     if (!chat.title) {
@@ -467,6 +467,7 @@ const handlers = {
       message: { role: 'user', content },
       timestamp: new Date().toISOString(),
       author: ws.guest ? ws.guest.email.split('@')[0] : userName,
+      localId, // lets the sender skip the echo of the bubble it already drew
     };
     pushHistory(chatId, userMsg);
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
