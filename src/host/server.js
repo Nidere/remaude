@@ -33,9 +33,11 @@ import {
 } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
 
-const PORT = 7699;
+// Port and config are overridable so a second instance can be started safely
+// (tests, or a throwaway host) without touching the real one's state.
+const PORT = Number(process.env.REMAUDE_PORT ?? 7699);
 const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'web');
-const CONFIG_PATH = join(homedir(), '.remaude', 'host.json');
+const CONFIG_PATH = process.env.REMAUDE_CONFIG ?? join(homedir(), '.remaude', 'host.json');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -77,6 +79,7 @@ let projectsRoot =
 const clients = new Set();
 const pendingPermissions = new Map(); // requestId -> {resolve, chatId}
 const chatHistories = new Map(); // chatId -> messages to replay on reconnect
+const tails = new Map(); // chatId -> {file, offset, restBuf, seen, ownTexts, listener}
 
 const agent = new HostAgent({
   onPermissionRequest: ({ chat, toolName, input, suggestions, signal }) =>
@@ -448,7 +451,7 @@ function pushHistory(chatId, msg) {
 // into the feed live. Ours are skipped by uuid; typed input, which has no uuid
 // on our side, is matched by its text.
 
-const tails = new Map(); // chatId -> {file, offset, restBuf, seen, ownTexts, listener}
+// (declared with the other state above — startup reopens chats before this point)
 
 function startTail(chat) {
   if (tails.has(chat.id)) return;
@@ -581,33 +584,102 @@ class VirtualClient {
 
 // ---------- chat sharing (guests) ----------
 
-function sharesList() {
-  return Object.entries(config.shares ?? {}).map(([sessionId, emails]) => ({ sessionId, emails }));
+// ---------- who may see what ----------
+// Access is granted at three levels and simply adds up: a single chat, a whole
+// project (its future chats included), or the entire host. The relay only needs
+// to know *whether* someone has any access — which chats they see is decided
+// here, where the grants live.
+
+function shareGrants() {
+  return {
+    chats: config.shares ?? {}, // sessionId -> [email]
+    projects: config.projectShares ?? {}, // projectPath -> [email]
+    host: config.hostShares ?? [],
+  };
+}
+
+function allSharedEmails() {
+  const g = shareGrants();
+  return [...new Set([...Object.values(g.chats).flat(), ...Object.values(g.projects).flat(), ...g.host])];
 }
 
 function announceShares() {
-  relayLink?.setShares(sharesList());
+  relayLink?.setShares(allSharedEmails());
+}
+
+function hasHostAccess(email) {
+  return (config.hostShares ?? []).includes(email);
+}
+
+function projectSharedWith(projectPath, email) {
+  const list = config.projectShares?.[resolve(projectPath)] ?? [];
+  return list.includes(email);
 }
 
 /** ids of the live chats available to a guest */
 function guestChatIds(guest) {
+  const email = guest.email;
   const ids = new Set();
-  for (const chat of agent.allChats()) {
-    const sid = chat.sessionId ?? chat.resumeId;
-    if (sid && guest.sessions.includes(sid)) ids.add(chat.id);
+  for (const project of agent.projects.values()) {
+    const wholeProject = hasHostAccess(email) || projectSharedWith(project.path, email);
+    for (const chat of project.chats.values()) {
+      const sid = chat.sessionId ?? chat.resumeId;
+      if (wholeProject || (sid && (config.shares?.[sid] ?? []).includes(email))) ids.add(chat.id);
+    }
   }
   return ids;
 }
 
+function shareKeyForChat(chatId) {
+  const chat = findChat(chatId);
+  const sid = chat.sessionId ?? chat.resumeId;
+  if (!sid) throw new Error('this chat has no session id yet — send at least one message into it');
+  return sid;
+}
+
+/** The email list behind a scope; `create` makes it exist. */
+function shareListFor({ chatId, projectPath, host }, create) {
+  if (host) {
+    if (create) config.hostShares ??= [];
+    return config.hostShares ?? null;
+  }
+  if (projectPath) {
+    const abs = resolve(projectPath);
+    if (create) (config.projectShares ??= {})[abs] ??= [];
+    return config.projectShares?.[abs] ?? null;
+  }
+  const sid = shareKeyForChat(chatId);
+  if (create) (config.shares ??= {})[sid] ??= [];
+  return config.shares?.[sid] ?? null;
+}
+
+function currentShare(scope) {
+  let emails = [];
+  try {
+    emails = shareListFor(scope, false) ?? [];
+  } catch {
+    emails = []; // a chat with no session id yet simply has no shares
+  }
+  return { ...scope, emails };
+}
+
+/** Projects a guest may start new chats in (never new projects). */
+function guestProjectPaths(guest) {
+  const email = guest.email;
+  return [...agent.projects.keys()].filter((p) => hasHostAccess(email) || projectSharedWith(p, email));
+}
+
 function guestState(guest) {
   const allowed = guestChatIds(guest);
+  const openable = new Set(guestProjectPaths(guest));
   const snapshot = stateSnapshot();
   return {
     ...snapshot,
     guest: true,
     projects: snapshot.projects
-      .map((p) => ({ ...p, chats: p.chats.filter((c) => allowed.has(c.id)) }))
-      .filter((p) => p.chats.length),
+      .map((p) => ({ ...p, chats: p.chats.filter((c) => allowed.has(c.id)), canCreate: openable.has(p.path) }))
+      // a shared project stays visible even with no chats yet — the guest may start one
+      .filter((p) => p.chats.length || openable.has(p.path)),
   };
 }
 
@@ -619,7 +691,7 @@ function guestCanSee(guest, obj) {
 }
 
 /** The commands allowed to guests (and only on their own chats). */
-const GUEST_TYPES = new Set(['send', 'history', 'focus']);
+const GUEST_TYPES = new Set(['send', 'history', 'focus', 'create_chat', 'list_sessions', 'open_session', 'attachments']);
 
 function startRelay() {
   if (!config.relay?.token) return;
@@ -852,43 +924,36 @@ const handlers = {
     ws.watching = chatId ?? null;
   },
 
-  /** Grant/revoke access to a chat by email. The key is the stable sessionId. */
-  share_chat(ws, { chatId, email }) {
-    const chat = findChat(chatId);
-    const sid = chat.sessionId ?? chat.resumeId;
-    if (!sid) throw new Error('this chat has no session id yet — send at least one message into it');
-    config.shares ??= {};
-    const emails = (config.shares[sid] ??= []);
+  /** Who this chat / project / host is shared with right now. */
+  list_shares(ws, { chatId, projectPath, host }) {
+    send(ws, { type: 'share_result', ...currentShare({ chatId, projectPath, host }) });
+  },
+
+  /** Grant access at whichever level was asked for. */
+  share_scope(ws, { chatId, projectPath, host, email }) {
     const clean = String(email).trim().toLowerCase();
-    if (!emails.includes(clean)) emails.push(clean);
+    if (!clean.includes('@')) throw new Error('that does not look like an email');
+    const list = shareListFor({ chatId, projectPath, host }, true);
+    if (!list.includes(clean)) list.push(clean);
     saveConfig(config);
     announceShares();
-    send(ws, { type: 'share_result', chatId, emails });
+    broadcast(stateSnapshot()); // guests may have just gained a project
+    send(ws, { type: 'share_result', ...currentShare({ chatId, projectPath, host }) });
   },
 
-  /** Who this chat is shared with right now — for the share dialog. */
-  list_shares(ws, { chatId }) {
-    const chat = findChat(chatId);
-    const sid = chat.sessionId ?? chat.resumeId;
-    send(ws, { type: 'share_result', chatId, emails: (sid && config.shares?.[sid]) ?? [], sessionId: sid ?? null });
-  },
-
-  /** Revoke one guest, or everyone when no email is given. */
-  unshare_chat(ws, { chatId, email }) {
-    const chat = findChat(chatId);
-    const sid = chat.sessionId ?? chat.resumeId;
-    if (sid && config.shares?.[sid]) {
-      if (email) {
-        const clean = String(email).trim().toLowerCase();
-        config.shares[sid] = config.shares[sid].filter((e) => e !== clean);
-        if (!config.shares[sid].length) delete config.shares[sid];
-      } else {
-        delete config.shares[sid];
-      }
+  unshare_scope(ws, { chatId, projectPath, host, email }) {
+    const clean = String(email ?? '').trim().toLowerCase();
+    const list = shareListFor({ chatId, projectPath, host }, false);
+    if (list) {
+      const kept = clean ? list.filter((e) => e !== clean) : [];
+      if (host) config.hostShares = kept;
+      else if (projectPath) config.projectShares[resolve(projectPath)] = kept;
+      else config.shares[shareKeyForChat(chatId)] = kept;
       saveConfig(config);
       announceShares();
+      broadcast(stateSnapshot());
     }
-    send(ws, { type: 'share_result', chatId, emails: (sid && config.shares?.[sid]) ?? [] });
+    send(ws, { type: 'share_result', ...currentShare({ chatId, projectPath, host }) });
   },
 
   /**
@@ -1294,6 +1359,9 @@ function dispatch(ws, raw) {
     if (ws.guest) {
       if (!GUEST_TYPES.has(msg.type)) throw new Error('only the host owner can do that');
       if (msg.chatId && !guestChatIds(ws.guest).has(msg.chatId)) throw new Error('no access to this chat');
+      // a guest may start chats in a shared project, but never reach another one
+      if (msg.projectPath && !guestProjectPaths(ws.guest).includes(resolve(msg.projectPath)))
+        throw new Error('no access to this project');
     }
     // async handlers must deliver their errors to the client too
     Promise.resolve(handlers[msg.type]?.(ws, msg)).catch((e) =>

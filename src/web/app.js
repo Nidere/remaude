@@ -390,9 +390,8 @@ const handlers = {
     );
   },
 
-  share_result({ chatId, emails }) {
-    if (chatId !== activeChatId) return;
-    renderShares(emails);
+  share_result({ emails }) {
+    if (!$('share-panel').hidden) renderShares(emails);
   },
 
   server_restarting() {
@@ -751,7 +750,17 @@ function renderSidebar() {
         e.stopPropagation();
         sendTo(hostId, { type: 'list_root' });
       };
-      actions.append(btnAdd);
+      const btnShare = el('button', '', '🔗');
+      btnShare.title = 'share this whole computer';
+      btnShare.onclick = (e) => {
+        e.stopPropagation();
+        openShare(
+          { host: true, hostId },
+          'Host access',
+          'A guest can write into every chat on this machine, and chats run in bypass — that is command execution on your computer under your account. Share a host only with someone you trust that far.'
+        );
+      };
+      actions.append(btnAdd, btnShare);
       head.append(actions);
     }
     if (editMode && !hostState.guest && meta) {
@@ -811,8 +820,18 @@ function renderHostProjects(root, hostId, hostState) {
       const btnOld = el('button', '', '⏳');
       btnOld.title = 'past chats';
       btnOld.onclick = () => sendTo(hostId, { type: 'list_sessions', projectPath: p.path });
+      const btnShare = el('button', '', '🔗');
+      btnShare.title = 'share the whole project';
+      btnShare.onclick = (e) => {
+        e.stopPropagation();
+        openShare(
+          { projectPath: p.path, hostId },
+          `Project access · ${shortPath(p.path)}`,
+          'Guests see every chat in this project, including ones created later, and may start new chats here.'
+        );
+      };
       // no delete outside edit mode: removing things is what edit mode is for
-      actions.append(btnNew, btnOld);
+      actions.append(btnNew, btnOld, btnShare);
       head.append(name, actions);
     } else {
       head.append(name);
@@ -1451,7 +1470,24 @@ document.addEventListener('keydown', (e) => {
 });
 
 // sharing the active chat
-// ---------- sharing ----------
+// ---------- sharing: one dialog for a chat, a project or a whole host ----------
+
+let shareScope = null; // {chatId} | {projectPath} | {host:true}, plus hostId to route to
+
+function openShare(scope, title, warning) {
+  shareScope = scope;
+  $('share-title').textContent = title;
+  $('share-warning').textContent = warning ?? '';
+  $('share-warning').hidden = !warning;
+  $('share-list').innerHTML = '<div class="share-empty">loading…</div>';
+  $('share-email').value = '';
+  $('share-panel').hidden = false;
+  sendTo(scope.hostId, { type: 'list_shares', ...scopeArgs(scope) });
+}
+
+function scopeArgs({ chatId, projectPath, host }) {
+  return chatId ? { chatId } : projectPath ? { projectPath } : { host };
+}
 
 function renderShares(emails) {
   const list = $('share-list');
@@ -1466,7 +1502,7 @@ function renderShares(emails) {
     row.append(el('span', 'share-email', email));
     const drop = el('button', 'share-drop', '✕');
     drop.title = 'revoke access';
-    drop.onclick = () => sendTo(chatHostId(activeChatId), { type: 'unshare_chat', chatId: activeChatId, email });
+    drop.onclick = () => sendTo(shareScope.hostId, { type: 'unshare_scope', ...scopeArgs(shareScope), email });
     row.append(drop);
     list.append(row);
   }
@@ -1474,10 +1510,7 @@ function renderShares(emails) {
 
 $('share-btn').onclick = () => {
   if (!activeChatId) return;
-  $('share-list').innerHTML = '<div class="share-empty">loading…</div>';
-  $('share-email').value = '';
-  $('share-panel').hidden = false;
-  sendTo(chatHostId(activeChatId), { type: 'list_shares', chatId: activeChatId });
+  openShare({ chatId: activeChatId, hostId: chatHostId(activeChatId) }, 'Chat access');
 };
 $('share-close').onclick = () => ($('share-panel').hidden = true);
 $('share-panel').addEventListener('click', (e) => {
@@ -1486,8 +1519,8 @@ $('share-panel').addEventListener('click', (e) => {
 $('share-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const email = $('share-email').value.trim();
-  if (!email || !activeChatId) return;
-  sendTo(chatHostId(activeChatId), { type: 'share_chat', chatId: activeChatId, email });
+  if (!email || !shareScope) return;
+  sendTo(shareScope.hostId, { type: 'share_scope', ...scopeArgs(shareScope), email });
   $('share-email').value = '';
 });
 

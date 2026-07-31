@@ -544,8 +544,7 @@ function linksFor(email) {
   for (const [ownerEmail, links] of hostLinks) {
     if (ownerEmail === email) continue;
     for (const link of links) {
-      const sessions = (link.shares ?? []).filter((s) => s.emails?.includes(email)).map((s) => s.sessionId);
-      if (sessions.length) result.push({ link, guest: { email, sessions } });
+      if ((link.shareEmails ?? []).includes(email)) result.push({ link, guest: { email } });
     }
   }
   return result;
@@ -665,7 +664,10 @@ function attachHost(ws, info, ip) {
       const data = tagged(msg.data, link.hostId);
       for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(data);
     } else if (msg.t === 'shares') {
-      link.shares = Array.isArray(msg.shares) ? msg.shares : [];
+      // just the guest list: the host decides what each of them may see
+      link.shareEmails = Array.isArray(msg.emails)
+        ? msg.emails
+        : (msg.shares ?? []).flatMap((s) => s.emails ?? []); // older hosts sent per-session grants
       refreshBrowsers(); // a new share may open a slot for the guest right away
     } else if (msg.t === 'push') {
       pushToUser(info.email, { url: BASE_URL, ...msg.payload });

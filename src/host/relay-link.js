@@ -69,9 +69,12 @@ export class RelayLink extends EventEmitter {
     else throw new Error('no connection to the relay');
   }
 
-  /** Announce the current list of shares to the relay: [{sessionId, emails}] */
-  setShares(shares) {
-    if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'shares', shares }));
+  /**
+   * Tell the relay which emails have any access here. Which chats they end up
+   * seeing is the host's decision, so the relay never learns the grants.
+   */
+  setShares(emails) {
+    if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'shares', emails }));
   }
 
   stop() {
