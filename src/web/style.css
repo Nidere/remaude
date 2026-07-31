@@ -106,6 +106,14 @@ body {
   padding: 0;
 }
 .project-actions button:hover { border-color: var(--accent); color: var(--text); }
+/* закрытие проекта — только по наведению, как у чатов */
+.project-close { display: none; }
+.project-head:hover .project-close { display: block; }
+
+/* на тач-устройствах наведения нет — показываем действия всегда */
+@media (hover: none) {
+  .project-close, .chat-actions { display: flex; }
+}
 
 .chat-item {
   padding: 7px 16px 7px 24px;
