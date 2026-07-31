@@ -3,7 +3,7 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync, existsSync, statSync, readdirSync, openSync, mkdirSync } from 'node:fs';
-import { homedir, userInfo } from 'node:os';
+import { homedir, userInfo, hostname } from 'node:os';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { HostAgent } from './agent.js';
 import { listSessions, loadHistory } from './transcripts.js';
+import { RelayLink } from './relay-link.js';
 
 const PORT = 7699;
 const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'web');
@@ -201,6 +202,51 @@ async function refreshLimits(force = false) {
   }
 }
 
+// ---------- relay: туннель для удалённых браузеров ----------
+
+const RELAY_DEFAULT_URL = 'https://remaude.nidere.com';
+let relayLink = null;
+const virtualClients = new Map(); // id -> VirtualClient
+
+/** Удалённый браузер, живущий за туннелем relay — с интерфейсом обычного ws-клиента. */
+class VirtualClient {
+  readyState = 1;
+  OPEN = 1;
+  constructor(id) {
+    this.id = id;
+  }
+  send(data) {
+    relayLink?.sendTo(this.id, data);
+  }
+}
+
+function startRelay() {
+  if (!config.relay?.token) return;
+  relayLink?.stop();
+  relayLink = new RelayLink(config.relay.url ?? RELAY_DEFAULT_URL, config.relay.token);
+  relayLink.on('client_open', (id) => {
+    const vc = new VirtualClient(id);
+    virtualClients.set(id, vc);
+    initClient(vc);
+  });
+  relayLink.on('client_msg', (id, data) => {
+    const vc = virtualClients.get(id);
+    if (vc) dispatch(vc, data);
+  });
+  relayLink.on('client_close', (id) => {
+    clients.delete(virtualClients.get(id));
+    virtualClients.delete(id);
+  });
+  relayLink.on('down', () => {
+    for (const vc of virtualClients.values()) clients.delete(vc);
+    virtualClients.clear();
+  });
+  relayLink.on('status', (up) => {
+    console.log(`relay ${up ? 'connected' : 'disconnected'}`);
+    broadcast({ type: 'relay_status', paired: true, connected: up });
+  });
+}
+
 // ---------- WebSocket ----------
 
 function broadcast(obj) {
@@ -355,7 +401,32 @@ const handlers = {
   },
 
   get_settings(ws) {
-    send(ws, { type: 'settings', userName, projectsRoot });
+    send(ws, {
+      type: 'settings',
+      userName,
+      projectsRoot,
+      relay: {
+        paired: Boolean(config.relay?.token),
+        connected: relayLink?.connected ?? false,
+        url: config.relay?.url ?? RELAY_DEFAULT_URL,
+      },
+    });
+  },
+
+  /** Привязка к relay одноразовым кодом с сайта. */
+  async pair_relay(ws, { code, url }) {
+    const base = (url ?? config.relay?.url ?? RELAY_DEFAULT_URL).replace(/\/$/, '');
+    const res = await fetch(base + '/pair', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: String(code).trim(), name: hostname() }),
+    });
+    if (!res.ok) throw new Error('relay не принял код (истёк или опечатка)');
+    const { token } = await res.json();
+    config.relay = { url: base, token };
+    saveConfig(config);
+    startRelay();
+    handlers.get_settings(ws);
   },
 
   set_settings(ws, { userName: newName, projectsRoot: newRoot }) {
@@ -435,7 +506,8 @@ const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 // ws переизлучает ошибки httpServer на себя; без слушателя это роняет процесс
 // раньше, чем сработает наш listen-ретрай ниже (проверено experiments/listen-retry-min.mjs)
 wss.on('error', () => {});
-wss.on('connection', (ws) => {
+/** Единая инициализация клиента — локального WS и туннельного через relay. */
+function initClient(ws) {
   clients.add(ws);
   send(ws, stateSnapshot());
   if (lastLimits) send(ws, { type: 'limits', limits: lastLimits });
@@ -451,20 +523,30 @@ wss.on('connection', (ws) => {
       suggestions: p.suggestions,
     });
   }
-  ws.on('message', (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(raw);
-      // async-обработчики тоже должны доносить ошибки до клиента
-      Promise.resolve(handlers[msg.type]?.(ws, msg)).catch((e) =>
-        send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type })
-      );
-    } catch (e) {
-      send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type });
-    }
-  });
+  if (relayLink) send(ws, { type: 'relay_status', paired: true, connected: relayLink.connected });
+}
+
+/** Единый диспетчер входящих сообщений. */
+function dispatch(ws, raw) {
+  let msg;
+  try {
+    msg = JSON.parse(raw);
+    // async-обработчики тоже должны доносить ошибки до клиента
+    Promise.resolve(handlers[msg.type]?.(ws, msg)).catch((e) =>
+      send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type })
+    );
+  } catch (e) {
+    send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type });
+  }
+}
+
+wss.on('connection', (ws) => {
+  initClient(ws);
+  ws.on('message', (raw) => dispatch(ws, raw));
   ws.on('close', () => clients.delete(ws));
 });
+
+startRelay();
 
 // Ретрай listen: при самоперезапуске новая копия ждёт, пока старая отпустит порт.
 let listenAttempts = 0;

@@ -1,0 +1,68 @@
+# Деплой relay на Lightsail-инстанс remaude-relay (3.67.190.45).
+# Секреты берутся из AWS Secrets Manager (remaude/google-oauth) и уезжают
+# на сервер как .env — мимо гита и чатов.
+$ErrorActionPreference = 'Stop'
+$pem = "$env:USERPROFILE\.remaude\lightsail-remaude.pem"
+$target = 'ubuntu@3.67.190.45'
+$sshOpts = @('-i', $pem, '-o', 'StrictHostKeyChecking=accept-new')
+$repo = Split-Path $PSScriptRoot -Parent
+
+# 1. env из Secrets Manager
+$sec = (aws secretsmanager get-secret-value --secret-id remaude/google-oauth --region eu-central-1 | ConvertFrom-Json).SecretString | ConvertFrom-Json
+$envContent = @(
+  "GOOGLE_CLIENT_ID=$($sec.clientId)"
+  "GOOGLE_CLIENT_SECRET=$($sec.clientSecret)"
+  'WHITELIST=nikita@nidere.com,alexmsal@gmail.com'
+  'BASE_URL=https://remaude.nidere.com'
+  'PORT=8080'
+  'STATE_PATH=/opt/remaude/relay-state.json'
+) -join "`n"
+$tmpEnv = "$env:TEMP\remaude-relay.env"
+[IO.File]::WriteAllText($tmpEnv, $envContent + "`n", [Text.UTF8Encoding]::new($false))
+
+# 2. код + окружение на сервер
+ssh @sshOpts $target 'mkdir -p /opt/remaude/src'
+scp @sshOpts -r "$repo\src\relay" "$repo\src\web" "${target}:/opt/remaude/src/"
+scp @sshOpts "$repo\package.json" "$repo\package-lock.json" "${target}:/opt/remaude/"
+scp @sshOpts $tmpEnv "${target}:/opt/remaude/.env"
+Remove-Item $tmpEnv -Force
+
+# 3. зависимости + systemd + caddy
+$remote = @'
+set -e
+cd /opt/remaude
+npm ci --omit=dev 2>&1 | tail -1
+chmod 600 .env
+sudo tee /etc/systemd/system/remaude-relay.service > /dev/null <<'UNIT'
+[Unit]
+Description=remaude relay
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /opt/remaude/src/relay/relay.js
+EnvironmentFile=/opt/remaude/.env
+Restart=always
+RestartSec=3
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo tee /etc/caddy/Caddyfile > /dev/null <<'CADDY'
+remaude.nidere.com {
+    reverse_proxy 127.0.0.1:8080
+}
+CADDY
+sudo systemctl daemon-reload
+sudo systemctl enable --now remaude-relay
+sudo systemctl restart remaude-relay caddy
+sleep 2
+systemctl is-active remaude-relay caddy
+'@
+$remote = $remote -replace "`r`n", "`n"
+$tmpSh = "$env:TEMP\remaude-deploy.sh"
+[IO.File]::WriteAllText($tmpSh, $remote, [Text.UTF8Encoding]::new($false))
+scp @sshOpts $tmpSh "${target}:/tmp/deploy.sh"
+Remove-Item $tmpSh -Force
+ssh @sshOpts $target 'bash /tmp/deploy.sh && rm /tmp/deploy.sh'
+Write-Host 'deploy done'

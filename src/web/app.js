@@ -15,7 +15,7 @@ const attachments = []; // {mediaType, data(base64), url}
 const outbox = []; // сообщения, отправленные до открытия WS
 
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.onopen = () => {
     $('conn-dot').classList.add('on');
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
@@ -189,10 +189,15 @@ const handlers = {
     $('conn-dot').classList.remove('on');
   },
 
-  settings({ userName, projectsRoot }) {
+  settings({ userName, projectsRoot, relay }) {
     $('set-username').value = userName ?? '';
     $('set-root').value = projectsRoot ?? '';
+    renderRelayStatus(relay);
     $('settings').hidden = false;
+  },
+
+  relay_status(relay) {
+    renderRelayStatus(relay);
   },
 
   error({ message }) {
@@ -758,6 +763,21 @@ $('effort-select').addEventListener('change', function () {
 });
 
 // настройки
+function renderRelayStatus(relay) {
+  const node = $('relay-status');
+  if (!node) return;
+  if (!relay?.paired) node.textContent = 'relay: не привязан';
+  else node.textContent = relay.connected ? 'relay: подключён ✓' : 'relay: привязан, нет соединения…';
+  node.className = relay?.connected ? 'ok' : '';
+}
+
+$('pair-btn').onclick = () => {
+  const code = $('set-pair-code').value.trim();
+  if (!code) return;
+  send({ type: 'pair_relay', code });
+  $('set-pair-code').value = '';
+};
+
 $('settings-btn').onclick = () => send({ type: 'get_settings' });
 $('settings-cancel').onclick = () => ($('settings').hidden = true);
 $('settings').addEventListener('click', (e) => {
