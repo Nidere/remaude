@@ -86,13 +86,52 @@ for (const p of config.projects) {
   }
 }
 
+// ---------- переживание рестартов: открытые чаты сохраняются и переоткрываются ----------
+
+function saveOpenChats() {
+  config.openChats = [...agent.allChats()]
+    .filter((c) => c.status !== 'closed' && (c.sessionId || c.resumeId))
+    .map((c) => ({
+      projectPath: c.cwd,
+      sessionId: c.sessionId ?? c.resumeId,
+      title: c.title ?? null,
+      permissionMode: c.permissionMode,
+    }));
+  saveConfig(config);
+}
+
+/** Общий путь открытия сохранённой сессии (open_session и автоподнятие при старте). */
+function openSavedSession(projectPath, sessionId, { permissionMode, title } = {}) {
+  for (const chat of agent.allChats()) {
+    if (chat.sessionId === sessionId || chat.resumeId === sessionId) return chat;
+  }
+  const abs = resolve(projectPath);
+  const chat = agent.createChat(abs, { resume: sessionId, permissionMode });
+  chat.resumeId = sessionId;
+  chat.title = title ?? null;
+  chatHistories.set(chat.id, loadHistory(abs, sessionId, { defaultAuthor: userName }));
+  return chat;
+}
+
+for (const oc of config.openChats ?? []) {
+  try {
+    openSavedSession(oc.projectPath, oc.sessionId, oc);
+    console.log(`reopened: ${oc.title ?? oc.sessionId}`);
+  } catch (e) {
+    console.error(`reopen failed: ${oc.sessionId} (${e.message})`);
+  }
+}
+
 agent.on('chat_message', ({ chatId, msg }) => {
   // Пользовательский ввод рассылаем сами в handleSend (иначе дубли с replay'ем SDK),
   // поэтому чистые текстовые user-сообщения основного диалога здесь пропускаем.
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
   if (msg.type !== 'stream_event') pushHistory(chatId, msg);
   broadcast({ type: 'chat_message', chatId, msg });
-  if (msg.type === 'system' && msg.subtype === 'init') sendChatMeta(chatId);
+  if (msg.type === 'system' && msg.subtype === 'init') {
+    sendChatMeta(chatId);
+    saveOpenChats(); // sessionId стал известен — зафиксировать для переоткрытия
+  }
   if (msg.type === 'result') {
     refreshLimits(true);
     sendChatMeta(chatId);
@@ -256,19 +295,13 @@ const handlers = {
 
   /** Возобновить сохранённую сессию: история — из транскрипта, контекст — resume в SDK. */
   open_session(ws, { projectPath, sessionId, permissionMode }) {
-    for (const chat of agent.allChats()) {
-      if (chat.sessionId === sessionId || chat.resumeId === sessionId) {
-        send(ws, { type: 'chat_created', chatId: chat.id, projectPath });
-        return;
-      }
-    }
     const abs = resolve(projectPath);
-    const history = loadHistory(abs, sessionId);
     const meta = listSessions(abs).find((s) => s.id === sessionId);
-    const chat = agent.createChat(abs, { resume: sessionId, permissionMode });
-    chat.resumeId = sessionId;
-    chat.title = meta?.title ?? meta?.preview?.slice(0, 60) ?? null;
-    chatHistories.set(chat.id, history);
+    const chat = openSavedSession(abs, sessionId, {
+      permissionMode,
+      title: meta?.title ?? meta?.preview?.slice(0, 60) ?? null,
+    });
+    saveOpenChats();
     broadcast(stateSnapshot());
     send(ws, { type: 'chat_created', chatId: chat.id, projectPath: abs });
   },
@@ -279,6 +312,7 @@ const handlers = {
 
   set_permission_mode(ws, { chatId, mode }) {
     findChat(chatId).setPermissionMode(mode);
+    saveOpenChats();
     broadcast({ type: 'permission_mode', chatId, mode });
   },
 
@@ -296,6 +330,7 @@ const handlers = {
 
   rename_chat(ws, { chatId, title }) {
     findChat(chatId).title = String(title).slice(0, 80);
+    saveOpenChats();
     broadcast(stateSnapshot());
   },
 
@@ -305,6 +340,7 @@ const handlers = {
     chat.close();
     for (const p of agent.projects.values()) p.chats.delete(chatId);
     chatHistories.delete(chatId);
+    saveOpenChats();
     broadcast(stateSnapshot());
   },
 

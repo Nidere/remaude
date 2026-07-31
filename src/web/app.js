@@ -44,10 +44,22 @@ const handlers = {
   state({ projects }) {
     cachedProjects = projects;
     renderSidebar(projects);
-    // после перезагрузки страницы возвращаемся в последний открытый чат
+    // после перезагрузки страницы возвращаемся в последний открытый чат;
+    // после рестарта сервера id другие — ищем по session id
     if (!activeChatId) {
       const last = localStorage.getItem('lastChat');
       if (last && chats.has(last)) selectChat(last);
+      else {
+        const lastSession = localStorage.getItem('lastSession');
+        if (lastSession) {
+          for (const [id, chat] of chats) {
+            if (chat.sessionId === lastSession) {
+              selectChat(id);
+              break;
+            }
+          }
+        }
+      }
     }
   },
 
@@ -229,6 +241,7 @@ function selectChat(chatId) {
   activeChatId = chatId;
   localStorage.setItem('lastChat', chatId);
   const chat = getChat(chatId);
+  if (chat.sessionId) localStorage.setItem('lastSession', chat.sessionId);
   $('input').value = chat.draftText ?? '';
   $('input').dispatchEvent(new Event('input')); // пересчёт высоты
   attachments.length = 0;
@@ -293,6 +306,7 @@ function renderSdkMessage(chatId, msg) {
         const node = el('div', 'msg msg-assistant md-body', '');
         node.innerHTML = mdToHtml(block.text);
         node.title = msg.timestamp ? new Date(msg.timestamp).toLocaleString() : new Date().toLocaleString();
+        node.append(el('span', 'msg-time', fmtTime(msg.timestamp)));
         const copyBtn = el('button', 'copy-btn', '⧉');
         copyBtn.title = 'скопировать как markdown';
         const source = block.text;
@@ -447,6 +461,7 @@ function renderSidebar(projects) {
       const chat = getChat(c.id, p.path);
       chat.status = c.status;
       chat.title = c.title;
+      chat.sessionId = c.sessionId;
       if (c.model) chat.model = c.model;
       if (c.permissionMode) chat.mode = c.permissionMode;
       const labelText = c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'новый');

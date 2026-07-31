@@ -78,7 +78,7 @@ export function listSessions(cwd) {
  * История сессии в виде псевдо-SDK-сообщений — ровно то, что умеет рендерить
  * веб-клиент (type/message/parent_tool_use_id).
  */
-export function loadHistory(cwd, sessionId) {
+export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
   const dir = sessionDir(cwd);
   if (!dir) return [];
   const file = join(dir, `${sessionId}.jsonl`);
@@ -93,11 +93,17 @@ export function loadHistory(cwd, sessionId) {
       continue;
     }
     if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message || entry.isMeta) continue;
+    const isPlainUserText =
+      entry.type === 'user' &&
+      !entry.isSidechain &&
+      !(Array.isArray(entry.message.content) && entry.message.content.some((b) => b.type === 'tool_result'));
     messages.push({
       type: entry.type,
       message: entry.message,
       parent_tool_use_id: entry.isSidechain ? (entry.parentToolUseId ?? 'past-sidechain') : null,
       timestamp: entry.timestamp ?? null,
+      // в транскрипте автора нет — исторические сообщения подписываем владельцем хоста
+      author: isPlainUserText ? defaultAuthor : undefined,
     });
   }
   return messages;
