@@ -553,8 +553,29 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
     }
     // an ordinary user message; already on screen if we drew it optimistically
     if (msg.localId && chat.feedEl.querySelector(`[data-local-id="${msg.localId}"]`)) return;
+    // belt and braces: the same text may come back without our localId (host
+    // restart, transcript tail, a second delivery path). Adopt the optimistic
+    // bubble instead of stacking a copy under it.
+    const plainText =
+      typeof content === 'string'
+        ? content
+        : (content ?? [])
+            .filter((b) => b.type === 'text')
+            .map((b) => b.text)
+            .join('');
+    if (plainText) {
+      for (const prev of chat.feedEl.querySelectorAll('.msg-user[data-pending-text]')) {
+        if (prev.dataset.pendingText !== plainText) continue;
+        delete prev.dataset.pendingText;
+        if (msg.author && !prev.querySelector('.msg-author'))
+          prev.prepend(el('div', 'msg-author', msg.author)); // the echo knows who sent it
+        return;
+      }
+    }
     const bubble = el('div', 'msg msg-user', '');
     if (msg.localId) bubble.dataset.localId = msg.localId;
+    // ours until the echo confirms it; the echo then matches by this text
+    if (msg.localId && !msg.author && plainText) bubble.dataset.pendingText = plainText;
     if (msg.author) bubble.append(el('div', 'msg-author', msg.author));
     if (typeof content === 'string') bubble.append(document.createTextNode(content));
     else

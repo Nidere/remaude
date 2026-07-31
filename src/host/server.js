@@ -145,6 +145,9 @@ agent.on('chat_message', ({ chatId, msg }) => {
   // We broadcast user input ourselves in handleSend (otherwise it duplicates with the SDK's
   // replay), so plain text user messages of the main dialogue are skipped here.
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
+  // replies to harness continuations ("No response requested.") are noise in a
+  // chat feed — filtered here as well as in the transcript reader
+  if (msg.type === 'assistant' && msg.parent_tool_use_id === null && isHarnessNoise(msg)) return;
   if (msg.type !== 'stream_event') pushHistory(chatId, msg);
   broadcast({ type: 'chat_message', chatId, msg });
   if (msg.type === 'system' && msg.subtype === 'init') {
@@ -229,6 +232,18 @@ agent.on('chat_status', ({ chatId, status }) => broadcast({ type: 'chat_status',
 agent.on('chat_error', ({ chatId, error }) =>
   broadcast({ type: 'chat_error', chatId, error: String(error?.message ?? error) })
 );
+
+/** The harness's stand-in for "this turn needs no answer". */
+function isHarnessNoise(msg) {
+  const content = msg.message?.content;
+  if (!Array.isArray(content)) return false;
+  const text = content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim();
+  return text === 'No response requested.';
+}
 
 function hasToolResult(msg) {
   const content = msg.message?.content;
