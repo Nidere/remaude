@@ -841,6 +841,8 @@ $('claude-login-send').onclick = () => {
 function renderRelayStatus(relay) {
   const node = $('relay-status');
   if (!node) return;
+  $('set-relay-url').value = relay?.url ?? '';
+  $('set-relay-url').parentElement.hidden = Boolean(relay?.paired); // привязан — адрес менять незачем
   if (!relay?.paired) node.textContent = 'relay: не привязан';
   else node.textContent = relay.connected ? 'relay: подключён ✓' : 'relay: привязан, нет соединения…';
   node.className = relay?.connected ? 'ok' : '';
@@ -849,7 +851,7 @@ function renderRelayStatus(relay) {
 $('pair-btn').onclick = () => {
   const code = $('set-pair-code').value.trim();
   if (!code) return;
-  send({ type: 'pair_relay', code });
+  send({ type: 'pair_relay', code, url: $('set-relay-url').value.trim() || undefined });
   $('set-pair-code').value = '';
 };
 
@@ -882,7 +884,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 $('notify-btn').onclick = async function () {
   try {
     const keyRes = await fetch('/api/push/key');
-    if (!keyRes.ok) throw new Error('уведомления работают только через remaude.nidere.com');
+    if (!keyRes.ok) throw new Error('уведомления работают только через relay (не с localhost)');
     const { publicKey } = await keyRes.json();
     if ((await Notification.requestPermission()) !== 'granted') throw new Error('разрешение на уведомления не дано');
     const reg = await navigator.serviceWorker.ready;

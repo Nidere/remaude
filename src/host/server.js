@@ -220,7 +220,9 @@ async function refreshLimits(force = false) {
 
 // ---------- relay: туннель для удалённых браузеров ----------
 
-const RELAY_DEFAULT_URL = 'https://remaude.nidere.com';
+// Адрес relay берётся из окружения (его прописывает установщик) или из конфига;
+// зашитых доменов в коде нет — проект разворачивается кем угодно.
+const RELAY_DEFAULT_URL = process.env.REMAUDE_RELAY_URL ?? config.relayUrl ?? null;
 let relayLink = null;
 const virtualClients = new Map(); // id -> VirtualClient
 const pendingDeviceApprovals = new Map(); // code -> ws, ждущий ответа relay
@@ -555,7 +557,7 @@ const handlers = {
       relay: {
         paired: Boolean(config.relay?.token),
         connected: relayLink?.connected ?? false,
-        url: config.relay?.url ?? RELAY_DEFAULT_URL,
+        url: config.relay?.url ?? RELAY_DEFAULT_URL ?? '',
       },
       claudeAuth: await claudeAuthStatus(),
     });
@@ -599,7 +601,8 @@ const handlers = {
       relayLink.approveDevice(code);
       return;
     }
-    const base = (url ?? config.relay?.url ?? RELAY_DEFAULT_URL).replace(/\/$/, '');
+    const base = String(url ?? config.relay?.url ?? RELAY_DEFAULT_URL ?? '').replace(/\/$/, '');
+    if (!base) throw new Error('не задан адрес relay (укажи его в настройках)');
     const res = await fetch(base + '/pair', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

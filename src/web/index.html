@@ -100,11 +100,14 @@
       <div id="relay-block">
         <div id="relay-status">relay: не привязан</div>
         <div class="pair-row">
+          <input id="set-relay-url" placeholder="https://relay.example.com" spellcheck="false" />
+        </div>
+        <div class="pair-row">
           <input id="set-pair-code" placeholder="код с сайта" spellcheck="false" />
           <button id="pair-btn">Привязать</button>
         </div>
       </div>
-      <button id="notify-btn" title="Push при запросах разрешений и завершении задач (работает через remaude.nidere.com)">🔔 Включить уведомления</button>
+      <button id="notify-btn" title="Push при запросах разрешений и завершении задач (работает через relay, не с localhost)">🔔 Включить уведомления</button>
       <button id="restart-server" title="Живые чаты закроются, вернёшь их через «прошлые чаты»">⟳ Перезапустить сервер</button>
       <div id="settings-actions">
         <button id="settings-save">Сохранить</button>

@@ -1,4 +1,4 @@
-// remaude relay: публичная точка входа (remaude.nidere.com).
+// remaude relay: публичная точка входа (домен задаётся BASE_URL).
 // Браузеры: статика веб-UI + Google OAuth (whitelist) + WSS /ws.
 // Хосты: исходящий WSS /host?token=… ; пейринг: POST /pair {code}.
 // Контент чатов не хранится — только маршрутизация и учёт токенов хостов.
@@ -12,7 +12,7 @@ import { WebSocketServer } from 'ws';
 import webpush from 'web-push';
 
 const PORT = Number(process.env.PORT ?? 8080);
-const BASE_URL = process.env.BASE_URL ?? 'https://remaude.nidere.com';
+const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const WHITELIST = (process.env.WHITELIST ?? '')
@@ -48,7 +48,11 @@ if (!state.vapid) {
   saveState();
 }
 if (!state.pushSubs) state.pushSubs = {}; // email -> [subscription]
-webpush.setVapidDetails('mailto:nikita@nidere.com', state.vapid.publicKey, state.vapid.privateKey);
+webpush.setVapidDetails(
+  `mailto:${process.env.CONTACT_EMAIL ?? 'admin@example.com'}`,
+  state.vapid.publicKey,
+  state.vapid.privateKey
+);
 
 async function pushToUser(email, payload) {
   const subs = state.pushSubs[email] ?? [];
@@ -343,6 +347,14 @@ const httpServer = createServer(async (req, res) => {
       res
         .writeHead(200, { 'content-type': 'application/json' })
         .end(JSON.stringify({ email, hostsOnline: (hostLinks.get(email) ?? new Set()).size }));
+      return;
+    }
+
+    // установщик хоста: подставляем адрес ЭТОГО relay, чтобы в репозитории
+    // не было ничьего домена и любой деплой обслуживал своих пользователей
+    if (url.pathname === '/install.sh') {
+      const script = (await readFile(join(WEB_ROOT, 'install.sh'), 'utf-8')).replaceAll('__RELAY_URL__', BASE_URL);
+      res.writeHead(200, { 'content-type': 'text/x-shellscript; charset=utf-8', 'cache-control': 'no-cache' }).end(script);
       return;
     }
 

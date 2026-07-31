@@ -1,7 +1,8 @@
 #!/bin/bash
 # Установщик хоста remaude для macOS.
-# Использование: curl -fsSL https://remaude.nidere.com/install.sh | bash
+# Раздаётся самим relay, который подставляет свой адрес вместо __RELAY_URL__.
 set -euo pipefail
+RELAY_URL="${REMAUDE_RELAY_URL:-__RELAY_URL__}"
 
 echo "== remaude: установка хоста (macOS) =="
 [ "$(uname)" = "Darwin" ] || { echo "Этот установщик — для macOS."; exit 1; }
@@ -69,6 +70,7 @@ cat > "$PLIST" <<EOF
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>REMAUDE_SUPERVISED</key><string>1</string>
+    <key>REMAUDE_RELAY_URL</key><string>$RELAY_URL</string>
   </dict>
 </dict></plist>
 EOF
@@ -79,7 +81,7 @@ sleep 2
 echo ""
 echo "== Готово! Хост remaude запущен и будет стартовать сам при входе в систему. =="
 echo "Осталось привязать его к аккаунту:"
-echo "  1. Открой https://remaude.nidere.com и войди через Google."
+echo "  1. Открой $RELAY_URL и войди через Google."
 echo "  2. Сайт покажет 6-значный код привязки."
 echo "  3. В открывшемся локальном remaude: ⚙ (настройки) → введи код → «Привязать»."
 open http://localhost:7699 2>/dev/null || true

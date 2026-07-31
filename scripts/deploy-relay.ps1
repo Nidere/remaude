@@ -1,27 +1,37 @@
-# Деплой relay на Lightsail-инстанс remaude-relay (3.67.190.45).
-# Секреты берутся из AWS Secrets Manager (remaude/google-oauth) и уезжают
-# на сервер как .env — мимо гита и чатов.
+# Деплой relay на инстанс. Все параметры инфраструктуры — в AWS Secrets Manager,
+# в репозитории их нет:
+#   remaude/google-oauth  {clientId, clientSecret}
+#   remaude/relay-deploy  {instanceIp, domain, whitelist, contactEmail, sshKeyPath}
 $ErrorActionPreference = 'Stop'
-$pem = "$env:USERPROFILE\.remaude\lightsail-remaude.pem"
-$target = 'ubuntu@3.67.190.45'
+$region = if ($env:REMAUDE_AWS_REGION) { $env:REMAUDE_AWS_REGION } else { 'eu-central-1' }
+
+function Get-Secret($id) {
+  (aws secretsmanager get-secret-value --secret-id $id --region $region | ConvertFrom-Json).SecretString | ConvertFrom-Json
+}
+
+$oauth = Get-Secret 'remaude/google-oauth'
+$cfg = Get-Secret 'remaude/relay-deploy'
+
+$pem = $cfg.sshKeyPath -replace '^~', $env:USERPROFILE
+$target = "ubuntu@$($cfg.instanceIp)"
 $sshOpts = @('-i', $pem, '-o', 'StrictHostKeyChecking=accept-new')
 $repo = Split-Path $PSScriptRoot -Parent
 
-# 1. env из Secrets Manager
-$sec = (aws secretsmanager get-secret-value --secret-id remaude/google-oauth --region eu-central-1 | ConvertFrom-Json).SecretString | ConvertFrom-Json
+# 1. окружение сервиса
 $envContent = @(
-  "GOOGLE_CLIENT_ID=$($sec.clientId)"
-  "GOOGLE_CLIENT_SECRET=$($sec.clientSecret)"
-  'WHITELIST=nikita@nidere.com,alexmsal@gmail.com'
-  'BASE_URL=https://remaude.nidere.com'
+  "GOOGLE_CLIENT_ID=$($oauth.clientId)"
+  "GOOGLE_CLIENT_SECRET=$($oauth.clientSecret)"
+  "WHITELIST=$($cfg.whitelist)"
+  "BASE_URL=https://$($cfg.domain)"
+  "CONTACT_EMAIL=$($cfg.contactEmail)"
   'PORT=8080'
   'STATE_PATH=/opt/remaude/relay-state.json'
 ) -join "`n"
 $tmpEnv = "$env:TEMP\remaude-relay.env"
 [IO.File]::WriteAllText($tmpEnv, $envContent + "`n", [Text.UTF8Encoding]::new($false))
 
-# 2. код + окружение на сервер. package.json у relay свой, минимальный:
-# корневой тянет весь Agent SDK, который на nano-инстансе не нужен и не влезает.
+# 2. код на сервер. package.json у relay свой, минимальный: корневой тянет весь
+# Agent SDK, который на nano-инстансе не нужен и не влезает по памяти.
 $relayPkg = '{"name":"remaude-relay","private":true,"type":"module","dependencies":{"ws":"^8.21.1","web-push":"^3.6.7"}}'
 $tmpPkg = "$env:TEMP\remaude-relay-pkg.json"
 [IO.File]::WriteAllText($tmpPkg, $relayPkg, [Text.UTF8Encoding]::new($false))
@@ -32,7 +42,7 @@ scp @sshOpts $tmpEnv "${target}:/opt/remaude/.env"
 Remove-Item $tmpEnv, $tmpPkg -Force
 
 # 3. зависимости + systemd + caddy
-$remote = @'
+$remote = @"
 set -e
 cd /opt/remaude
 rm -rf node_modules package-lock.json
@@ -54,7 +64,7 @@ User=ubuntu
 WantedBy=multi-user.target
 UNIT
 sudo tee /etc/caddy/Caddyfile > /dev/null <<'CADDY'
-remaude.nidere.com {
+$($cfg.domain) {
     reverse_proxy 127.0.0.1:8080
 }
 CADDY
@@ -63,7 +73,7 @@ sudo systemctl enable --now remaude-relay
 sudo systemctl restart remaude-relay caddy
 sleep 2
 systemctl is-active remaude-relay caddy
-'@
+"@
 $remote = $remote -replace "`r`n", "`n"
 $tmpSh = "$env:TEMP\remaude-deploy.sh"
 [IO.File]::WriteAllText($tmpSh, $remote, [Text.UTF8Encoding]::new($false))
