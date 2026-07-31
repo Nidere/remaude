@@ -1,0 +1,468 @@
+// remaude web-UI: тонкий клиент поверх WS-протокола хост-агента.
+
+const $ = (id) => document.getElementById(id);
+const feedHost = $('feed');
+
+let ws;
+let activeChatId = null;
+const chats = new Map(); // chatId -> {projectPath, status, feedEl, streamEl, streamText, chips:Map, subagents:Map, historyRequested}
+const attachments = []; // {mediaType, data(base64), url}
+
+// ---------- WS ----------
+
+const outbox = []; // сообщения, отправленные до открытия WS
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => {
+    $('conn-dot').classList.add('on');
+    while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
+    // после реконнекта история могла уехать — перезапросим для активного чата
+    for (const chat of chats.values()) chat.historyRequested = false;
+    if (activeChatId) requestHistory(activeChatId);
+  };
+  ws.onclose = () => {
+    $('conn-dot').classList.remove('on');
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handlers[msg.type]?.(msg);
+  };
+}
+
+function send(obj) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  else outbox.push(obj);
+}
+
+// ---------- входящие ----------
+
+const handlers = {
+  state({ projects }) {
+    renderSidebar(projects);
+  },
+
+  chat_created({ chatId }) {
+    selectChat(chatId);
+  },
+
+  chat_message({ chatId, msg }) {
+    renderSdkMessage(chatId, msg);
+  },
+
+  chat_status({ chatId, status }) {
+    const chat = chats.get(chatId);
+    if (chat) chat.status = status;
+    updateStatusDot(chatId, status);
+    if (chatId === activeChatId) updateComposerButtons(status);
+  },
+
+  chat_error({ chatId, error }) {
+    appendTo(chatId, el('div', 'error-banner', `ошибка: ${error}`));
+  },
+
+  permission_request({ requestId, chatId, toolName, input }) {
+    const box = el('div', 'permission');
+    box.dataset.requestId = requestId;
+    box.append(
+      el('div', 'perm-tool', `Разрешить ${toolName}?`),
+      el('pre', '', JSON.stringify(input, null, 2).slice(0, 2000))
+    );
+    const buttons = el('div', 'perm-buttons');
+    const allow = el('button', 'perm-allow', 'Разрешить');
+    const deny = el('button', 'perm-deny', 'Запретить');
+    allow.onclick = () =>
+      send({ type: 'permission_response', requestId, result: { behavior: 'allow', updatedInput: input } });
+    deny.onclick = () =>
+      send({ type: 'permission_response', requestId, result: { behavior: 'deny', message: 'Отклонено пользователем' } });
+    buttons.append(allow, deny);
+    box.append(buttons);
+    appendTo(chatId, box);
+  },
+
+  permission_closed({ requestId }) {
+    document.querySelectorAll(`[data-request-id="${requestId}"]`).forEach((b) => b.classList.add('closed'));
+  },
+
+  permission_mode({ chatId, mode }) {
+    if (chatId === activeChatId) setModeSelect(mode);
+  },
+
+  limits({ limits }) {
+    renderLimits(limits);
+  },
+
+  history({ chatId, messages }) {
+    const chat = getChat(chatId);
+    chat.feedEl.innerHTML = '';
+    chat.chips.clear();
+    chat.subagents.clear();
+    for (const m of messages) renderSdkMessage(chatId, m);
+  },
+
+  root_listing({ root, dirs, added, error }) {
+    $('picker-root').textContent = root;
+    const list = $('picker-list');
+    list.innerHTML = '';
+    if (error) list.append(el('div', 'picker-item added', `ошибка: ${error}`));
+    const addedSet = new Set(added.map((p) => p.toLowerCase()));
+    const sep = root.includes('\\') ? '\\' : '/';
+    for (const name of dirs) {
+      const isAdded = addedSet.has(`${root}${sep}${name}`.toLowerCase());
+      const item = el('div', `picker-item${isAdded ? ' added' : ''}`, name);
+      if (!isAdded)
+        item.onclick = () => {
+          send({ type: 'add_from_root', name });
+          $('picker').hidden = true;
+        };
+      list.append(item);
+    }
+    $('picker').hidden = false;
+  },
+
+  error({ message }) {
+    if (activeChatId) appendTo(activeChatId, el('div', 'error-banner', `ошибка: ${message}`));
+    else alert(message);
+  },
+};
+
+// ---------- модель чата ----------
+
+function getChat(chatId, projectPath) {
+  if (!chats.has(chatId)) {
+    const feedEl = document.createElement('div');
+    feedEl.style.display = 'contents';
+    chats.set(chatId, {
+      projectPath: projectPath ?? '',
+      status: 'idle',
+      feedEl,
+      streamEl: null,
+      streamText: '',
+      chips: new Map(),
+      subagents: new Map(),
+      historyRequested: false,
+    });
+  }
+  const chat = chats.get(chatId);
+  if (projectPath) chat.projectPath = projectPath;
+  return chat;
+}
+
+function requestHistory(chatId) {
+  const chat = getChat(chatId);
+  if (chat.historyRequested) return;
+  chat.historyRequested = true;
+  send({ type: 'history', chatId });
+}
+
+function selectChat(chatId) {
+  activeChatId = chatId;
+  const chat = getChat(chatId);
+  feedHost.innerHTML = '';
+  feedHost.append(chat.feedEl);
+  requestHistory(chatId);
+  $('chat-title').textContent = `${shortPath(chat.projectPath)} · ${chatId.slice(0, 8)}`;
+  updateComposerButtons(chat.status);
+  document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
+  $('input').focus();
+  scrollToBottom(true);
+}
+
+// ---------- рендер SDK-сообщений ----------
+
+function renderSdkMessage(chatId, msg) {
+  const chat = getChat(chatId);
+
+  if (msg.type === 'stream_event') {
+    const ev = msg.event;
+    if (msg.parent_tool_use_id === null && ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+      if (!chat.streamEl) {
+        chat.streamEl = el('div', 'msg msg-assistant streaming', '');
+        chat.streamText = '';
+        chat.feedEl.append(chat.streamEl);
+      }
+      chat.streamText += ev.delta.text;
+      chat.streamEl.textContent = chat.streamText;
+      scrollToBottom();
+    }
+    return;
+  }
+
+  const isSub = msg.parent_tool_use_id !== null && msg.parent_tool_use_id !== undefined;
+
+  if (msg.type === 'assistant') {
+    if (isSub) return renderSubagent(chat, msg);
+    dropStream(chat);
+    for (const block of msg.message?.content ?? []) {
+      if (block.type === 'text' && block.text.trim()) {
+        chat.feedEl.append(el('div', 'msg msg-assistant', block.text));
+      } else if (block.type === 'tool_use') {
+        const chip = makeChip(`${block.name}`, JSON.stringify(block.input, null, 2).slice(0, 4000));
+        chat.chips.set(block.id, chip);
+        chat.feedEl.append(chip);
+      }
+    }
+    scrollToBottom();
+    return;
+  }
+
+  if (msg.type === 'user') {
+    if (isSub) return renderSubagent(chat, msg);
+    const content = msg.message?.content;
+    if (Array.isArray(content) && content.some((b) => b.type === 'tool_result')) {
+      for (const block of content) if (block.type === 'tool_result') attachToolResult(chat, block);
+      return;
+    }
+    // обычное сообщение пользователя
+    const bubble = el('div', 'msg msg-user', '');
+    if (typeof content === 'string') bubble.textContent = content;
+    else
+      for (const block of content ?? []) {
+        if (block.type === 'text') bubble.append(document.createTextNode(block.text));
+        if (block.type === 'image' && block.source?.type === 'base64') {
+          const img = document.createElement('img');
+          img.src = `data:${block.source.media_type};base64,${block.source.data}`;
+          bubble.append(img);
+        }
+      }
+    chat.feedEl.append(bubble);
+    scrollToBottom();
+    return;
+  }
+
+  if (msg.type === 'result') {
+    dropStream(chat);
+    const cost = msg.total_cost_usd != null ? ` · $${msg.total_cost_usd.toFixed(3)}` : '';
+    chat.feedEl.append(el('div', 'msg-meta', `${(msg.duration_ms / 1000).toFixed(1)}s${cost}`));
+    scrollToBottom();
+  }
+}
+
+function dropStream(chat) {
+  chat.streamEl?.remove();
+  chat.streamEl = null;
+  chat.streamText = '';
+}
+
+function makeChip(title, body) {
+  const chip = document.createElement('details');
+  chip.className = 'chip';
+  const summary = el('summary', '', title);
+  chip.append(summary);
+  if (body) chip.append(el('pre', '', body));
+  return chip;
+}
+
+function attachToolResult(chat, block) {
+  const chip = chat.chips.get(block.tool_use_id);
+  const target = chip ?? chat.feedEl.appendChild(makeChip('результат', ''));
+  const wrap = el('div', 'result-block', '');
+  const content = block.content;
+  if (typeof content === 'string') wrap.append(el('pre', '', content.slice(0, 4000)));
+  else
+    for (const b of content ?? []) {
+      if (b.type === 'text') wrap.append(el('pre', '', b.text.slice(0, 4000)));
+      if (b.type === 'image' && b.source?.type === 'base64') {
+        const img = document.createElement('img');
+        img.src = `data:${b.source.media_type};base64,${b.source.data}`;
+        wrap.append(img);
+      }
+    }
+  target.append(wrap);
+}
+
+function renderSubagent(chat, msg) {
+  const pid = msg.parent_tool_use_id;
+  if (!chat.subagents.has(pid)) {
+    const group = makeChip(`сабагент ${pid.slice(-6)}`, '');
+    chat.subagents.set(pid, group);
+    // если есть chip Agent-инструмента — кладём рядом, иначе в конец
+    chat.feedEl.append(group);
+  }
+  const group = chat.subagents.get(pid);
+  const text = (msg.message?.content ?? [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('');
+  if (text.trim()) group.append(el('pre', '', `[${msg.type}] ${text.slice(0, 2000)}`));
+}
+
+// ---------- сайдбар ----------
+
+function renderSidebar(projects) {
+  const root = $('projects');
+  root.innerHTML = '';
+  for (const p of projects) {
+    const proj = el('div', 'project', '');
+    proj.append(el('div', 'project-name', p.path));
+    for (const c of p.chats) {
+      getChat(c.id, p.path).status = c.status;
+      const item = el('div', 'chat-item', '');
+      item.dataset.chatId = c.id;
+      const dot = el('span', `status-dot ${c.status}`, '');
+      item.append(dot, el('span', '', c.sessionId ? c.id.slice(0, 8) : 'новый'));
+      if (c.id === activeChatId) item.classList.add('active');
+      item.onclick = () => selectChat(c.id);
+      proj.append(item);
+    }
+    const newChat = el('div', 'new-chat', '+ новый чат');
+    newChat.onclick = () => send({ type: 'create_chat', projectPath: p.path, permissionMode: $('permission-mode').value });
+    proj.append(newChat);
+    root.append(proj);
+  }
+}
+
+function updateStatusDot(chatId, status) {
+  document.querySelectorAll(`.chat-item[data-chat-id="${chatId}"] .status-dot`).forEach((d) => {
+    d.className = `status-dot ${status}`;
+  });
+}
+
+// ---------- лимиты ----------
+
+function renderLimits(limits) {
+  const root = $('limits');
+  root.innerHTML = '';
+  if (!limits) return;
+  const parts = [];
+  if (limits.fiveHour) parts.push(['5ч', limits.fiveHour]);
+  if (limits.sevenDay) parts.push(['нед', limits.sevenDay]);
+  for (const m of limits.modelScoped ?? []) parts.push([m.name, m]);
+  root.append(
+    ...parts.map(([label, w], i) => {
+      const cls = w.utilization >= 90 ? 'crit' : w.utilization >= 70 ? 'warn' : '';
+      const span = el('span', cls, `${i ? ' · ' : ''}${label} ${Math.round(w.utilization ?? 0)}%`);
+      if (w.resetsAt) span.title = `сброс: ${new Date(w.resetsAt).toLocaleString()}`;
+      return span;
+    })
+  );
+}
+
+// ---------- композер ----------
+
+function currentContent() {
+  const text = $('input').value.trim();
+  if (!attachments.length) return text || null;
+  const blocks = attachments.map((a) => ({
+    type: 'image',
+    source: { type: 'base64', media_type: a.mediaType, data: a.data },
+  }));
+  if (text) blocks.unshift({ type: 'text', text });
+  return blocks;
+}
+
+function sendMessage() {
+  if (!activeChatId) return;
+  const content = currentContent();
+  if (!content) return;
+  send({ type: 'send', chatId: activeChatId, content });
+  $('input').value = '';
+  $('input').style.height = 'auto';
+  attachments.length = 0;
+  renderAttachments();
+}
+
+function updateComposerButtons(status) {
+  $('stop-btn').hidden = status !== 'thinking' && status !== 'waiting_permission';
+}
+
+function renderAttachments() {
+  const root = $('attachments');
+  root.innerHTML = '';
+  attachments.forEach((a, i) => {
+    const wrap = el('div', 'att', '');
+    const img = document.createElement('img');
+    img.src = a.url;
+    const del = el('button', '', '×');
+    del.onclick = () => {
+      attachments.splice(i, 1);
+      renderAttachments();
+    };
+    wrap.append(img, del);
+    root.append(wrap);
+  });
+}
+
+// ---------- утилиты и события ----------
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
+
+function appendTo(chatId, node) {
+  getChat(chatId).feedEl.append(node);
+  scrollToBottom();
+}
+
+function shortPath(p) {
+  return p.split(/[\\/]/).filter(Boolean).slice(-2).join('/');
+}
+
+function scrollToBottom(force = false) {
+  const nearBottom = feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight < 120;
+  if (force || nearBottom) feedHost.scrollTop = feedHost.scrollHeight;
+}
+
+function setModeSelect(mode) {
+  const sel = $('permission-mode');
+  sel.value = mode;
+  sel.classList.toggle('bypass', mode === 'bypassPermissions');
+}
+
+$('send-btn').onclick = sendMessage;
+$('stop-btn').onclick = () => activeChatId && send({ type: 'interrupt', chatId: activeChatId });
+
+$('input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+$('input').addEventListener('input', function () {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+});
+
+$('input').addEventListener('paste', (e) => {
+  for (const item of e.clipboardData?.items ?? []) {
+    if (!item.type.startsWith('image/')) continue;
+    e.preventDefault();
+    const file = item.getAsFile();
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = reader.result;
+      attachments.push({ mediaType: item.type, data: url.split(',')[1], url });
+      renderAttachments();
+    };
+    reader.readAsDataURL(file);
+  }
+});
+
+$('pick-project').onclick = () => send({ type: 'list_root' });
+$('picker-cancel').onclick = () => ($('picker').hidden = true);
+$('picker').addEventListener('click', (e) => {
+  if (e.target.id === 'picker') $('picker').hidden = true;
+});
+
+$('add-project-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const path = $('add-project-path').value.trim();
+  if (!path) return;
+  send({ type: 'add_project', path });
+  $('add-project-path').value = '';
+});
+
+$('permission-mode').addEventListener('change', function () {
+  setModeSelect(this.value);
+  if (activeChatId) send({ type: 'set_permission_mode', chatId: activeChatId, mode: this.value });
+});
+
+$('hide-tools').addEventListener('change', function () {
+  feedHost.classList.toggle('hide-tools', this.checked);
+});
+
+connect();
