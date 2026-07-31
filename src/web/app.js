@@ -92,7 +92,18 @@ const handlers = {
   },
 
   permission_mode({ chatId, mode }) {
+    const chat = getChat(chatId);
+    chat.mode = mode;
     if (chatId === activeChatId) setModeSelect(mode);
+  },
+
+  chat_meta({ chatId, model, permissionMode, effort, context }) {
+    const chat = getChat(chatId);
+    chat.model = model;
+    chat.mode = permissionMode;
+    chat.effort = effort;
+    chat.context = context;
+    if (chatId === activeChatId) renderMeta(chat);
   },
 
   limits({ limits }) {
@@ -193,6 +204,8 @@ function selectChat(chatId) {
   feedHost.append(chat.feedEl);
   requestHistory(chatId);
   $('chat-title').textContent = `${shortPath(chat.projectPath)} · ${chat.title ?? chatId.slice(0, 8)}`;
+  if (chat.mode) setModeSelect(chat.mode);
+  renderMeta(chat);
   updateComposerButtons(chat.status);
   document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
   $('input').focus();
@@ -371,6 +384,8 @@ function renderSidebar(projects) {
       const chat = getChat(c.id, p.path);
       chat.status = c.status;
       chat.title = c.title;
+      if (c.model) chat.model = c.model;
+      if (c.permissionMode) chat.mode = c.permissionMode;
       const item = el('div', 'chat-item', '');
       item.dataset.chatId = c.id;
       const dot = el('span', `status-dot ${c.status}`, '');
@@ -388,6 +403,23 @@ function updateStatusDot(chatId, status) {
   document.querySelectorAll(`.chat-item[data-chat-id="${chatId}"] .status-dot`).forEach((d) => {
     d.className = `status-dot ${status}`;
   });
+}
+
+// ---------- мета чата в хедере ----------
+
+function renderMeta(chat) {
+  const root = $('chat-meta');
+  root.innerHTML = '';
+  if (!chat) return;
+  const parts = [];
+  if (chat.model) parts.push(chat.model.replace(/^claude-/, '').replace(/-\d{8}$/, ''));
+  if (chat.effort) parts.push(chat.effort);
+  root.append(el('span', '', parts.join(' · ')));
+  const pct = chat.context?.percentage;
+  const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
+  const ctxSpan = el('span', cls, `${parts.length ? ' · ' : ''}ctx ${pct != null ? pct + '%' : '—'}`);
+  if (chat.context) ctxSpan.title = `${chat.context.totalTokens.toLocaleString()} / ${chat.context.maxTokens.toLocaleString()} токенов`;
+  root.append(ctxSpan);
 }
 
 // ---------- лимиты ----------

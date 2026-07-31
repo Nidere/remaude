@@ -20,10 +20,13 @@ export class Chat extends EventEmitter {
   id = randomUUID();
   sessionId = null;
   status = 'idle';
+  model = null; // фактическая модель из system:init
+  permissionMode = 'default';
 
   constructor({ cwd, resume, permissionMode = 'default', model, onPermissionRequest }) {
     super();
     this.cwd = cwd;
+    this.permissionMode = permissionMode;
     this.#query = query({
       prompt: this.#input(),
       options: {
@@ -49,7 +52,11 @@ export class Chat extends EventEmitter {
   async #pump() {
     try {
       for await (const msg of this.#query) {
-        if (msg.type === 'system' && msg.subtype === 'init') this.sessionId = msg.session_id;
+        if (msg.type === 'system' && msg.subtype === 'init') {
+          this.sessionId = msg.session_id;
+          if (msg.model) this.model = msg.model;
+          if (msg.permissionMode) this.permissionMode = msg.permissionMode;
+        }
         if (msg.type === 'result') this.#setStatus('idle');
         this.emit('message', msg);
       }
@@ -87,6 +94,11 @@ export class Chat extends EventEmitter {
 
   async setPermissionMode(mode) {
     await this.#query.setPermissionMode(mode);
+    this.permissionMode = mode;
+  }
+
+  async contextUsage() {
+    return this.#query.getContextUsage();
   }
 
   async setModel(model) {

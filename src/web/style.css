@@ -181,6 +181,10 @@ body {
 }
 #permission-mode.bypass { color: var(--red); border-color: var(--red); }
 
+#chat-meta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#chat-meta .warn { color: var(--yellow); }
+#chat-meta .crit { color: var(--red); }
+
 #limits { white-space: nowrap; font-variant-numeric: tabular-nums; }
 #limits .warn { color: var(--yellow); }
 #limits .crit { color: var(--red); }
@@ -203,7 +207,7 @@ body {
 
 .msg-user {
   align-self: flex-end;
-  max-width: min(850px, 85%);
+  max-width: 100%;
   background: #2a3a5c;
   border-radius: 12px 12px 2px 12px;
   padding: 8px 12px;

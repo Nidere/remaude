@@ -87,8 +87,47 @@ agent.on('chat_message', ({ chatId, msg }) => {
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
   if (msg.type !== 'stream_event') pushHistory(chatId, msg);
   broadcast({ type: 'chat_message', chatId, msg });
-  if (msg.type === 'result') refreshLimits(true);
+  if (msg.type === 'system' && msg.subtype === 'init') sendChatMeta(chatId);
+  if (msg.type === 'result') {
+    refreshLimits(true);
+    sendChatMeta(chatId);
+  }
 });
+
+/** Метаданные чата для хедера: модель, режим, заполненность контекста, усилия. */
+async function sendChatMeta(chatId) {
+  let chat;
+  try {
+    chat = findChat(chatId);
+  } catch {
+    return;
+  }
+  let context = null;
+  try {
+    const u = await chat.contextUsage();
+    context = { percentage: Math.round(u.percentage), totalTokens: u.totalTokens, maxTokens: u.maxTokens };
+    if (u.model) chat.model = u.model;
+  } catch {
+    /* сессия могла ещё не подняться или уже умереть */
+  }
+  broadcast({
+    type: 'chat_meta',
+    chatId,
+    model: chat.model,
+    permissionMode: chat.permissionMode,
+    effort: hostEffort,
+    context,
+  });
+}
+
+// Усилия: эффективный дефолт хоста из настроек Claude Code (документированный дефолт — high)
+let hostEffort = 'high';
+try {
+  const settings = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf-8'));
+  if (settings.effortLevel) hostEffort = settings.effortLevel;
+} catch {
+  /* нет файла — остаёмся на high */
+}
 agent.on('chat_status', ({ chatId, status }) => broadcast({ type: 'chat_status', chatId, status }));
 agent.on('chat_error', ({ chatId, error }) =>
   broadcast({ type: 'chat_error', chatId, error: String(error?.message ?? error) })
@@ -130,7 +169,14 @@ function stateSnapshot() {
     type: 'state',
     projects: [...agent.projects.values()].map((p) => ({
       path: p.path,
-      chats: [...p.chats.values()].map((c) => ({ id: c.id, sessionId: c.sessionId, status: c.status, title: c.title ?? null })),
+      chats: [...p.chats.values()].map((c) => ({
+        id: c.id,
+        sessionId: c.sessionId,
+        status: c.status,
+        title: c.title ?? null,
+        model: c.model,
+        permissionMode: c.permissionMode,
+      })),
     })),
   };
 }
