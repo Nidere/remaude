@@ -139,6 +139,16 @@ agent.on('chat_message', ({ chatId, msg }) => {
     sendChatMeta(chatId);
     saveOpenChats(); // the sessionId is now known — record it so we can reopen the chat
   }
+  // remember what was actually said last: that, not the chat name, is what makes
+  // a completion notification worth reading
+  if (msg.type === 'assistant' && msg.parent_tool_use_id === null) {
+    const text = (msg.message?.content ?? [])
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+    if (text) lastReplies.set(chatId, text);
+  }
   if (msg.type === 'result') {
     refreshLimits(true);
     sendChatMeta(chatId);
@@ -151,10 +161,18 @@ agent.on('chat_message', ({ chatId, msg }) => {
       } catch {
         /* the chat may have been closed */
       }
-      relayLink?.push({ title: 'remaude: done', body: title ?? 'task finished', tag: `done-${chatId}` });
+      const reply = lastReplies.get(chatId);
+      relayLink?.push({
+        title: title ? title.replace(/\s+/g, ' ').slice(0, 40) : 'remaude',
+        body: reply ? reply.replace(/\s+/g, ' ').slice(0, 200) : 'task finished',
+        tag: `done-${chatId}`,
+      });
     }
+    lastReplies.delete(chatId);
   }
 });
+
+const lastReplies = new Map(); // chatId -> last assistant text, for the push body
 
 /** Chat metadata for the header: model, mode, how full the context is, effort. */
 async function sendChatMeta(chatId) {
