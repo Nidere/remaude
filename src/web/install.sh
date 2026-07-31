@@ -80,8 +80,9 @@ sleep 2
 
 echo ""
 echo "== Done! The remaude host is running and will start on its own when you log in. =="
-echo "All that is left is to pair it with your account:"
+echo "All that is left is to connect it to your account:"
 echo "  1. Open $RELAY_URL and sign in with Google."
-echo "  2. The site will show a 6-digit pairing code."
-echo "  3. In the local remaude that opens: ⚙ (settings) → enter the code → “Pair”."
-open http://localhost:7699 2>/dev/null || true
+echo "  2. Press “＋ add host” — you will get a one-time link."
+echo "  3. Paste that link here in the terminal, prefixed with curl, for example:"
+echo "       curl 'http://localhost:7699/connect?token=…&relay=$RELAY_URL'"
+echo "     (or simply open the link in a browser on this machine)."

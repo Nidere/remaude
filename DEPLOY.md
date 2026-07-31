@@ -170,12 +170,20 @@ takes the machine down hard enough to drop SSH — recovery needs an API reboot.
 If you are not on Windows, rewrite the script in bash; the logic is trivial:
 assemble `.env`, copy two directories, `npm install --omit=dev`, systemd + Caddy.
 
-### 5. First sign-in and host pairing
+### 5. First sign-in and connecting a host
 
-1. Open `https://<domain>` → "sign in with Google" (an allowlisted account).
-2. The site shows a six-digit code because no host is connected yet.
-3. In the local UI (`localhost:7699`): ⚙ → relay address and code → "pair".
-4. Reload the domain — the full interface is there.
+1. Open `https://<domain>` → "sign in with Google" (an allowlisted account). The
+   UI opens even with no hosts yet.
+2. Press "＋ add host" — the relay mints a one-time invite link valid for ten
+   minutes.
+3. On the machine running the host, either open that link in a browser or run
+   `curl '<link>'` in a terminal. The host redeems the token, learns which relay
+   and account it belongs to, and comes online.
+4. Reload the domain — the host's projects are there.
+
+Pairing has to be confirmed on the host machine itself: that is what proves the
+computer is yours rather than someone else's. The invite is single-use, expires
+quickly, and the route that accepts it listens on localhost only.
 
 On a phone: open the domain, "Add to Home Screen" (PWA), then enable
 notifications in ⚙.
@@ -190,8 +198,9 @@ curl -fsSL https://<domain>/install.sh | bash
 ```
 
 The script installs Node (via Homebrew), installs and signs into Claude Code,
-clones the repository, registers a launchd agent with autostart and opens the
-local UI. Then follow step 5.
+clones the repository and registers a launchd agent with autostart. It then
+prints how to connect the host — the invite link from step 5, which can be
+curled straight from that terminal.
 
 ⚠ They must be on the relay's allowlist, otherwise Google sign-in ends at the
 "not allowed" page. The allowlist lives in the `remaude/relay-deploy` secret and
@@ -263,7 +272,7 @@ A single file with no database: state (cookie secret, VAPID keys, host tokens,
 push subscriptions) lives in `/opt/remaude/relay-state.json`.
 
 - `/auth/google*` — OAuth, verification of `aud` and `email_verified`, allowlist, cookie.
-- `/pair` — exchanges a pairing code for a host token.
+- `/pair` — exchanges an invite token for a permanent host token.
 - `/ws` — browsers (both the session and device cookies are required).
 - `/host` — hosts (by token); tunnel messages `{t:'open'|'msg'|'close'|'cast'|'push'|'shares'}`.
 - `/api/push/*` — VAPID key and subscriptions.

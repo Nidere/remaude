@@ -39,6 +39,7 @@ remaude **replaces the VS Code chat UI** rather than mirroring it. VS Code stays
 - **A chat is a live Agent SDK session** (`query()`) with its own `cwd`. Input is an open async iterator, so you can message the model while it is still working.
 - The host also serves the same UI on `127.0.0.1:7699`, so it is usable with no relay at all.
 - Remote browsers are tunnelled through the relay and served by the **same code path** as local ones (`VirtualClient`), so the feature set is identical inside and outside the home network.
+- **One browser talks to several hosts at once** — your own machines plus anyone who shared a chat with you. The relay tags every message with its host and routes commands back accordingly, so all chats live in one sidebar, grouped by source.
 - Everything the UI renders is the SDK's structured event stream (messages, `tool_use`/`tool_result`, stream deltas); filtering happens at the protocol level, never by parsing text.
 
 **Data model:** account (Google) → hosts → projects → chats → subagents.
@@ -54,15 +55,16 @@ remaude **replaces the VS Code chat UI** rather than mirroring it. VS Code stays
 - each chat keeps its own composer draft.
 
 **Projects and sessions**
-- sidebar of projects → chats with status dots, unread counters and search;
+- sidebar grouped by host — your machines by name, other people's by owner email — then projects → chats, with status dots, unread counters and search;
 - a project is a subfolder of the host's projects root, picked from a list in the UI — works from a phone too;
 - past chats: saved sessions from disk (including ones started in VS Code or the CLI) can be resumed with their full history;
 - rename and close chats or projects without deleting anything on disk;
 - open chats survive host restarts and reboots — they are resumed automatically.
 
 **Infrastructure and remote access**
-- Google sign-in with a strict allowlist, trusted devices, and code-based host pairing;
-- chat sharing with another account: the guest reads and writes, but cannot control the host;
+- Google sign-in with a strict allowlist and trusted devices; the UI opens for every authorised user, hosts or no hosts;
+- connecting a machine takes one invite link: press "add host", then open that link — or `curl` it — on the machine itself;
+- chat sharing with another account: the guest reads and writes, but cannot control the host, and sees shared chats next to their own;
 - installable PWA with push notifications ("waiting for permission", "done") plus tab-level signals;
 - Claude usage limits (5-hour / weekly / per-model windows) and context fill shown in the header;
 - signing in to Claude straight from the UI when OAuth expires — the link opens on any device;
@@ -75,7 +77,7 @@ Three independent locks:
 
 1. **Account** — Google OAuth plus an allowlist.
 2. **Device** — trusted permanently once it arrives from the same public IP as the owner's host (silently, i.e. at home), or once a one-time code from the site is entered in the settings of an already trusted device.
-3. **Host** — bound to an account by a token issued during pairing.
+3. **Host** — bound to an account by the token it receives when the invite link is redeemed on that machine. The host never learns anything about Google: it holds an opaque token, and the relay knows which account that token belongs to.
 
 Transcripts contain everything, including secrets that wander in by accident, so nothing is reachable without auth and there are no public links. The relay terminates TLS and can technically see traffic: it is your own server — a deliberate trade-off instead of end-to-end encryption.
 
@@ -102,7 +104,6 @@ Docs: [Agent SDK TypeScript](https://code.claude.com/docs/en/agent-sdk/typescrip
 ## Not there yet
 
 - **LAN mode**: traffic still goes through the relay even at home. The host already serves the UI itself; what is missing is an opt-in bind to the LAN interface with a token. Fully automatic "same network → connect directly" is blocked by mixed content and Private Network Access rules in browsers.
-- **Multi-host UI**: the relay stores several hosts per account, the interface picks the first one.
 - **Revoking access from the UI**: removing a trusted device or unpairing a host means editing `relay-state.json` on the server.
 - **Relay state backups** and session cookie rotation.
 - **Single-file binaries and a tray icon** — for now it is an installer plus OS-level autostart.
