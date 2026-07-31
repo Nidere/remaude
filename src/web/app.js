@@ -255,7 +255,8 @@ function selectChat(chatId) {
 function syncHeaderSelects(chat) {
   const shortModel = (chat.model ?? '').replace(/^claude-/, '').replace(/-[\d.]+.*$/, '');
   $('model-select').value = ['fable', 'opus', 'sonnet', 'haiku'].includes(shortModel) ? shortModel : '';
-  $('effort-select').value = chat.effortOverride ?? '';
+  // фактические усилия приходят с сервера в chat_meta (override или дефолт хоста)
+  $('effort-select').value = ['low', 'medium', 'high', 'xhigh', 'max'].includes(chat.effort) ? chat.effort : '';
 }
 
 // ---------- рендер SDK-сообщений ----------
@@ -529,13 +530,9 @@ function renderMeta(chat) {
   const root = $('chat-meta');
   root.innerHTML = '';
   if (!chat) return;
-  const parts = [];
-  if (chat.model) parts.push(chat.model.replace(/^claude-/, '').replace(/-\d{8}$/, ''));
-  if (chat.effort) parts.push(chat.effort);
-  root.append(el('span', '', parts.join(' · ')));
   const pct = chat.context?.percentage;
   const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
-  const ctxSpan = el('span', cls, `${parts.length ? ' · ' : ''}ctx ${pct != null ? pct + '%' : '—'}`);
+  const ctxSpan = el('span', cls, `ctx ${pct != null ? pct + '%' : '—'}`);
   if (chat.context) ctxSpan.title = `${chat.context.totalTokens.toLocaleString()} / ${chat.context.maxTokens.toLocaleString()} токенов`;
   root.append(ctxSpan);
 }
@@ -742,10 +739,7 @@ $('model-select').addEventListener('change', function () {
   if (activeChatId && this.value) send({ type: 'set_model', chatId: activeChatId, model: this.value });
 });
 $('effort-select').addEventListener('change', function () {
-  if (!activeChatId || !this.value) return;
-  send({ type: 'set_effort', chatId: activeChatId, effort: this.value });
-  const chat = chats.get(activeChatId);
-  if (chat) chat.effortOverride = this.value;
+  if (activeChatId && this.value) send({ type: 'set_effort', chatId: activeChatId, effort: this.value });
 });
 
 // настройки
