@@ -68,7 +68,9 @@
     <footer id="composer">
       <div id="attachments"></div>
       <div id="composer-row">
-        <textarea id="input" rows="1" placeholder="Сообщение… (Enter — отправить, Shift+Enter — перенос, Ctrl+V — картинка)"></textarea>
+        <button id="attach-btn" title="Приложить картинку">📎</button>
+        <input id="file-input" type="file" accept="image/*" multiple hidden />
+        <textarea id="input" rows="1" placeholder="Сообщение…"></textarea>
         <button id="stop-btn" title="Прервать" hidden>■</button>
         <button id="send-btn" title="Отправить">➤</button>
       </div>

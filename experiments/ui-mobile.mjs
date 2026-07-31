@@ -20,6 +20,8 @@ mob.on('pageerror', (e) => errors.push('mobile: ' + e));
 await mob.goto('http://localhost:7699');
 await mob.waitForSelector('#menu-btn');
 await mob.waitForTimeout(800);
+const overflow = await mob.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+console.log('horizontal overflow px:', overflow, overflow > 0 ? 'BAD' : 'OK');
 await mob.screenshot({ path: join(SHOTS, '5-mobile.png') });
 await mob.click('#menu-btn');
 await mob.waitForTimeout(400);

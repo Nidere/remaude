@@ -704,6 +704,12 @@ async function addImageAttachment(file) {
   }
 }
 
+$('attach-btn').onclick = () => $('file-input').click();
+$('file-input').addEventListener('change', function () {
+  for (const f of this.files) addImageAttachment(f);
+  this.value = '';
+});
+
 $('input').addEventListener('paste', (e) => {
   const files = [...(e.clipboardData?.items ?? [])].filter((i) => i.kind === 'file');
   if (!files.length) return;

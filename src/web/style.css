@@ -17,9 +17,11 @@ body {
   margin: 0;
   display: flex;
   height: 100vh;
+  height: 100dvh; /* iOS: honest height under browser chrome */
   background: var(--bg);
   color: var(--text);
   font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+  overflow-x: hidden; /* документ никогда не скроллится вбок */
 }
 
 /* ---------- сайдбар ---------- */
@@ -694,13 +696,38 @@ body {
   height: 38px;
   font-size: 15px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 #stop-btn { background: var(--red); }
+
+#attach-btn {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  width: 40px;
+  height: 38px;
+  font-size: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#attach-btn:hover { border-color: var(--accent); }
 
 /* ---------- мобайл (в конце файла: медиа-правила должны побеждать базовые) ---------- */
 
 @media (max-width: 768px) {
   #menu-btn { display: block; }
+  /* хедер в две строки: ☰ + заголовок, ниже — контролы; ничего не распирает вширь */
+  #header { flex-wrap: wrap; row-gap: 6px; }
+  #chat-title { flex: 1 1 0; min-width: 0; font-size: 13px; }
+  #header-right {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px;
+    row-gap: 6px;
+  }
+  #model-select, #effort-select, #permission-mode { font-size: 11px; padding: 3px 3px; max-width: 80px; }
   #sidebar {
     position: fixed;
     top: 0;
