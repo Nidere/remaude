@@ -43,18 +43,38 @@ body {
 
 #projects { flex: 1; }
 
-.project { margin-bottom: 4px; }
+.project { margin-bottom: 6px; }
+
+.project-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 4px 16px;
+  gap: 8px;
+}
 
 .project-name {
-  padding: 6px 16px;
-  font-size: 12px;
-  color: var(--dim);
+  font-weight: 600;
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  direction: rtl; /* видно хвост пути */
-  text-align: left;
 }
+
+.project-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.project-actions button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--dim);
+  width: 24px;
+  height: 22px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+}
+.project-actions button:hover { border-color: var(--accent); color: var(--text); }
 
 .chat-item {
   padding: 7px 16px 7px 24px;
@@ -83,13 +103,18 @@ body {
 
 @keyframes pulse { 50% { opacity: 0.35; } }
 
-.new-chat {
-  padding: 6px 16px 6px 24px;
-  color: var(--dim);
-  cursor: pointer;
-  font-size: 13px;
+#lightbox[hidden] { display: none; }
+#lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  cursor: zoom-out;
 }
-.new-chat:hover { color: var(--accent); }
+#lightbox img { max-width: 96vw; max-height: 96vh; border-radius: 6px; }
 
 #pick-project {
   margin: 10px 10px 0;
@@ -174,10 +199,11 @@ body {
   gap: 10px;
 }
 
-.msg { max-width: 850px; }
+.msg { max-width: 100%; }
 
 .msg-user {
   align-self: flex-end;
+  max-width: min(850px, 85%);
   background: #2a3a5c;
   border-radius: 12px 12px 2px 12px;
   padding: 8px 12px;
@@ -228,7 +254,14 @@ body {
   animation: pulse 1s infinite;
 }
 
-.msg img { max-width: 320px; max-height: 240px; border-radius: 8px; display: block; margin-top: 6px; }
+/* стрим размышлений — приглушённо, курсивом */
+.msg-assistant.streaming.thinking {
+  color: var(--dim);
+  font-style: italic;
+  font-size: 12.5px;
+}
+
+.msg img, .chip img { max-width: 320px; max-height: 240px; border-radius: 8px; display: block; margin-top: 6px; cursor: zoom-in; }
 
 .chip {
   align-self: flex-start;
@@ -237,7 +270,7 @@ body {
   border-radius: 8px;
   font-size: 12px;
   color: var(--dim);
-  max-width: 850px;
+  max-width: 100%;
 }
 .chip summary {
   padding: 5px 10px;
@@ -286,7 +319,6 @@ body {
   border: 1px solid var(--yellow);
   border-radius: 10px;
   padding: 10px 14px;
-  max-width: 850px;
 }
 .permission .perm-tool { font-weight: 600; color: var(--yellow); }
 .permission pre {

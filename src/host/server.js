@@ -198,7 +198,7 @@ const handlers = {
   },
 
   /** Возобновить сохранённую сессию: история — из транскрипта, контекст — resume в SDK. */
-  open_session(ws, { projectPath, sessionId }) {
+  open_session(ws, { projectPath, sessionId, permissionMode }) {
     for (const chat of agent.allChats()) {
       if (chat.sessionId === sessionId || chat.resumeId === sessionId) {
         send(ws, { type: 'chat_created', chatId: chat.id, projectPath });
@@ -208,7 +208,7 @@ const handlers = {
     const abs = resolve(projectPath);
     const history = loadHistory(abs, sessionId);
     const meta = listSessions(abs).find((s) => s.id === sessionId);
-    const chat = agent.createChat(abs, { resume: sessionId });
+    const chat = agent.createChat(abs, { resume: sessionId, permissionMode });
     chat.resumeId = sessionId;
     chat.title = meta?.title ?? meta?.preview?.slice(0, 60) ?? null;
     chatHistories.set(chat.id, history);

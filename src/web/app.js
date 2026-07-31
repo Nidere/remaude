@@ -42,6 +42,11 @@ function send(obj) {
 const handlers = {
   state({ projects }) {
     renderSidebar(projects);
+    // после перезагрузки страницы возвращаемся в последний открытый чат
+    if (!activeChatId) {
+      const last = localStorage.getItem('lastChat');
+      if (last && chats.has(last)) selectChat(last);
+    }
   },
 
   chat_created({ chatId }) {
@@ -100,6 +105,7 @@ const handlers = {
     chat.chips.clear();
     chat.subagents.clear();
     for (const m of messages) renderSdkMessage(chatId, m);
+    if (chatId === activeChatId) scrollToBottom(true);
   },
 
   root_listing({ root, dirs, added, error }) {
@@ -131,7 +137,13 @@ const handlers = {
             check: Boolean(live[s.id]),
             onclick: live[s.id]
               ? () => selectChat(live[s.id])
-              : () => send({ type: 'open_session', projectPath, sessionId: s.id }),
+              : () =>
+                  send({
+                    type: 'open_session',
+                    projectPath,
+                    sessionId: s.id,
+                    permissionMode: $('permission-mode').value,
+                  }),
           }))
         : [{ label: 'сохранённых сессий нет', muted: true }]
     );
@@ -175,6 +187,7 @@ function requestHistory(chatId) {
 
 function selectChat(chatId) {
   activeChatId = chatId;
+  localStorage.setItem('lastChat', chatId);
   const chat = getChat(chatId);
   feedHost.innerHTML = '';
   feedHost.append(chat.feedEl);
@@ -193,16 +206,20 @@ function renderSdkMessage(chatId, msg) {
 
   if (msg.type === 'stream_event') {
     const ev = msg.event;
-    if (msg.parent_tool_use_id === null && ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-      if (!chat.streamEl) {
-        chat.streamEl = el('div', 'msg msg-assistant streaming', '');
-        chat.streamText = '';
-        chat.feedEl.append(chat.streamEl);
-      }
-      chat.streamText += ev.delta.text;
-      chat.streamEl.textContent = chat.streamText;
-      scrollToBottom();
+    if (msg.parent_tool_use_id !== null || ev.type !== 'content_block_delta') return;
+    const kind = ev.delta?.type === 'text_delta' ? 'text' : ev.delta?.type === 'thinking_delta' ? 'think' : null;
+    if (!kind) return;
+    if (!chat.streamEl || chat.streamKind !== kind) {
+      // переход thinking → текст (или наоборот): новый пузырь
+      if (chat.streamEl && chat.streamKind === 'think') chat.streamEl.remove();
+      chat.streamEl = el('div', `msg msg-assistant streaming${kind === 'think' ? ' thinking' : ''}`, '');
+      chat.streamText = '';
+      chat.streamKind = kind;
+      chat.feedEl.append(chat.streamEl);
     }
+    chat.streamText += kind === 'text' ? ev.delta.text : ev.delta.thinking;
+    chat.streamEl.textContent = chat.streamText;
+    scrollToBottom();
     return;
   }
 
@@ -262,6 +279,7 @@ function dropStream(chat) {
   chat.streamEl?.remove();
   chat.streamEl = null;
   chat.streamText = '';
+  chat.streamKind = null;
 }
 
 function makeChip(title, body) {
@@ -334,7 +352,21 @@ function renderSidebar(projects) {
   root.innerHTML = '';
   for (const p of projects) {
     const proj = el('div', 'project', '');
-    proj.append(el('div', 'project-name', p.path));
+
+    const head = el('div', 'project-head', '');
+    const name = el('span', 'project-name', p.path.split(/[\\/]/).filter(Boolean).pop());
+    name.title = p.path;
+    const actions = el('span', 'project-actions', '');
+    const btnNew = el('button', '', '+');
+    btnNew.title = 'новый чат';
+    btnNew.onclick = () => send({ type: 'create_chat', projectPath: p.path, permissionMode: $('permission-mode').value });
+    const btnOld = el('button', '', '⏳');
+    btnOld.title = 'прошлые чаты';
+    btnOld.onclick = () => send({ type: 'list_sessions', projectPath: p.path });
+    actions.append(btnNew, btnOld);
+    head.append(name, actions);
+    proj.append(head);
+
     for (const c of p.chats) {
       const chat = getChat(c.id, p.path);
       chat.status = c.status;
@@ -348,12 +380,6 @@ function renderSidebar(projects) {
       item.onclick = () => selectChat(c.id);
       proj.append(item);
     }
-    const newChat = el('div', 'new-chat', '+ новый чат');
-    newChat.onclick = () => send({ type: 'create_chat', projectPath: p.path, permissionMode: $('permission-mode').value });
-    proj.append(newChat);
-    const oldChats = el('div', 'new-chat', '⏳ прошлые чаты');
-    oldChats.onclick = () => send({ type: 'list_sessions', projectPath: p.path });
-    proj.append(oldChats);
     root.append(proj);
   }
 }
@@ -505,6 +531,20 @@ $('permission-mode').addEventListener('change', function () {
   setModeSelect(this.value);
   if (activeChatId) send({ type: 'set_permission_mode', chatId: activeChatId, mode: this.value });
 });
+
+// лайтбокс: клик по любой картинке в ленте — полноэкранный просмотр
+feedHost.addEventListener('click', (e) => {
+  if (e.target.tagName === 'IMG') {
+    $('lightbox').querySelector('img').src = e.target.src;
+    $('lightbox').hidden = false;
+  }
+});
+$('lightbox').onclick = () => ($('lightbox').hidden = true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('lightbox').hidden = true;
+});
+
+setModeSelect($('permission-mode').value); // подсветка bypass при старте
 
 $('hide-tools').checked = localStorage.getItem('hideTools') === '1';
 feedHost.classList.toggle('hide-tools', $('hide-tools').checked);

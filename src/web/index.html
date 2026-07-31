@@ -24,10 +24,10 @@
       <div id="header-right">
         <label id="hide-tools-label"><input type="checkbox" id="hide-tools" /> скрыть инструменты</label>
         <select id="permission-mode" title="Режим разрешений">
+          <option value="bypassPermissions" selected>bypass</option>
           <option value="default">спрашивать</option>
           <option value="acceptEdits">правки без вопросов</option>
           <option value="plan">план</option>
-          <option value="bypassPermissions">bypass</option>
         </select>
         <div id="limits" title="Лимиты Claude"></div>
         <span id="conn-dot" title="соединение"></span>
@@ -45,6 +45,8 @@
       </div>
     </footer>
   </main>
+
+  <div id="lightbox" hidden><img alt="" /></div>
 
   <div id="picker" hidden>
     <div id="picker-box">
