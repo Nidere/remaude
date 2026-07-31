@@ -91,6 +91,16 @@ export function mapEntry(entry, { defaultAuthor = null } = {}) {
   // the harness's system injections (task notifications and the like) are written as
   // user messages, but carry origin.kind — real user input has no origin
   if (entry.type === 'user' && entry.origin?.kind) return null;
+  // ...and the assistant's replies to those injections are noise too: the harness
+  // convention is the literal "No response requested." for turns with no answer
+  if (entry.type === 'assistant' && Array.isArray(entry.message.content)) {
+    const text = entry.message.content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+    if (text === 'No response requested.') return null;
+  }
   const isPlainUserText =
     entry.type === 'user' &&
     !entry.isSidechain &&
