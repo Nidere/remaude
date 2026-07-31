@@ -111,10 +111,6 @@ body {
 .project-close { display: none; }
 .project-head:hover .project-close { display: block; }
 
-/* на тач-устройствах наведения нет — показываем действия всегда */
-@media (hover: none) {
-  .project-close, .chat-actions { display: flex; }
-}
 
 .chat-item {
   padding: 7px 16px 7px 24px;
@@ -806,4 +802,11 @@ body.guest .chat-actions { display: none !important; }
   #composer { padding: 8px 10px; }
   #scroll-down { bottom: 80px; right: 14px; }
   .msg img, .chip img { max-width: 100%; }
+}
+
+/* На тач-устройствах наведения нет — действия видны всегда.
+   Блок держим последним: он должен побеждать базовые display:none. */
+@media (hover: none) {
+  .project-close { display: block; }
+  .chat-actions { display: flex; }
 }
