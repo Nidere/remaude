@@ -1328,3 +1328,11 @@ body.guest .add-host { display: none; }
 
 #doc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #att-controls { flex-wrap: wrap; }
+
+/* the viewer owns its gestures: pinch/pan live on the image itself */
+#lightbox img {
+  touch-action: none;
+  transform-origin: center center;
+  will-change: transform;
+}
+.att-cell { background: var(--bg-3); } /* a visible slot before the picture lands */

@@ -335,6 +335,25 @@ const handlers = {
     renderAttachments2();
   },
 
+  async image_data({ sessionId, index, mediaType, data }) {
+    const key = `${sessionId}:${index}`;
+    const url = `data:${mediaType};base64,${data}`;
+    if (lightboxWant === key && !$('lightbox').hidden) $('lightbox').querySelector('img').src = url;
+    if (!thumbs.has(key)) {
+      try {
+        thumbs.set(key, await shrink(url));
+      } catch {
+        thumbs.set(key, url); // odd format: better a heavy picture than none
+      }
+    }
+    const cell = document.querySelector(`.att-cell[data-key="${key}"]`);
+    if (cell && !cell.querySelector('img')) {
+      const image = document.createElement('img');
+      image.src = thumbs.get(key);
+      cell.append(image);
+    }
+  },
+
   artifact({ path, name, text, base64 }) {
     if (text != null) {
       $('doc-title').textContent = name;
@@ -964,6 +983,45 @@ function renderHostProjects(root, hostId, hostState) {
 
 let attState = { tab: 'images', images: [], docs: [], total: 0, offset: 0 };
 
+// Pictures never travel with the grid: each cell asks for its own image when it
+// nears the screen, keeps a small thumbnail and lets the full one go. A phone
+// can then scroll a hundred screenshots without the browser killing the tab.
+const thumbs = new Map(); // "sessionId:index" -> small data URL
+let lightboxWant = null; // the picture the viewer is waiting for
+
+const cellObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const cell = entry.target;
+      cellObserver.unobserve(cell);
+      const [sessionId, index] = cell.dataset.key.split(':');
+      sendTo(chatHostId(activeChatId), { type: 'image', chatId: activeChatId, sessionId, index: Number(index) });
+    }
+  },
+  { root: null, rootMargin: '300px' }
+);
+
+async function shrink(dataUrl, max = 320) {
+  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg', 0.72);
+}
+
+function openLightbox(sessionId, index) {
+  lightboxWant = `${sessionId}:${index}`;
+  resetZoom();
+  const img = $('lightbox').querySelector('img');
+  img.src = thumbs.get(lightboxWant) ?? ''; // something to look at while the full one arrives
+  $('lightbox').hidden = false;
+  sendTo(chatHostId(activeChatId), { type: 'image', chatId: activeChatId, sessionId, index: Number(index) });
+}
+
 /** Segmented toggle: reads the active button, or flips to a new value. */
 function seg(id, value) {
   const box = $(id);
@@ -1013,15 +1071,20 @@ function renderAttachments2() {
     const grid = el('div', 'att-grid', '');
     for (const img of shown) {
       const cell = el('div', 'att-cell', '');
-      const image = document.createElement('img');
-      image.src = `data:${img.mediaType};base64,${img.data}`;
-      image.loading = 'lazy';
+      cell.dataset.key = `${img.sessionId}:${img.index}`;
       if (img.ts) cell.title = new Date(img.ts).toLocaleString();
-      cell.append(image);
-      cell.onclick = () => {
-        $('lightbox').querySelector('img').src = image.src;
-        $('lightbox').hidden = false;
-      };
+      const thumb = thumbs.get(cell.dataset.key);
+      if (thumb) {
+        const image = document.createElement('img');
+        image.src = thumb;
+        cell.append(image);
+      } else if (img.data) {
+        // an older host still sends the picture inline: shrink it and let it go
+        handlers.image_data({ sessionId: img.sessionId, index: img.index, mediaType: img.mediaType, data: img.data });
+      } else {
+        cellObserver.observe(cell); // fetched only once it comes near the screen
+      }
+      cell.onclick = () => openLightbox(img.sessionId, img.index);
       grid.append(cell);
     }
     body.append(grid);
@@ -1554,11 +1617,88 @@ $('permission-mode').addEventListener('change', function () {
 // lightbox: clicking any image in the feed opens a full-screen view
 feedHost.addEventListener('click', (e) => {
   if (e.target.tagName === 'IMG') {
+    lightboxWant = null;
+    resetZoom();
     $('lightbox').querySelector('img').src = e.target.src;
     $('lightbox').hidden = false;
   }
 });
-$('lightbox').onclick = () => ($('lightbox').hidden = true);
+
+// A screenshot of code is unreadable scaled to a phone, and pinch is disabled
+// app-wide — so the viewer carries its own zoom: pinch, drag, double-tap.
+const zoom = { scale: 1, x: 0, y: 0 };
+const lightboxImg = $('lightbox').querySelector('img');
+
+function applyZoom() {
+  lightboxImg.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})`;
+  lightboxImg.style.cursor = zoom.scale > 1 ? 'grab' : 'zoom-out';
+}
+function resetZoom() {
+  zoom.scale = 1;
+  zoom.x = 0;
+  zoom.y = 0;
+  applyZoom();
+}
+
+const pointers = new Map();
+let pinchStart = null;
+let panStart = null;
+
+lightboxImg.addEventListener('pointerdown', (e) => {
+  e.stopPropagation(); // a tap on the picture must not close the viewer
+  lightboxImg.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, e);
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    pinchStart = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), scale: zoom.scale };
+  } else if (zoom.scale > 1) {
+    panStart = { x: e.clientX - zoom.x, y: e.clientY - zoom.y };
+  }
+});
+lightboxImg.addEventListener('pointermove', (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, e);
+  if (pointers.size === 2 && pinchStart) {
+    const [a, b] = [...pointers.values()];
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    zoom.scale = Math.min(6, Math.max(1, (pinchStart.scale * dist) / pinchStart.dist));
+    if (zoom.scale === 1) {
+      zoom.x = 0;
+      zoom.y = 0;
+    }
+    applyZoom();
+  } else if (panStart) {
+    zoom.x = e.clientX - panStart.x;
+    zoom.y = e.clientY - panStart.y;
+    applyZoom();
+  }
+});
+const endPointer = (e) => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinchStart = null;
+  if (!pointers.size) panStart = null;
+};
+lightboxImg.addEventListener('pointerup', endPointer);
+lightboxImg.addEventListener('pointercancel', endPointer);
+lightboxImg.addEventListener('dblclick', (e) => {
+  e.stopPropagation();
+  zoom.scale = zoom.scale > 1 ? 1 : 2.5;
+  zoom.x = 0;
+  zoom.y = 0;
+  applyZoom();
+});
+lightboxImg.addEventListener('click', (e) => e.stopPropagation());
+lightboxImg.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoom.scale = Math.min(6, Math.max(1, zoom.scale * (e.deltaY < 0 ? 1.15 : 0.87)));
+  if (zoom.scale === 1) {
+    zoom.x = 0;
+    zoom.y = 0;
+  }
+  applyZoom();
+});
+
+$('lightbox').onclick = () => ($('lightbox').hidden = true); // backdrop only
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('lightbox').hidden = true;
 });

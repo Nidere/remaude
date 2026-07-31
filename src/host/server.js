@@ -334,6 +334,25 @@ function trackArtifact(chatId, filePath) {
 // running when the turn ends was aborted. The sidebar shows these live, so the
 // bookkeeping lives here rather than being guessed at from the feed.
 
+// Parsed images per transcript, so paging a gallery does not re-read a
+// multi-megabyte file for every thumbnail. Dropped when the file changes.
+const imageCache = new Map(); // file -> {mtime, images}
+
+function cachedImages(file) {
+  let mtime = 0;
+  try {
+    mtime = statSync(file).mtimeMs;
+  } catch {
+    return [];
+  }
+  const hit = imageCache.get(file);
+  if (hit && hit.mtime === mtime) return hit.images;
+  const images = collectImages(file);
+  imageCache.set(file, { mtime, images });
+  if (imageCache.size > 8) imageCache.delete(imageCache.keys().next().value);
+  return images;
+}
+
 const pendingWrites = new Map(); // toolUseId -> file path, until the write reports back
 const chatAgents = new Map(); // chatId -> Map(toolUseId -> {id, label, type, status, startedAt, endedAt})
 const AGENT_LINGER_MS = 30_000; // how long a finished agent stays visible
@@ -711,7 +730,16 @@ function guestCanSee(guest, obj) {
 }
 
 /** The commands allowed to guests (and only on their own chats). */
-const GUEST_TYPES = new Set(['send', 'history', 'focus', 'create_chat', 'list_sessions', 'open_session', 'attachments']);
+const GUEST_TYPES = new Set([
+  'send',
+  'history',
+  'focus',
+  'create_chat',
+  'list_sessions',
+  'open_session',
+  'attachments',
+  'image',
+]);
 
 function startRelay() {
   if (!config.relay?.token) return;
@@ -1039,10 +1067,22 @@ const handlers = {
         ? listSessions(project).map((s) => s.id)
         : [chat.sessionId ?? chat.resumeId].filter(Boolean);
 
+    // Metadata only: a page of two dozen full-size screenshots is tens of
+    // megabytes, which is exactly what gets a phone's web app killed. The
+    // pictures themselves are fetched one at a time, as they scroll into view.
     let images = [];
     for (const sid of sessions) {
       const file = sessionFile(project, sid);
-      if (file) images.push(...collectImages(file).map((img) => ({ ...img, sessionId: sid })));
+      if (file)
+        images.push(
+          ...cachedImages(file).map((img, index) => ({
+            sessionId: sid,
+            index,
+            ts: img.ts,
+            mine: img.mine,
+            mediaType: img.mediaType,
+          }))
+        );
     }
     images.sort((a, b) => new Date(b.ts ?? 0) - new Date(a.ts ?? 0));
     const page = images.slice(offset, offset + limit);
@@ -1074,6 +1114,16 @@ const handlers = {
       offset,
       docs: offset ? [] : docs, // docs come with the first page only
     });
+  },
+
+  /** One picture out of a transcript, by the index the metadata carried. */
+  image(ws, { chatId, sessionId, index }) {
+    const project = resolve(findChat(chatId).cwd);
+    const file = sessionFile(project, sessionId);
+    if (!file) throw new Error('no such session'); // also rejects ids shaped like paths
+    const img = cachedImages(file)[index];
+    if (!img) throw new Error('no such image');
+    send(ws, { type: 'image_data', sessionId, index, mediaType: img.mediaType, data: img.data });
   },
 
   /** Read a document for the in-app viewer (markdown) or for downloading. */
