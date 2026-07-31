@@ -617,6 +617,11 @@ const handlers = {
   restart_server() {
     console.log('restart requested');
     broadcast({ type: 'server_restarting' });
+    // под супервизором (launchd/systemd) достаточно выйти — он перезапустит сам
+    if (process.env.REMAUDE_SUPERVISED) {
+      setTimeout(() => process.exit(0), 300);
+      return;
+    }
     // stdio копии — в файлы: молчаливая смерть наследника недиагностируема
     const logDir = join(homedir(), '.remaude');
     mkdirSync(logDir, { recursive: true });
