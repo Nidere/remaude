@@ -197,9 +197,20 @@ function requestHistory(chatId) {
 }
 
 function selectChat(chatId) {
+  // черновик привязан к чату: сохраняем текущий, восстанавливаем новый
+  if (activeChatId && chats.has(activeChatId)) {
+    const prev = chats.get(activeChatId);
+    prev.draftText = $('input').value;
+    prev.draftAtt = attachments.slice();
+  }
   activeChatId = chatId;
   localStorage.setItem('lastChat', chatId);
   const chat = getChat(chatId);
+  $('input').value = chat.draftText ?? '';
+  $('input').dispatchEvent(new Event('input')); // пересчёт высоты
+  attachments.length = 0;
+  attachments.push(...(chat.draftAtt ?? []));
+  renderAttachments();
   feedHost.innerHTML = '';
   feedHost.append(chat.feedEl);
   requestHistory(chatId);
@@ -245,6 +256,15 @@ function renderSdkMessage(chatId, msg) {
       if (block.type === 'text' && block.text.trim()) {
         const node = el('div', 'msg msg-assistant md-body', '');
         node.innerHTML = mdToHtml(block.text);
+        const copyBtn = el('button', 'copy-btn', '⧉');
+        copyBtn.title = 'скопировать как markdown';
+        const source = block.text;
+        copyBtn.onclick = () => {
+          navigator.clipboard.writeText(source);
+          copyBtn.textContent = '✓';
+          setTimeout(() => (copyBtn.textContent = '⧉'), 1200);
+        };
+        node.append(copyBtn);
         chat.feedEl.append(node);
       } else if (block.type === 'tool_use') {
         const chip = makeChip(`${block.name}`, JSON.stringify(block.input, null, 2).slice(0, 4000));
@@ -282,8 +302,10 @@ function renderSdkMessage(chatId, msg) {
 
   if (msg.type === 'result') {
     dropStream(chat);
-    const cost = msg.total_cost_usd != null ? ` · $${msg.total_cost_usd.toFixed(3)}` : '';
-    chat.feedEl.append(el('div', 'msg-meta', `${(msg.duration_ms / 1000).toFixed(1)}s${cost}`));
+    const meta = el('div', 'msg-meta', `${(msg.duration_ms / 1000).toFixed(1)}s`);
+    if (msg.total_cost_usd != null)
+      meta.title = `расчётный эквивалент API: $${msg.total_cost_usd.toFixed(2)} — при подписке не списывается, реальный расход виден в виджете лимитов`;
+    chat.feedEl.append(meta);
     scrollToBottom();
   }
 }
@@ -464,6 +486,11 @@ function sendMessage() {
   $('input').style.height = 'auto';
   attachments.length = 0;
   renderAttachments();
+  const chat = chats.get(activeChatId);
+  if (chat) {
+    chat.draftText = '';
+    chat.draftAtt = [];
+  }
 }
 
 function updateComposerButtons(status) {
@@ -530,18 +557,32 @@ $('input').addEventListener('input', function () {
   this.style.height = Math.min(this.scrollHeight, 200) + 'px';
 });
 
+// Любую вставленную картинку нормализуем в PNG (Windows-буфер может отдать bmp
+// и прочее, что API не принимает) и ужимаем слишком большие скриншоты.
+async function addImageAttachment(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const MAX = 1568; // оптимум по докам vision
+    const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const url = canvas.toDataURL('image/png');
+    attachments.push({ mediaType: 'image/png', data: url.split(',')[1], url });
+    renderAttachments();
+  } catch {
+    /* в буфере не картинка — игнорируем */
+  }
+}
+
 $('input').addEventListener('paste', (e) => {
-  for (const item of e.clipboardData?.items ?? []) {
-    if (!item.type.startsWith('image/')) continue;
-    e.preventDefault();
+  const files = [...(e.clipboardData?.items ?? [])].filter((i) => i.kind === 'file');
+  if (!files.length) return;
+  e.preventDefault();
+  for (const item of files) {
     const file = item.getAsFile();
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = reader.result;
-      attachments.push({ mediaType: item.type, data: url.split(',')[1], url });
-      renderAttachments();
-    };
-    reader.readAsDataURL(file);
+    if (file) addImageAttachment(file);
   }
 });
 
