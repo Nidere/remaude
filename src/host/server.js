@@ -179,10 +179,11 @@ agent.on('chat_message', ({ chatId, msg }) => {
     if (text) lastReplies.set(chatId, text);
   }
   if (msg.type === 'result') {
-    // the turn is over: whatever is still marked running never reported back
+    // The turn is over: a foreground agent that never reported back is gone.
+    // Background ones outlive the turn by design — they keep their row.
     let aborted = false;
     for (const agent of agentsOf(chatId).values())
-      if (finishAgent(chatId, agent.id, 'aborted')) aborted = true;
+      if (!agent.async && finishAgent(chatId, agent.id, 'aborted')) aborted = true;
     if (aborted) broadcastAgents(chatId);
     refreshLimits(true);
     sendChatMeta(chatId);
@@ -284,6 +285,16 @@ function finishAgent(chatId, id, status) {
   return true;
 }
 
+function resultText(block) {
+  const c = block.content;
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return '';
+  return c
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join(' ');
+}
+
 function trackAgents(chatId, msg) {
   let changed = false;
   const content = msg.message?.content;
@@ -306,6 +317,16 @@ function trackAgents(chatId, msg) {
   if (msg.type === 'user') {
     for (const block of content) {
       if (block.type !== 'tool_result') continue;
+      const agent = agentsOf(chatId).get(block.tool_use_id);
+      if (!agent) continue;
+      // A background agent answers twice on the same tool_use_id: first
+      // "launched" with its id, then the real report minutes later. Only the
+      // second one means it is done — the first used to hide the row instantly.
+      if (resultText(block).slice(0, 200).toLowerCase().includes('async agent launched')) {
+        agent.async = true;
+        changed = true;
+        continue;
+      }
       if (finishAgent(chatId, block.tool_use_id, block.is_error ? 'failed' : 'done')) changed = true;
     }
   }
