@@ -803,7 +803,7 @@ body.guest .chat-actions { display: none !important; }
   #limits { font-size: 10px; }
   #chat-meta { font-size: 10px; }
   #feed { padding: 10px; }
-  #composer { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+  #composer { padding: 8px 10px; }
   #scroll-down { bottom: 80px; right: 14px; }
   .msg img, .chip img { max-width: 100%; }
 }
