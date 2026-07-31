@@ -164,6 +164,44 @@ export function listSessions(cwd) {
   return sessions.sort((a, b) => b.mtime - a.mtime);
 }
 
+/**
+ * Every image in a transcript, newest first: [{mediaType, data, ts, mine}].
+ * `mine` marks pictures the user attached, as opposed to screenshots and other
+ * images that arrived from tools.
+ */
+export function collectImages(file, { limit = 500 } = {}) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf-8');
+  } catch {
+    return [];
+  }
+  if (!text.includes('"base64"')) return []; // cheap reject: most transcripts have none
+  const images = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim() || !line.includes('"base64"')) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) continue;
+    const mine = entry.type === 'user' && !content.some((b) => b.type === 'tool_result');
+    const walk = (blocks) => {
+      for (const b of blocks ?? []) {
+        if (b.type === 'image' && b.source?.type === 'base64')
+          images.push({ mediaType: b.source.media_type, data: b.source.data, ts: entry.timestamp ?? null, mine });
+        else if (b.type === 'tool_result' && Array.isArray(b.content)) walk(b.content);
+      }
+    };
+    walk(content);
+    if (images.length >= limit) break;
+  }
+  return images.reverse();
+}
+
 /** Full path to a session's transcript, or null if it does not exist. */
 export function sessionFile(cwd, sessionId) {
   const dir = sessionDir(cwd);

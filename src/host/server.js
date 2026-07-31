@@ -29,6 +29,7 @@ import {
   listAllSessionFiles,
   searchSessionFile,
   slugFor,
+  collectImages,
 } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
 
@@ -248,11 +249,86 @@ agent.on('chat_error', ({ chatId, error }) =>
   broadcast({ type: 'chat_error', chatId, error: String(error?.message ?? error) })
 );
 
+// ---------- inbox of documents written for the user ----------
+// Marked files (a `<!-- remaude -->` first line) and anything under .remaude/
+// are indexed as they are written, so nothing has to be scanned later. The
+// index keeps paths only — content is always read from disk, since the file
+// may have changed or moved on since.
+
+const ARTIFACTS_PATH = join(homedir(), '.remaude', 'artifacts.json');
+const INBOX_MARKER = '<!-- remaude -->';
+
+function loadArtifacts() {
+  try {
+    return JSON.parse(readFileSync(ARTIFACTS_PATH, 'utf-8'));
+  } catch {
+    return [];
+  }
+}
+let artifacts = loadArtifacts();
+
+function saveArtifacts() {
+  mkdirSync(dirname(ARTIFACTS_PATH), { recursive: true });
+  writeFile(ARTIFACTS_PATH, JSON.stringify(artifacts, null, 2)).catch(() => {});
+}
+
+function isInboxPath(p) {
+  return /[\\/]\.remaude[\\/]/.test(p);
+}
+
+/** First heading or first non-empty line — a human label for the list. */
+function docTitle(file) {
+  try {
+    const head = readFileSync(file, 'utf-8').slice(0, 2000).split('\n');
+    for (const line of head) {
+      const text = line.replace(INBOX_MARKER, '').trim();
+      if (!text) continue;
+      return text.replace(/^#+\s*/, '').slice(0, 80);
+    }
+  } catch {
+    /* unreadable — fall back to the file name */
+  }
+  return null;
+}
+
+function rememberArtifact(path, chatId) {
+  const abs = resolve(path);
+  const chat = findChatSafe(chatId);
+  const existing = artifacts.find((a) => a.path.toLowerCase() === abs.toLowerCase());
+  const entry = {
+    path: abs,
+    chatId,
+    sessionId: chat?.sessionId ?? chat?.resumeId ?? null,
+    projectPath: chat?.cwd ?? null,
+    title: docTitle(abs),
+    addedAt: existing?.addedAt ?? Date.now(),
+  };
+  if (existing) Object.assign(existing, entry);
+  else artifacts.push(entry);
+  saveArtifacts();
+  broadcast({ type: 'artifact_added', artifact: entry });
+}
+
+/** A Write/Edit landed: index it when the file marks itself as the user's. */
+function trackArtifact(chatId, filePath) {
+  const abs = resolve(filePath);
+  if (!existsSync(abs) || !statSync(abs).isFile()) return;
+  if (!isInboxPath(abs)) {
+    try {
+      if (!readFileSync(abs, 'utf-8').slice(0, 200).includes(INBOX_MARKER)) return;
+    } catch {
+      return;
+    }
+  }
+  rememberArtifact(abs, chatId);
+}
+
 // ---------- subagent tracking ----------
 // An Agent tool_use starts one; the matching tool_result ends it; anything still
 // running when the turn ends was aborted. The sidebar shows these live, so the
 // bookkeeping lives here rather than being guessed at from the feed.
 
+const pendingWrites = new Map(); // toolUseId -> file path, until the write reports back
 const chatAgents = new Map(); // chatId -> Map(toolUseId -> {id, label, type, status, startedAt, endedAt})
 const AGENT_LINGER_MS = 30_000; // how long a finished agent stays visible
 
@@ -302,6 +378,8 @@ function trackAgents(chatId, msg) {
 
   if (msg.type === 'assistant' && msg.parent_tool_use_id === null) {
     for (const block of content) {
+      if (block.type === 'tool_use' && (block.name === 'Write' || block.name === 'Edit') && block.input?.file_path)
+        pendingWrites.set(block.id, block.input.file_path);
       if (block.type !== 'tool_use' || block.name !== 'Agent') continue;
       agentsOf(chatId).set(block.id, {
         id: block.id,
@@ -317,6 +395,12 @@ function trackAgents(chatId, msg) {
   if (msg.type === 'user') {
     for (const block of content) {
       if (block.type !== 'tool_result') continue;
+      // a write finished: the file exists now, so its marker can be read
+      const written = pendingWrites.get(block.tool_use_id);
+      if (written) {
+        pendingWrites.delete(block.tool_use_id);
+        if (!block.is_error) trackArtifact(chatId, written);
+      }
       const agent = agentsOf(chatId).get(block.tool_use_id);
       if (!agent) continue;
       // A background agent answers twice on the same tool_use_id: first
@@ -838,6 +922,84 @@ const handlers = {
       scanned: cursor.idx,
       total: cursor.files.length,
     });
+  },
+
+  /**
+   * The attachments panel: pictures pulled straight out of the transcripts and
+   * documents from the inbox index. Scope is one chat or a whole project.
+   */
+  attachments(ws, { chatId, scope = 'chat', offset = 0, limit = 24 }) {
+    const chat = findChat(chatId);
+    const project = resolve(chat.cwd);
+    const sessions =
+      scope === 'project'
+        ? listSessions(project).map((s) => s.id)
+        : [chat.sessionId ?? chat.resumeId].filter(Boolean);
+
+    let images = [];
+    for (const sid of sessions) {
+      const file = sessionFile(project, sid);
+      if (file) images.push(...collectImages(file).map((img) => ({ ...img, sessionId: sid })));
+    }
+    images.sort((a, b) => new Date(b.ts ?? 0) - new Date(a.ts ?? 0));
+    const page = images.slice(offset, offset + limit);
+
+    const docs = artifacts
+      .filter((a) =>
+        scope === 'project' ? resolve(a.projectPath ?? '') === project : a.chatId === chatId || a.sessionId === chat.sessionId
+      )
+      .map((a) => {
+        let size = null;
+        let missing = true;
+        try {
+          const st = statSync(a.path);
+          size = st.size;
+          missing = false;
+        } catch {
+          /* the file is gone — say so rather than pretend */
+        }
+        return { ...a, size, missing, name: a.path.split(/[\\/]/).pop() };
+      })
+      .sort((a, b) => b.addedAt - a.addedAt);
+
+    send(ws, {
+      type: 'attachments',
+      chatId,
+      scope,
+      images: page,
+      imagesTotal: images.length,
+      offset,
+      docs: offset ? [] : docs, // docs come with the first page only
+    });
+  },
+
+  /** Read a document for the in-app viewer (markdown) or for downloading. */
+  read_artifact(ws, { path, asText = true }) {
+    const abs = resolve(path);
+    if (!artifacts.some((a) => a.path.toLowerCase() === abs.toLowerCase())) throw new Error('not in the inbox');
+    const buf = readFileSync(abs);
+    if (buf.length > 12 * 1024 * 1024) throw new Error('file too large to send');
+    send(ws, {
+      type: 'artifact',
+      path: abs,
+      name: abs.split(/[\\/]/).pop(),
+      text: asText ? buf.toString('utf-8') : null,
+      base64: asText ? null : buf.toString('base64'),
+    });
+  },
+
+  /** Manual "add to inbox" for a file that was written without a marker. */
+  add_artifact(ws, { path, chatId }) {
+    const abs = resolve(path);
+    if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error('no such file');
+    rememberArtifact(abs, chatId);
+  },
+
+  remove_artifact(ws, { path }) {
+    const abs = resolve(path).toLowerCase();
+    artifacts = artifacts.filter((a) => a.path.toLowerCase() !== abs);
+    saveArtifacts();
+    broadcast({ type: 'artifact_removed', path: abs });
   },
 
   /** Sidebar order of projects: the config array itself is the order. */

@@ -2,6 +2,24 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
+const INBOX_CONVENTION = `
+## remaude inbox
+
+This session runs inside remaude, whose UI has an inbox of documents written for
+the user personally — handoffs, notes, plans, summaries, reports — as opposed to
+documents that are simply part of the project (READMEs, specs, docs the repo
+owns).
+
+When a document you write is meant for the user to read rather than for the
+codebase, mark it: make \`<!-- remaude -->\` the very first line of the file.
+The marker is invisible in rendered markdown and harmless in a repo. Files
+written anywhere under a \`.remaude/\` directory are collected automatically and
+need no marker.
+
+Do not mark project files. If in doubt, ask, or leave it unmarked — the user can
+add any file to the inbox by hand.
+`.trim();
+
 /**
  * One chat = one live Agent SDK session in streaming-input mode.
  *
@@ -35,6 +53,10 @@ export class Chat extends EventEmitter {
         permissionMode,
         model,
         includePartialMessages: true,
+        // remaude collects documents written *for the user* into an inbox. The
+        // convention has to reach every session in every project, so it rides
+        // along with the preset prompt instead of relying on project files.
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: INBOX_CONVENTION },
         canUseTool: async (toolName, input, { signal, suggestions }) => {
           // remaude has no interactive questionnaires (and the user hates them) — so we
           // force the model to ask again in plain text. This hook fires even in bypass mode.

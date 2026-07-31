@@ -57,6 +57,7 @@
           <option value="acceptEdits">auto-accept edits</option>
           <option value="plan">plan</option>
         </select>
+        <button id="att-btn" title="Attachments: images and documents">📎</button>
         <div id="limits" title="Claude limits"></div>
         <span id="conn-dot" title="connection"></span>
       </div>
@@ -76,6 +77,36 @@
       </div>
     </footer>
   </main>
+
+  <div id="attachments-panel" hidden>
+    <div id="att-box">
+      <div id="att-head">
+        <div id="att-tabs">
+          <button class="att-tab active" data-tab="images">🖼 Images</button>
+          <button class="att-tab" data-tab="docs">📄 Docs</button>
+        </div>
+        <div id="att-controls">
+          <select id="att-scope">
+            <option value="chat">this chat</option>
+            <option value="project">whole project</option>
+          </select>
+          <select id="att-filter">
+            <option value="all">all images</option>
+            <option value="mine">mine only</option>
+          </select>
+          <button id="att-close">✕</button>
+        </div>
+      </div>
+      <div id="att-body"></div>
+    </div>
+  </div>
+
+  <div id="doc-viewer" hidden>
+    <div id="doc-box">
+      <div id="doc-head"><span id="doc-title"></span><button id="doc-close">✕</button></div>
+      <div id="doc-body" class="md-body"></div>
+    </div>
+  </div>
 
   <div id="lightbox" hidden><img alt="" /></div>
 

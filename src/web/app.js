@@ -316,6 +316,32 @@ const handlers = {
     searchAppending = false;
   },
 
+  attachments({ chatId, images, imagesTotal, docs, offset }) {
+    if (chatId !== activeChatId) return;
+    attState.images = offset ? [...attState.images, ...images] : images;
+    if (!offset) attState.docs = docs ?? [];
+    attState.total = imagesTotal;
+    renderAttachments2();
+  },
+
+  artifact({ path, name, text, base64 }) {
+    if (text != null) {
+      $('doc-title').textContent = name;
+      $('doc-body').innerHTML = mdToHtml(text);
+      $('doc-viewer').hidden = false;
+      return;
+    }
+    // not markdown: hand it to the browser as a download
+    const a = document.createElement('a');
+    a.href = `data:application/octet-stream;base64,${base64}`;
+    a.download = name;
+    a.click();
+  },
+
+  artifact_added({ artifact }) {
+    if (!$('attachments-panel').hidden) requestAttachments(0);
+  },
+
   agents({ chatId, agents }) {
     getChat(chatId).agents = agents;
     renderSidebar();
@@ -862,6 +888,111 @@ function renderHostProjects(root, hostId, hostState) {
   }
 }
 
+// ---------- attachments: gallery and document inbox ----------
+
+let attState = { tab: 'images', images: [], docs: [], total: 0, offset: 0 };
+
+function openAttachments() {
+  if (!activeChatId) return;
+  attState = { ...attState, images: [], docs: [], total: 0, offset: 0 };
+  $('attachments-panel').hidden = false;
+  $('att-body').innerHTML = '<div class="att-empty">loading…</div>';
+  requestAttachments(0);
+}
+
+function requestAttachments(offset) {
+  sendTo(chatHostId(activeChatId), {
+    type: 'attachments',
+    chatId: activeChatId,
+    scope: $('att-scope').value,
+    offset,
+  });
+}
+
+function renderAttachments2() {
+  const body = $('att-body');
+  body.innerHTML = '';
+  $('att-filter').hidden = attState.tab !== 'images';
+
+  if (attState.tab === 'images') {
+    const mineOnly = $('att-filter').value === 'mine';
+    const shown = attState.images.filter((i) => !mineOnly || i.mine);
+    if (!shown.length) {
+      body.append(el('div', 'att-empty', 'no images here yet'));
+      return;
+    }
+    const grid = el('div', 'att-grid', '');
+    for (const img of shown) {
+      const cell = el('div', 'att-cell', '');
+      const image = document.createElement('img');
+      image.src = `data:${img.mediaType};base64,${img.data}`;
+      image.loading = 'lazy';
+      if (img.ts) cell.title = new Date(img.ts).toLocaleString();
+      cell.append(image);
+      cell.onclick = () => {
+        $('lightbox').querySelector('img').src = image.src;
+        $('lightbox').hidden = false;
+      };
+      grid.append(cell);
+    }
+    body.append(grid);
+    if (attState.images.length < attState.total) {
+      const more = el('button', 'att-more', `show more (${attState.images.length}/${attState.total})`);
+      more.onclick = () => {
+        more.textContent = 'loading…';
+        requestAttachments(attState.images.length);
+      };
+      body.append(more);
+    }
+    return;
+  }
+
+  if (!attState.docs.length) {
+    body.append(
+      el('div', 'att-empty', 'no documents yet — they appear here when a written file is marked for you')
+    );
+    return;
+  }
+  for (const doc of attState.docs) {
+    const ext = (doc.name.split('.').pop() ?? '').toLowerCase();
+    const row = el('div', `att-doc${doc.missing ? ' missing' : ''}`, '');
+    row.append(el('div', `att-ext ext-${ext}`, ext.slice(0, 4)));
+    const info = el('div', 'att-doc-info', '');
+    info.append(el('div', 'att-doc-name', doc.title ?? doc.name));
+    const meta = [
+      doc.name,
+      doc.missing ? 'missing on disk' : formatSize(doc.size),
+      new Date(doc.addedAt).toLocaleDateString(),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    info.append(el('div', 'att-doc-meta', meta));
+    row.append(info);
+
+    const drop = el('button', 'att-doc-drop', '✕');
+    drop.title = 'remove from the inbox (the file stays on disk)';
+    drop.onclick = (e) => {
+      e.stopPropagation();
+      sendTo(chatHostId(activeChatId), { type: 'remove_artifact', path: doc.path });
+      attState.docs = attState.docs.filter((d) => d.path !== doc.path);
+      renderAttachments2();
+    };
+    row.append(drop);
+
+    if (!doc.missing)
+      row.onclick = () =>
+        sendTo(chatHostId(activeChatId), { type: 'read_artifact', path: doc.path, asText: ext === 'md' });
+    body.append(row);
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes == null) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 // ---------- search across saved transcripts ----------
 // The sidebar filter alone only ever saw open chats. Real search asks the host
 // to grep its saved sessions, page by page, so digging deeper stays possible.
@@ -1384,6 +1515,24 @@ $('pair-btn').onclick = () => {
   sendTo(ownHostId(), { type: 'pair_relay', code });
   $('set-pair-code').value = '';
 };
+
+$('att-btn').onclick = openAttachments;
+$('att-close').onclick = () => ($('attachments-panel').hidden = true);
+$('attachments-panel').addEventListener('click', (e) => {
+  if (e.target.id === 'attachments-panel') $('attachments-panel').hidden = true;
+});
+for (const tab of document.querySelectorAll('.att-tab'))
+  tab.onclick = () => {
+    document.querySelectorAll('.att-tab').forEach((t) => t.classList.toggle('active', t === tab));
+    attState.tab = tab.dataset.tab;
+    renderAttachments2();
+  };
+$('att-scope').onchange = () => openAttachments();
+$('att-filter').onchange = () => renderAttachments2();
+$('doc-close').onclick = () => ($('doc-viewer').hidden = true);
+$('doc-viewer').addEventListener('click', (e) => {
+  if (e.target.id === 'doc-viewer') $('doc-viewer').hidden = true;
+});
 
 $('edit-btn').onclick = () => setEditMode(!editMode);
 
