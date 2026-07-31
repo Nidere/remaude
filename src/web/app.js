@@ -532,6 +532,7 @@ function selectChat(chatId) {
   if (chat.mode) setModeSelect(chat.mode);
   renderMeta(chat);
   updateComposerButtons(chat.status);
+  renderActivity(chat); // the strip belongs to this chat, not to the one we left
   document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
   const cur = chats.get(chatId);
   // host controls stay hidden while we are looking at someone else's chat
