@@ -93,6 +93,9 @@ export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
       continue;
     }
     if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message || entry.isMeta) continue;
+    // системные инъекции харнесса (task-notification и прочее) записаны как
+    // user-сообщения, но несут origin.kind — настоящий ввод пользователя без origin
+    if (entry.type === 'user' && entry.origin?.kind) continue;
     const isPlainUserText =
       entry.type === 'user' &&
       !entry.isSidechain &&
