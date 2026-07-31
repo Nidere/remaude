@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { HostAgent } from './agent.js';
+import { listSessions, loadHistory } from './transcripts.js';
 
 const PORT = 7699;
 const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'web');
@@ -129,7 +130,7 @@ function stateSnapshot() {
     type: 'state',
     projects: [...agent.projects.values()].map((p) => ({
       path: p.path,
-      chats: [...p.chats.values()].map((c) => ({ id: c.id, sessionId: c.sessionId, status: c.status })),
+      chats: [...p.chats.values()].map((c) => ({ id: c.id, sessionId: c.sessionId, status: c.status, title: c.title ?? null })),
     })),
   };
 }
@@ -174,9 +175,45 @@ const handlers = {
   send(ws, { chatId, content }) {
     const chat = findChat(chatId);
     chat.send(content);
+    if (!chat.title) {
+      const text = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;
+      if (text) {
+        chat.title = text.slice(0, 60);
+        broadcast(stateSnapshot());
+      }
+    }
     const userMsg = { type: 'user', parent_tool_use_id: null, message: { role: 'user', content } };
     pushHistory(chatId, userMsg);
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
+  },
+
+  /** Сохранённые на диске сессии проекта (включая созданные в VS Code/CLI). */
+  list_sessions(ws, { projectPath }) {
+    const live = {};
+    for (const chat of agent.allChats()) {
+      if (chat.sessionId) live[chat.sessionId] = chat.id;
+      if (chat.resumeId) live[chat.resumeId] = chat.id;
+    }
+    send(ws, { type: 'sessions', projectPath, sessions: listSessions(resolve(projectPath)), live });
+  },
+
+  /** Возобновить сохранённую сессию: история — из транскрипта, контекст — resume в SDK. */
+  open_session(ws, { projectPath, sessionId }) {
+    for (const chat of agent.allChats()) {
+      if (chat.sessionId === sessionId || chat.resumeId === sessionId) {
+        send(ws, { type: 'chat_created', chatId: chat.id, projectPath });
+        return;
+      }
+    }
+    const abs = resolve(projectPath);
+    const history = loadHistory(abs, sessionId);
+    const meta = listSessions(abs).find((s) => s.id === sessionId);
+    const chat = agent.createChat(abs, { resume: sessionId });
+    chat.resumeId = sessionId;
+    chat.title = meta?.title ?? meta?.preview?.slice(0, 60) ?? null;
+    chatHistories.set(chat.id, history);
+    broadcast(stateSnapshot());
+    send(ws, { type: 'chat_created', chatId: chat.id, projectPath: abs });
   },
 
   interrupt(ws, { chatId }) {

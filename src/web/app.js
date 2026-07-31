@@ -102,23 +102,38 @@ const handlers = {
   },
 
   root_listing({ root, dirs, added, error }) {
-    $('picker-root').textContent = root;
-    const list = $('picker-list');
-    list.innerHTML = '';
-    if (error) list.append(el('div', 'picker-item added', `ошибка: ${error}`));
     const addedSet = new Set(added.map((p) => p.toLowerCase()));
     const sep = root.includes('\\') ? '\\' : '/';
-    for (const name of dirs) {
-      const isAdded = addedSet.has(`${root}${sep}${name}`.toLowerCase());
-      const item = el('div', `picker-item${isAdded ? ' added' : ''}`, name);
-      if (!isAdded)
-        item.onclick = () => {
-          send({ type: 'add_from_root', name });
-          $('picker').hidden = true;
-        };
-      list.append(item);
-    }
-    $('picker').hidden = false;
+    openModal(
+      `Папки в ${root}`,
+      error
+        ? [{ label: `ошибка: ${error}`, muted: true }]
+        : dirs.map((name) => {
+            const isAdded = addedSet.has(`${root}${sep}${name}`.toLowerCase());
+            return {
+              label: name,
+              muted: isAdded,
+              check: isAdded,
+              onclick: isAdded ? null : () => send({ type: 'add_from_root', name }),
+            };
+          })
+    );
+  },
+
+  sessions({ projectPath, sessions, live }) {
+    openModal(
+      `Прошлые чаты · ${shortPath(projectPath)}`,
+      sessions.length
+        ? sessions.map((s) => ({
+            label: s.title ?? s.preview ?? s.id.slice(0, 8),
+            sub: `${new Date(s.mtime).toLocaleString()}${live[s.id] ? ' · уже открыт' : ''}`,
+            check: Boolean(live[s.id]),
+            onclick: live[s.id]
+              ? () => selectChat(live[s.id])
+              : () => send({ type: 'open_session', projectPath, sessionId: s.id }),
+          }))
+        : [{ label: 'сохранённых сессий нет', muted: true }]
+    );
   },
 
   error({ message }) {
@@ -135,6 +150,7 @@ function getChat(chatId, projectPath) {
     feedEl.style.display = 'contents';
     chats.set(chatId, {
       projectPath: projectPath ?? '',
+      title: null,
       status: 'idle',
       feedEl,
       streamEl: null,
@@ -162,7 +178,7 @@ function selectChat(chatId) {
   feedHost.innerHTML = '';
   feedHost.append(chat.feedEl);
   requestHistory(chatId);
-  $('chat-title').textContent = `${shortPath(chat.projectPath)} · ${chatId.slice(0, 8)}`;
+  $('chat-title').textContent = `${shortPath(chat.projectPath)} · ${chat.title ?? chatId.slice(0, 8)}`;
   updateComposerButtons(chat.status);
   document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
   $('input').focus();
@@ -288,6 +304,26 @@ function renderSubagent(chat, msg) {
   if (text.trim()) group.append(el('pre', '', `[${msg.type}] ${text.slice(0, 2000)}`));
 }
 
+// ---------- модалка со списком ----------
+
+function openModal(title, items) {
+  $('picker-title').textContent = title;
+  const list = $('picker-list');
+  list.innerHTML = '';
+  for (const it of items) {
+    const item = el('div', `picker-item${it.muted ? ' added' : ''}${it.check ? ' added' : ''}`, '');
+    item.append(el('div', '', it.label));
+    if (it.sub) item.append(el('div', 'picker-sub', it.sub));
+    if (it.onclick)
+      item.onclick = () => {
+        $('picker').hidden = true;
+        it.onclick();
+      };
+    list.append(item);
+  }
+  $('picker').hidden = false;
+}
+
 // ---------- сайдбар ----------
 
 function renderSidebar(projects) {
@@ -297,11 +333,14 @@ function renderSidebar(projects) {
     const proj = el('div', 'project', '');
     proj.append(el('div', 'project-name', p.path));
     for (const c of p.chats) {
-      getChat(c.id, p.path).status = c.status;
+      const chat = getChat(c.id, p.path);
+      chat.status = c.status;
+      chat.title = c.title;
       const item = el('div', 'chat-item', '');
       item.dataset.chatId = c.id;
       const dot = el('span', `status-dot ${c.status}`, '');
-      item.append(dot, el('span', '', c.sessionId ? c.id.slice(0, 8) : 'новый'));
+      const label = el('span', 'chat-label', c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'новый'));
+      item.append(dot, label);
       if (c.id === activeChatId) item.classList.add('active');
       item.onclick = () => selectChat(c.id);
       proj.append(item);
@@ -309,6 +348,9 @@ function renderSidebar(projects) {
     const newChat = el('div', 'new-chat', '+ новый чат');
     newChat.onclick = () => send({ type: 'create_chat', projectPath: p.path, permissionMode: $('permission-mode').value });
     proj.append(newChat);
+    const oldChats = el('div', 'new-chat', '⏳ прошлые чаты');
+    oldChats.onclick = () => send({ type: 'list_sessions', projectPath: p.path });
+    proj.append(oldChats);
     root.append(proj);
   }
 }

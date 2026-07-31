@@ -362,8 +362,12 @@ body {
   cursor: pointer;
 }
 .picker-item:hover { background: var(--bg-3); }
-.picker-item.added { color: var(--dim); cursor: default; }
+.picker-item.added { color: var(--dim); }
 .picker-item.added::after { content: " ✓"; color: var(--green); }
+.picker-sub { font-size: 11px; color: var(--dim); }
+.picker-item > div:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.chat-label { overflow: hidden; text-overflow: ellipsis; }
 
 #picker-actions {
   padding: 10px 16px;
