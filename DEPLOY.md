@@ -1,94 +1,94 @@
-# remaude: как развернуть свой экземпляр
+# remaude: deploying your own instance
 
-Инструкция написана для Claude Code, который будет разворачивать проект новому
-владельцу. Читай целиком до начала работы: тут есть несколько мест, где
-«очевидное» решение неверно, и они помечены ⚠.
+Written for the Claude Code instance that will set this up for a new owner.
+Read it through before starting: several places look obvious but are not, and
+those are marked ⚠.
 
-## Что это и из чего состоит
+## What this is and what it consists of
 
-remaude — веб-оболочка для Claude Code: браузерный интерфейс вместо множества
-вкладок VS Code, с доступом снаружи (телефон, другой компьютер).
+remaude is a web shell for Claude Code: a browser interface instead of many
+VS Code windows, reachable from outside (phone, another computer).
 
-Три части:
+Three parts:
 
 ```
-Браузер (ПК / телефон, PWA)
+Browser (desktop / phone, PWA)
         │ HTTPS/WSS
         ▼
-Relay (маленькая VPS + Caddy)      ← auth, маршрутизация; контент не хранит
-        ▲ исходящий WSS
+Relay (small VPS + Caddy)          ← auth, routing; stores no content
+        ▲ outbound WSS
         │
-Хост-агент (машина владельца)      ← Agent SDK, файлы, сессии Claude Code
+Host agent (owner's machine)       ← Agent SDK, files, Claude Code sessions
 ```
 
-- **Хост-агент** (`src/host/`) — Node-процесс на машине, где работает Claude
-  Code. Держит живые SDK-сессии, отдаёт веб-интерфейс на `127.0.0.1:7699`,
-  сам ходит наружу к relay. Все данные (проекты, транскрипты, токены) — только тут.
-- **Relay** (`src/relay/`) — на VPS под публичным доменом. Пускает по Google
-  OAuth (жёсткий whitelist), связывает браузеры с хостами, рассылает push.
-  Транскрипты через него проходят транзитом, но не сохраняются.
-- **Веб-интерфейс** (`src/web/`) — статика, одинаковая локально и через relay.
+- **Host agent** (`src/host/`) — a Node process on the machine where Claude Code
+  runs. It keeps live SDK sessions, serves the web UI on `127.0.0.1:7699`, and
+  dials out to the relay. All data (projects, transcripts, tokens) stays here.
+- **Relay** (`src/relay/`) — runs on a VPS behind a public domain. It gates
+  access with Google OAuth (strict allowlist), connects browsers to hosts and
+  sends push notifications. Transcripts pass through but are never stored.
+- **Web UI** (`src/web/`) — static files, identical locally and through the relay.
 
-Ключевая идея: **хост подключается к relay сам, исходящим соединением**. Ни
-проброса портов, ни белого IP, ни DDNS — и работает за любым NAT.
+The key idea: **the host connects to the relay itself, outbound**. No port
+forwarding, no static IP, no DDNS — it works behind any NAT.
 
-## Что понадобится от владельца
+## What the owner needs
 
-1. Своя подписка Claude (Pro/Max) — remaude её не заменяет и не шарит.
-2. Домен, которым он управляет (нужна A-запись).
-3. Аккаунт AWS (или любой VPS-провайдер; ниже — вариант с AWS Lightsail, ~$5/мес).
-4. Google Cloud проект для OAuth-клиента (бесплатно).
-5. Список email'ов, кому можно входить (обычно 1–3 своих).
+1. Their own Claude subscription (Pro/Max) — remaude neither replaces nor shares it.
+2. A domain they control (an A record is required).
+3. An AWS account, or any VPS provider; the walkthrough below uses AWS Lightsail (~$5/month).
+4. A Google Cloud project for the OAuth client (free).
+5. The list of emails allowed to sign in (usually one to three).
 
-## Порядок развёртывания
+## Deployment order
 
-### 1. Хост локально (5 минут, сразу видно результат)
+### 1. Host locally (5 minutes, immediate feedback)
 
 ```bash
-git clone <репозиторий> remaude && cd remaude
+git clone <repository> remaude && cd remaude
 npm install
 npm start                     # → http://localhost:7699
 ```
 
-Открой в браузере, нажми «📁 добавить проект». Если работает локально —
-переходи к relay. Всё остальное (удалёнка, шаринг, push) — надстройка.
+Open it and click "add project". Once that works, move on to the relay —
+everything else (remote access, sharing, push) is a layer on top.
 
-⚠ Требуется Node 20+. Claude Code должен быть установлен и залогинен
-(`claude auth status` показывает `"loggedIn": true`) — SDK запускает его как
-подпроцесс. Если не залогинен, это можно сделать прямо из UI: ⚙ → «Войти в Claude».
+⚠ Node 20+ is required. Claude Code must be installed and signed in
+(`claude auth status` reports `"loggedIn": true`) because the SDK spawns it as a
+subprocess. If it is not, that can be done from the UI: ⚙ → "sign in to Claude".
 
-### 2. Google OAuth-клиент
+### 2. Google OAuth client
 
-В Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID
-→ тип **Web application**:
+Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID →
+type **Web application**:
 
-- Authorized JavaScript origins: `https://<домен>`
-- Authorized redirect URIs: `https://<домен>/auth/google/callback`
+- Authorized JavaScript origins: `https://<domain>`
+- Authorized redirect URIs: `https://<domain>/auth/google/callback`
 
-Сохрани Client ID и Client Secret. ⚠ Секрет не коммить: он кладётся в AWS
-Secrets Manager (см. ниже) или в переменные окружения на сервере.
+Keep the client ID and secret. ⚠ Never commit the secret: it belongs in AWS
+Secrets Manager (below) or in environment variables on the server.
 
-### 3. VPS и DNS
+### 3. VPS and DNS
 
-Пример с Lightsail (AWS CLI уже настроен):
+Lightsail example (AWS CLI already configured):
 
 ```bash
-aws lightsail create-key-pair --key-pair-name remaude --region <регион>
-# privateKeyBase64 из ответа сохранить как ~/.remaude/lightsail-remaude.pem
+aws lightsail create-key-pair --key-pair-name remaude --region <region>
+# save privateKeyBase64 from the response as ~/.remaude/lightsail-remaude.pem
 
 aws lightsail create-instances --instance-names remaude-relay \
-  --availability-zone <зона> --blueprint-id ubuntu_24_04 --bundle-id nano_3_0 \
-  --key-pair-name remaude --region <регион> --user-data file://provision.sh
+  --availability-zone <zone> --blueprint-id ubuntu_24_04 --bundle-id nano_3_0 \
+  --key-pair-name remaude --region <region> --user-data file://provision.sh
 
-aws lightsail allocate-static-ip --static-ip-name remaude-ip --region <регион>
+aws lightsail allocate-static-ip --static-ip-name remaude-ip --region <region>
 aws lightsail attach-static-ip --static-ip-name remaude-ip \
-  --instance-name remaude-relay --region <регион>
+  --instance-name remaude-relay --region <region>
 
-aws lightsail put-instance-public-ports --instance-name remaude-relay --region <регион> \
+aws lightsail put-instance-public-ports --instance-name remaude-relay --region <region> \
   --port-infos '[{"fromPort":22,"toPort":22,"protocol":"tcp"},{"fromPort":80,"toPort":80,"protocol":"tcp"},{"fromPort":443,"toPort":443,"protocol":"tcp"}]'
 ```
 
-`provision.sh` (user-data) ставит Node 22 и Caddy:
+`provision.sh` (user data) installs Node 22 and Caddy:
 
 ```bash
 #!/bin/bash
@@ -103,20 +103,20 @@ apt-get update && apt-get install -y caddy
 mkdir -p /opt/remaude && chown ubuntu:ubuntu /opt/remaude
 ```
 
-⚠ Грабли, на которые я уже наступал:
+⚠ Traps already hit here:
 
-- `--user-data file://...` требует **ASCII-файл с LF**. UTF-16/BOM/CRLF, которые
-  по умолчанию делает PowerShell, AWS CLI молча не принимает.
-- Не передавай многострочный скрипт как строку в аргументе — PowerShell 5.1
-  режет его по пробелам.
+- `--user-data file://...` needs a **plain ASCII file with LF endings**. The
+  UTF-16/BOM/CRLF output PowerShell produces by default is silently rejected.
+- Do not pass a multi-line script as an inline argument — PowerShell 5.1 splits
+  it on whitespace and the command fails in confusing ways.
 
-Затем A-запись `<домен> → <статический IP>` (Route53 или панель регистратора).
-Caddy сам получит TLS-сертификат Let's Encrypt, когда DNS разойдётся.
+Then point an A record at the static IP. Caddy fetches a Let's Encrypt
+certificate on its own once DNS propagates.
 
-### 4. Секреты и деплой relay
+### 4. Secrets and relay deployment
 
-Скрипт `scripts/deploy-relay.ps1` (Windows) читает два секрета из AWS Secrets
-Manager, поэтому в репозитории нет ни доменов, ни IP, ни почт:
+`scripts/deploy-relay.ps1` (Windows) reads two secrets from AWS Secrets Manager,
+which is why no domains, IPs or emails live in the repository:
 
 ```
 remaude/google-oauth   {"clientId":"…","clientSecret":"…"}
@@ -124,164 +124,170 @@ remaude/relay-deploy   {"instanceIp":"…","domain":"…","whitelist":"a@b.com,c
                         "contactEmail":"…","sshKeyPath":"~/.remaude/…pem"}
 ```
 
-Создать:
+Create them:
 
 ```bash
-aws secretsmanager create-secret --name remaude/google-oauth --region <регион> \
+aws secretsmanager create-secret --name remaude/google-oauth --region <region> \
   --secret-string file://oauth.json
-aws secretsmanager create-secret --name remaude/relay-deploy --region <регион> \
+aws secretsmanager create-secret --name remaude/relay-deploy --region <region> \
   --secret-string file://relay.json
 ```
 
-⚠ Секрет должен быть **валидным JSON**; PowerShell-хэштаблица в строке даст
-`{clientId:…}` без кавычек, и потом это не распарсится.
+⚠ The secret must be **valid JSON**. A PowerShell hashtable stringified inline
+yields `{clientId:…}` without quotes, which fails to parse later.
 
-Дальше просто:
+Then simply:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\deploy-relay.ps1
 ```
 
-Скрипт копирует `src/relay` и `src/web`, ставит зависимости, пишет
-`/opt/remaude/.env`, systemd-юнит `remaude-relay` и Caddyfile, перезапускает сервисы.
+The script copies `src/relay` and `src/web`, installs dependencies, writes
+`/opt/remaude/.env`, a `remaude-relay` systemd unit and a Caddyfile, then
+restarts both services.
 
-⚠ На relay ставится **отдельный минимальный package.json** (только `ws` и
-`web-push`). Корневой тянет Agent SDK, и на инстансе с 512 МБ памяти `npm
-install` убивает машину так, что отваливается даже SSH (лечится ребутом через
-API провайдера).
+⚠ The relay gets its **own minimal package.json** (only `ws` and `web-push`).
+The root one pulls in the Agent SDK, and on a 512 MB instance `npm install`
+takes the machine down hard enough to drop SSH — recovery needs an API reboot.
 
-Если разворачиваешь не на Windows — перепиши скрипт на bash, логика тривиальная:
-собрать `.env`, скопировать два каталога, `npm install --omit=dev`, systemd + Caddy.
+If you are not on Windows, rewrite the script in bash; the logic is trivial:
+assemble `.env`, copy two directories, `npm install --omit=dev`, systemd + Caddy.
 
-### 5. Первый вход и привязка хоста
+### 5. First sign-in and host pairing
 
-1. Открыть `https://<домен>` → «Войти через Google» (аккаунт из whitelist).
-2. Сайт покажет 6-значный код (хостов ещё нет).
-3. В локальном UI (`localhost:7699`): ⚙ → адрес relay + код → «Привязать».
-4. Обновить страницу домена — там полноценный интерфейс.
+1. Open `https://<domain>` → "sign in with Google" (an allowlisted account).
+2. The site shows a six-digit code because no host is connected yet.
+3. In the local UI (`localhost:7699`): ⚙ → relay address and code → "pair".
+4. Reload the domain — the full interface is there.
 
-Дальше на телефоне: открыть домен, «Добавить на главный экран» (PWA), в ⚙
-включить уведомления.
+On a phone: open the domain, "Add to Home Screen" (PWA), then enable
+notifications in ⚙.
 
-### 6. Онбординг остальных пользователей (macOS)
+### 6. Onboarding other users (macOS)
 
-`https://<домен>/install.sh` — relay отдаёт его, подставляя свой адрес. Новому
-пользователю достаточно:
+`https://<domain>/install.sh` is served by the relay with its own address
+substituted in, so a new user only runs:
 
 ```bash
-curl -fsSL https://<домен>/install.sh | bash
+curl -fsSL https://<domain>/install.sh | bash
 ```
 
-Скрипт ставит Node (через brew), Claude Code, логинит, клонирует репозиторий,
-вешает launchd-агент с автостартом и открывает локальный UI. Дальше — п.5.
+The script installs Node (via Homebrew), installs and signs into Claude Code,
+clones the repository, registers a launchd agent with autostart and opens the
+local UI. Then follow step 5.
 
-⚠ Он должен быть в whitelist relay, иначе Google-логин упрётся в «не пускаю».
-Whitelist меняется в секрете `remaude/relay-deploy` + повторный деплой.
+⚠ They must be on the relay's allowlist, otherwise Google sign-in ends at the
+"not allowed" page. The allowlist lives in the `remaude/relay-deploy` secret and
+takes effect after a redeploy.
 
-## Модель доступа (важно понимать перед правками)
+## Access model (understand this before changing anything)
 
-Три независимых замка:
+Three independent locks:
 
-1. **Аккаунт** — Google OAuth + whitelist. Не в списке — не войдёшь.
-2. **Устройство** — доверяется навсегда (подписанная кука, 2 года), если:
-   пришло с того же публичного IP, что и хост владельца (то есть из дома);
-   либо у аккаунта ещё нет хостов (онбординг); либо одноразовый код с сайта
-   введён в настройках уже доверенного устройства.
-3. **Хост** — привязан к аккаунту токеном, полученным при пейринге.
+1. **Account** — Google OAuth plus the allowlist. Not listed, not admitted.
+2. **Device** — trusted permanently (signed cookie, two years) when it either
+   arrives from the same public IP as the owner's host (i.e. from home), or the
+   account has no hosts yet (onboarding), or a one-time code from the site is
+   entered in the settings of an already trusted device.
+3. **Host** — bound to an account by the token issued during pairing.
 
-Гости (шаринг чатов) не имеют доступа к хосту как таковому: relay пускает их в
-туннель владельца со списком разрешённых session id, а хост фильтрует и
-состояние, и команды — гостю доступны только чтение и отправка сообщений.
+Guests (chat sharing) never get host access as such: the relay admits them into
+the owner's tunnel with a list of allowed session ids, and the host filters both
+state and commands, leaving them only reading and sending messages.
 
-⚠ При правке `readDevice`/`sameNetworkAsHost` помни: X-Forwarded-For доверяется
-только когда сокет пришёл с loopback (то есть от Caddy), а сам loopback никогда
-не считается «той же сетью» — иначе при потере заголовка доверялись бы все.
+⚠ When touching `readDevice`/`sameNetworkAsHost`, remember that X-Forwarded-For
+is trusted only when the socket comes from loopback (i.e. from Caddy), and that
+loopback itself never counts as "the same network" — otherwise a missing header
+would silently trust everyone.
 
-## Как всё это устроено внутри
+## Internals
 
-### Хост (`src/host/`)
+### Host (`src/host/`)
 
-| Файл | Ответственность |
+| File | Responsibility |
 |---|---|
-| `chat.js` | Одна SDK-сессия: очередь ввода, статусы, permissions, лимиты, effort/model |
-| `agent.js` | Проекты (директории) → чаты, события наружу |
-| `server.js` | HTTP + WS-протокол, конфиг, шаринг, relay-туннель, логин Claude |
-| `transcripts.js` | Чтение `~/.claude/projects/**/*.jsonl` для истории и списка сессий |
-| `relay-link.js` | Исходящее соединение с relay, туннелирование клиентов |
-| `usage.js` | Адаптер данных виджета лимитов |
+| `chat.js` | One SDK session: input queue, statuses, permissions, limits, effort/model |
+| `agent.js` | Projects (directories) → chats, outbound events |
+| `server.js` | HTTP + WS protocol, config, sharing, relay tunnel, Claude sign-in |
+| `transcripts.js` | Reads `~/.claude/projects/**/*.jsonl` for history and session lists |
+| `relay-link.js` | Outbound relay connection, client tunnelling |
+| `usage.js` | Adapter for the limits widget data |
 
-Ключевые решения, которые лучше не ломать:
+Decisions worth preserving:
 
-- **Чат = живая сессия Agent SDK в streaming-input режиме.** `query()` получает
-  async-итератор, который держится открытым между ходами — поэтому можно писать
-  модели, пока она работает. Закрытие итератора завершает сессию.
-- **История при `resume` не приходит в поток.** SDK восстанавливает контекст, но
-  прошлых сообщений не присылает — лента строится чтением JSONL. Формат
-  недокументирован, поэтому парсинг best-effort: незнакомые записи пропускаются.
-  ⚠ Записи с `origin.kind` (служебные инъекции харнесса) нужно пропускать, иначе
-  они отрисуются как сообщения пользователя.
-- **Виджет лимитов** берёт данные из
-  `query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` —
-  официально нестабильный метод, изолирован в `usage.js`. Если сломается —
-  чинить только там; резервный путь (недокументированный
-  `api.anthropic.com/api/oauth/usage`) агрессивно ограничивают по частоте.
-- **Открытые чаты переживают рестарт**: список (проект + sessionId + режим)
-  лежит в `~/.remaude/host.json` и при старте резюмится автоматически.
-- **Самоперезапуск** (`restart_server`): процесс порождает отвязанную копию себя
-  и выходит, копия ждёт освобождения порта. ⚠ Ретрай `listen` не сработает, если
-  не повесить обработчик `error` на `WebSocketServer`: библиотека `ws`
-  переизлучает ошибки http-сервера на себя, и процесс падает раньше ретрая.
-  Под супервизором (launchd/systemd, `REMAUDE_SUPERVISED=1`) достаточно выйти.
-- **`AskUserQuestion` запрещён** через `canUseTool`: интерактивных опросников в
-  вебе нет, модели возвращается отказ с просьбой задать вопросы текстом.
-  Этот хук вызывается даже в режиме bypass.
+- **A chat is a live Agent SDK session in streaming-input mode.** `query()`
+  receives an async iterator that stays open between turns, which is what allows
+  messaging the model mid-run. Closing the iterator ends the session.
+- **History is not replayed on `resume`.** The SDK restores context but sends no
+  past messages, so the transcript is rebuilt from JSONL. That format is
+  undocumented, hence best-effort parsing that skips unknown records. ⚠ Records
+  carrying `origin.kind` are harness injections and must be skipped, or they
+  render as user messages.
+- **The limits widget** reads
+  `query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` — an
+  officially unstable method, isolated in `usage.js`. If it breaks, fix it there;
+  the fallback (the undocumented `api.anthropic.com/api/oauth/usage`) is
+  aggressively rate-limited.
+- **Open chats survive restarts**: the list (project + sessionId + mode) lives in
+  `~/.remaude/host.json` and is resumed on startup.
+- **Self-restart** (`restart_server`): the process spawns a detached copy of
+  itself and exits, and the copy waits for the port to free up. ⚠ The `listen`
+  retry does not work without an `error` handler on the `WebSocketServer`: the
+  `ws` library re-emits http server errors onto itself and the process dies
+  before the retry runs. Under a supervisor (launchd/systemd, with
+  `REMAUDE_SUPERVISED=1`) exiting is enough.
+- **`AskUserQuestion` is denied** in `canUseTool`: there are no interactive
+  questionnaires in the web UI, so the model is told to ask in plain text
+  instead. That hook fires even in bypass mode.
 
 ### Relay (`src/relay/`)
 
-Один файл без базы: состояние (cookie-секрет, VAPID-ключи, токены хостов,
-push-подписки, пароли устройств) — в `/opt/remaude/relay-state.json`.
+A single file with no database: state (cookie secret, VAPID keys, host tokens,
+push subscriptions) lives in `/opt/remaude/relay-state.json`.
 
-- `/auth/google*` — OAuth, проверка `aud` и `email_verified`, whitelist, кука.
-- `/pair` — обмен кода привязки на токен хоста.
-- `/ws` — браузеры (нужны обе куки: сессия и устройство).
-- `/host` — хосты (по токену), туннель: `{t:'open'|'msg'|'close'|'cast'|'push'|'shares'}`.
-- `/api/push/*` — VAPID-ключ и подписки.
+- `/auth/google*` — OAuth, verification of `aud` and `email_verified`, allowlist, cookie.
+- `/pair` — exchanges a pairing code for a host token.
+- `/ws` — browsers (both the session and device cookies are required).
+- `/host` — hosts (by token); tunnel messages `{t:'open'|'msg'|'close'|'cast'|'push'|'shares'}`.
+- `/api/push/*` — VAPID key and subscriptions.
 
-⚠ `relay-state.json` не бэкапится. Потеря = переподключение всех хостов и
-устройств (данные чатов не страдают, они на хостах). Если это важно — добавь
-копирование в S3.
+⚠ `relay-state.json` is not backed up. Losing it means re-pairing every host and
+device (chat data is unaffected — it lives on the hosts). If that matters, add a
+copy to S3.
 
-### Веб-интерфейс (`src/web/`)
+### Web UI (`src/web/`)
 
-Ванильный JS без сборки — редактируешь файл, обновляешь страницу. `app.js` —
-тонкий клиент WS-протокола: рендер ленты (стриминг дельт, свёрнутые
-tool-вызовы, сабагенты), сайдбар, permissions, настройки. `md.js` — минимальный
-markdown-рендерер, который сначала экранирует HTML и только потом добавляет
-разметку (важно: в ленту попадает вывод инструментов).
+Vanilla JS with no build step — edit a file, reload the page. `app.js` is a thin
+WS protocol client: transcript rendering (stream deltas, collapsed tool calls,
+subagents), sidebar, permissions, settings. `md.js` is a minimal markdown
+renderer that escapes HTML first and only then adds markup — important, because
+tool output ends up in the transcript.
 
-⚠ Мобильные грабли, уже пройденные: `viewport-fit=cover` загоняет интерфейс под
-чёлку — не нужен; `position: fixed` на `body` обязателен, иначе iOS таскает всё
-приложение резинкой; правила для `@media (hover: none)` держи **в конце файла**,
-иначе они проигрывают по порядку и на телефоне пропадают кнопки.
+⚠ Mobile traps already paid for: `viewport-fit=cover` pushes the interface under
+the notch and is not needed; `position: fixed` on `body` is required or iOS drags
+the whole app with rubber-banding; `@media (hover: none)` rules must sit **at the
+end of the file**, otherwise they lose on source order and the buttons vanish on
+touch devices.
 
-## Отладка
+## Debugging
 
 ```bash
-# хост
+# host
 ~/.remaude/server.log, server.err.log
 # relay
 ssh -i <pem> ubuntu@<ip> 'journalctl -u remaude-relay -n 50 --no-pager'
 ssh -i <pem> ubuntu@<ip> 'systemctl is-active remaude-relay caddy'
 ```
 
-В `experiments/` лежат самостоятельные проверки: `test-image.mjs` (картинки во
-вводе), `test-usage.mjs` (лимиты), `test-resume.mjs` (возобновление),
-`test-ws-client.mjs` (сквозной прогон протокола), `ui-mobile.mjs` (скриншоты
-раскладок), `test-restart.mjs` (цикл самоперезапуска). Это исполняемая
-документация — при сомнениях запусти соответствующий файл, а не гадай.
+`experiments/` holds standalone probes: `test-image.mjs` (image input),
+`test-usage.mjs` (limits), `test-resume.mjs` (session resuming),
+`test-ws-client.mjs` (end-to-end protocol run), `ui-mobile.mjs` (layout
+screenshots), `test-restart.mjs` (self-restart cycle). They are executable
+documentation — when in doubt, run the relevant one instead of guessing.
 
-## Чего сознательно нет
+## Deliberately absent
 
-Диффов и редактора кода (VS Code остаётся редактором), мультихост-переключалки,
-LAN-режима без relay, однофайловых бинарников (пока установщик + launchd),
-бэкапа состояния relay, ротации сессионных кук и отзыва доступов из UI.
+Diff viewers and a code editor (VS Code remains the editor), a multi-host
+switcher, LAN mode without the relay, single-file binaries (installer plus
+launchd for now), relay state backups, session cookie rotation, and access
+revocation from the UI.

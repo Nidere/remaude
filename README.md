@@ -1,139 +1,126 @@
 # remaude
 
-Веб-фронтенд для Claude Code: один браузерный интерфейс вместо множества инстансов VS Code. Показывает чаты, позволяет отвечать, агрегирует все проекты и сессии в одном окне.
+A web shell for Claude Code: one browser UI instead of many VS Code windows — every project and chat in one place, reachable from anywhere, including a phone.
 
-*Web frontend for Claude Code: one browser UI instead of many VS Code instances — chat log, replies, and aggregation of all projects/sessions in one place.*
+Working software, not a proposal. To run your own instance, see [DEPLOY.md](DEPLOY.md).
 
-Этот файл — зафиксированный итог проектной дискуссии (2026-07-31). Реализация ещё не начата.
+## Why
 
-## Проблема
+Several VS Code windows, each with its own Claude Code chats:
 
-Параллельно открыто несколько инстансов VS Code с разными проектами, в каждом — свои вкладки чатов Claude Code. Работать с этим неудобно:
+- no single place showing every chat and its state (thinking / waiting for you / waiting for permission);
+- full tool and subagent output floods the screen;
+- you are tied to the machine — no way to reach your sessions from a phone.
 
-- нет единого места, где видно все чаты и их состояние (думает / ждёт ответа / ждёт разрешения);
-- полный вывод инструментов и сабагентов засоряет экран — его хочется фильтровать/сворачивать.
+remaude **replaces the VS Code chat UI** rather than mirroring it. VS Code stays an editor; Claude Code sessions live here. Diff viewers, a code editor and other interactive extras are deliberately out of scope.
 
-## Что это
-
-**Замена чат-UI VS Code**, а не зеркало и не вьювер. VS Code остаётся просто редактором; сессии Claude Code живут в remaude.
-
-Скоуп сознательно минимальный:
-
-- лента чата + поле ввода (писать в ответ — обязательно);
-- сайдбар: проекты → чаты, индикаторы состояния;
-- фильтр/сворачивание вывода инструментов и сабагентов (главная боль);
-- permission-диалоги (разрешить/запретить) + переключатель режима, включая bypass;
-- картинки: просмотр скриншотов в ленте и прикладывание своих;
-- **не нужно:** дифф-вьюверы, редактор кода, любой другой интерактив.
-
-## Архитектура (v2, согласована 2026-07-31)
+## How it works
 
 ```
 ┌──────────────────────────┐
-│ Браузер: ПК / мак /      │
-│ телефон (PWA)            │
+│ Browser: desktop / phone │
+│ (installable PWA)        │
 └────────────┬─────────────┘
              │ HTTPS / WSS
              ▼
-┌──────────────────────────┐   свой домен — общая точка
-│ Relay (AWS, EC2/Lightsail│   входа для всех пользователей.
-│ + Caddy, авто-TLS)       │   Auth, роутинг, ACL; контент чатов
-└────────────▲─────────────┘   не хранит.
-             │ outbound WSS (хост сам стучится наружу —
-             │ не нужны проброс портов, DDNS, белый IP)
+┌──────────────────────────┐   your own domain — the single entry
+│ Relay (VPS + Caddy,      │   point. Auth, routing, push;
+│ automatic TLS)           │   never stores chat content.
+└────────────▲─────────────┘
+             │ outbound WSS (the host dials out —
+             │ no port forwarding, DDNS or static IP)
 ┌────────────┴─────────────┐
-│ Хост-агент (винда, мак): │
-│ трей + автостарт,        │
-│ @anthropic-ai/           │
-│ claude-agent-sdk,        │
-│ сессии, файлы            │
+│ Host agent (Windows/mac):│
+│ autostart, Agent SDK,    │
+│ sessions, files, limits  │
 └──────────────────────────┘
 ```
 
-- Relay терминирует TLS и технически видит трафик — согласовано (сервер свой). Хранит только учётки, привязки хостов, ACL, push-подписки.
-- **LAN-режим (запрошен 2026-07-31):** когда клиент и хост в одной сети, гонять трафик через relay не обязательно — хост и так отдаёт весь UI сам (сейчас `127.0.0.1:7699`). План: opt-in привязка к LAN-интерфейсу + токен-пин в конфиге → дома открываем `http://<ip-хоста>:7699` напрямую, снаружи — relay. Полное автоопределение «одна сеть → коннект напрямую» из https-PWA упирается в браузерные ограничения (mixed content, Private Network Access) — не обещается; возможен полуавтомат: страница relay показывает ссылку «открыть локально», если хост сообщил свой LAN-адрес.
-- Прямой вариант «DNS → мой ПК» отвергнут (см. ниже): динамический IP, проброс порта, риск CGNAT, свой TLS-серт, порт наружу под сканботами — и для нетехнаря-друга нереализуемо в принципе. Relay снимает всё это для обоих.
-- Каждый «чат» — сессия Agent SDK (`query()`) со своим `cwd` (директорией проекта).
-- UI получает структурированный поток событий (сообщения, tool_use/tool_result, стрим-дельты) и рендерит его; фильтрация — на уровне протокола, не парсинга текста.
-- Headless CLI (`claude -p --input-format stream-json`) **не подходит**: нет долгоживущего двунаправленного потока и permission-запросов в стриме. Только SDK.
+- **A chat is a live Agent SDK session** (`query()`) with its own `cwd`. Input is an open async iterator, so you can message the model while it is still working.
+- The host also serves the same UI on `127.0.0.1:7699`, so it is usable with no relay at all.
+- Remote browsers are tunnelled through the relay and served by the **same code path** as local ones (`VirtualClient`), so the feature set is identical inside and outside the home network.
+- Everything the UI renders is the SDK's structured event stream (messages, `tool_use`/`tool_result`, stream deltas); filtering happens at the protocol level, never by parsing text.
 
-## Модель данных (согласована)
+**Data model:** account (Google) → hosts → projects → chats → subagents.
 
-**Аккаунт (Google) → хосты → проекты → чаты → сабагенты.**
+## Features
 
-- Хосты появляются/уходят в онлайн — у каждого статус подключения; несколько хостов на аккаунт с самого начала.
-- Проект = подпапка «корня проектов» хоста (`projectsRoot` в `~/.remaude/host.json`, дефолт `Documents\Projects`), выбирается из списка в веб-UI — работает и с телефона. Ручной ввод произвольного пути — fallback. Нативный диалог ОС отвергнут: бесполезен при удалённом доступе.
-- Сабагенты — вложенный уровень чата (`parent_tool_use_id`).
-- Виджет лимитов — атрибут хоста (лимиты привязаны к Claude-аккаунту хоста).
+**Chat and transcript**
+- live streaming of both reasoning and answer, interrupt, and steering messages sent mid-run;
+- tool calls collapse into expandable chips, subagents are grouped, and one checkbox hides tool output entirely;
+- markdown rendering with a copy-the-source button, timestamps, author names, and a lightbox for images;
+- permission banners (allow/deny) and a mode switch up to `bypassPermissions`; model and reasoning effort selectable per chat;
+- images: paste from the clipboard, or the 📎 button on mobile (gallery/camera); everything is normalised to PNG and downscaled;
+- each chat keeps its own composer draft.
 
-## Авторизация и безопасность (согласована)
+**Projects and sessions**
+- sidebar of projects → chats with status dots, unread counters and search;
+- a project is a subfolder of the host's projects root, picked from a list in the UI — works from a phone too;
+- past chats: saved sessions from disk (including ones started in VS Code or the CLI) can be resumed with their full history;
+- rename and close chats or projects without deleting anything on disk;
+- open chats survive host restarts and reboots — they are resumed automatically.
 
-- Google OAuth, регистрация закрыта: жёсткий whitelist email'ов.
-- **Доверенные устройства:** новое устройство после логина ограничено (read + обычные ответы); доверие выдаётся с уже доверенного устройства или подтверждением в трее хоста. `bypassPermissions` и смена режимов разрешений — только с доверенных устройств. Детали — на усмотрение реализации.
-- Транскрипты содержат всё, включая случайные секреты — наружу только через auth, никаких публичных ссылок.
+**Infrastructure and remote access**
+- Google sign-in with a strict allowlist, trusted devices, and code-based host pairing;
+- chat sharing with another account: the guest reads and writes, but cannot control the host;
+- installable PWA with push notifications ("waiting for permission", "done") plus tab-level signals;
+- Claude usage limits (5-hour / weekly / per-model windows) and context fill shown in the header;
+- signing in to Claude straight from the UI when OAuth expires — the link opens on any device;
+- host autostart (Task Scheduler on Windows, launchd on macOS) and a restart button in settings;
+- one-command macOS installer: the relay serves `install.sh` with its own address baked in.
 
-## Групповой чат (отложен, заложен в модель)
+## Access model
 
-Реализуем **после** MVP, но модель данных сразу с участниками/ACL у чата. Это возможно: ограничение «два фронтенда на одной живой сессии» касается двух *писателей транскрипта* (VS Code + remaude). Здесь писатель один — хост-агент, а браузеров-клиентов у него может быть сколько угодно. Групповой чат = владелец даёт другому аккаунту доступ к чату; оба видят стрим, оба пишут; авторство — префикс имени в user-сообщении.
+Three independent locks:
 
-## Хост-агент (согласован)
+1. **Account** — Google OAuth plus an allowlist.
+2. **Device** — trusted permanently once it arrives from the same public IP as the owner's host (silently, i.e. at home), or once a one-time code from the site is entered in the settings of an already trusted device.
+3. **Host** — bound to an account by a token issued during pairing.
 
-- Портабельный однофайловый бинарь без предустановок (Node запечён внутрь: `bun build --compile` или аналог) — критерий «ноубрейн для нетехнаря». Две цели сборки: Windows x64 (мой хост) и macOS arm64 (хост друга; «трей» = иконка в menu bar). На маке учесть Gatekeeper: неподписанный бинарь потребует «Open anyway» — либо подписать/нотаризовать, либо одна понятная инструкция при онбординге.
-- Первый запуск: пейринг-код с сайта (привязка к аккаунту) + вход в Claude (браузерный OAuth от Claude Code); у каждого хоста своя подписка Claude.
-- Автостарт при логине в систему, иконка в трее.
+Transcripts contain everything, including secrets that wander in by accident, so nothing is reachable without auth and there are no public links. The relay terminates TLS and can technically see traffic: it is your own server — a deliberate trade-off instead of end-to-end encryption.
 
-## Мобайл (согласован)
+## Verified Agent SDK behaviour
 
-- PWA («добавить на главный экран»), без сторов и обёрток.
-- Web Push («ждёт разрешения», «закончил») — пробуем в MVP, если не упрёмся; на iOS работает только из установленной PWA.
+Everything below was checked with live probes kept in `experiments/` — executable documentation rather than notes.
 
-## Подтверждённые факты (по докам, проверено 2026-07-31)
-
-| Возможность | Как | Статус |
+| Capability | How | |
 |---|---|---|
-| Многоходовый диалог | `query({ prompt: AsyncIterable<SDKUserMessage> })`, есть `interrupt()` | ✅ |
-| Возобновление сессий | опция `resume: <session-id>`; хранилище общее с VS Code/CLI (`~/.claude/projects/<slug>/<id>.jsonl`) — сессии из VS Code можно продолжить в remaude. **Проверено живьём** (`test-resume.mjs`): контекст восстанавливается, id сохраняется, дозапись в тот же файл; но реплей старых сообщений в поток НЕ приходит → историю для ленты читаем сами из JSONL (best-effort, только отображение — `src/host/transcripts.js`) | ✅ |
-| Permission-диалоги в своём UI | колбэк `canUseTool` в options | ✅ |
-| Режимы разрешений | `permissionMode`: `default` / `dontAsk` / `acceptEdits` / `bypassPermissions` / `plan` / `auto`; bypass доступен без флагов, сабагенты его наследуют | ✅ |
-| Стриминг вывода | `includePartialMessages: true` → `stream_event`-сообщения | ✅ |
-| Фильтрация сабагентов | сообщения сабагентов несут `parent_tool_use_id` (у основного диалога `null`) — сворачивание = один `if` при рендере | ✅ |
-| Картинки в выводе | изображения (Read PNG, скриншоты инструментов) приходят base64 в `tool_result`-блоках потока | ✅ |
-| Картинки во вводе | image-блоки base64 в `SDKUserMessage.message.content` — **проверено живым тестом** (`experiments/test-image.mjs`, 2026-07-31) | ✅ |
-| Лимиты параллельных сессий | не документированы; разные `cwd` / session id не конфликтуют | ✅ |
+| Multi-turn conversation | `query({ prompt: AsyncIterable<SDKUserMessage> })`, plus `interrupt()` | ✅ |
+| Resuming sessions | `resume: <session-id>`; storage is shared with VS Code and the CLI (`~/.claude/projects/<slug>/<id>.jsonl`). Context is restored and the id is kept — but **past messages are never replayed into the stream**, so transcript history is read from the JSONL directly (`src/host/transcripts.js`, best effort) | ✅ |
+| Permission prompts in your own UI | the `canUseTool` callback; still invoked for dialog tools even in bypass mode | ✅ |
+| Permission modes | `permissionMode`: `default` / `acceptEdits` / `plan` / `bypassPermissions` / …; subagents inherit it | ✅ |
+| Streaming | `includePartialMessages: true` → `stream_event` messages, thinking deltas included | ✅ |
+| Filtering subagents | `parent_tool_use_id` (`null` for the main conversation) | ✅ |
+| Images in and out | base64 inside `tool_result` blocks; on input, image blocks in `SDKUserMessage.message.content` | ✅ |
+| Subscription limits | `query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` returns the `/usage` data: `rate_limits.five_hour/.seven_day` (`utilization`, `resets_at`), per-model windows, extra credits. Live sessions only; officially unstable, so it is isolated in `usage.js` | ⚠ |
+| Context and account | `getContextUsage()` (percentage and tokens), `accountInfo()` (email, subscription) | ✅ |
 
-**Ограничение:** два фронтенда на одной *живой* сессии одновременно — не поддерживается (риск порчи транскрипта). Сессию из VS Code можно возобновить в remaude, но дальше работать с ней только отсюда.
+**Constraint:** two frontends on the same *live* session at once are not supported (the transcript can be corrupted). A VS Code session can be resumed in remaude, but from then on it belongs here.
 
-Открытых вопросов не осталось: image-ввод подтверждён (см. таблицу), источник данных для виджета лимитов найден (см. ниже).
+Docs: [Agent SDK TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md) · [streaming](https://code.claude.com/docs/en/agent-sdk/streaming-output.md) · [sessions](https://code.claude.com/docs/en/agent-sdk/sessions.md) · [subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md) · [permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md)
 
-## Виджет лимитов (добавлено 2026-07-31)
+## Not there yet
 
-В хедере/футере — некрупный индикатор как в macOS-виджете «Claude Usage»: % 5-часовой сессии, % недельного лимита, таймеры сброса. Лимиты привязаны к аккаунту Claude на хосте → показатель per-host, у каждого пользователя свой.
+- **LAN mode**: traffic still goes through the relay even at home. The host already serves the UI itself; what is missing is an opt-in bind to the LAN interface with a token. Fully automatic "same network → connect directly" is blocked by mixed content and Private Network Access rules in browsers.
+- **Multi-host UI**: the relay stores several hosts per account, the interface picks the first one.
+- **Revoking access from the UI**: removing a trusted device or unpairing a host means editing `relay-state.json` on the server.
+- **Relay state backups** and session cookie rotation.
+- **Single-file binaries and a tray icon** — for now it is an installer plus OS-level autostart.
 
-**Решено живым тестом (`experiments/test-usage.mjs`, 2026-07-31):** у объекта `query` в SDK есть метод `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` — структурированные данные команды `/usage`: `rate_limits.five_hour` и `.seven_day` (`utilization` 0–100, `resets_at` ISO), пер-модельные окна (`model_scoped`, например Fable), extra-usage-кредиты. Значения совпали с macOS-виджетом. Вызывается только на живой сессии (после завершения входного стрима транспорт закрывается).
+## Rejected alternatives
 
-Дополнительно: в стриме приходит `rate_limit_event` (тип окна + `resetsAt`, без utilization), а `query.accountInfo()` даёт email/подписку хоста — пригодится для UI привязки хостов.
+- **A passive JSONL transcript viewer** — cannot reply: VS Code sessions expose no input API, and the JSONL format is undocumented.
+- **Built-in tooling** — claude.ai/code only shows cloud sessions; `/export` is a one-off plain text dump.
+- **Headless CLI with stream-json** — no long-lived bidirectional stream and no permission requests in the stream.
+- **Hosting on the PC itself (domain → home IP, no relay)** — dynamic IP needs DDNS, the router needs port forwarding, CGNAT breaks it entirely, and you end up running your own TLS and an open port exposed to scanners. A ~$5/month relay removes all of it, and hosts only ever dial out.
+- **A native folder picker on the host** — useless for remote access: the dialog opens on a machine you cannot reach.
 
-Метод экспериментальный — имя сменится в будущих версиях SDK; изолировать в один модуль-адаптер. Fallback на крайний случай — неофициальный `api.anthropic.com/api/oauth/usage` с токеном из `~/.claude/.credentials.json` (агрессивный 429, только с кэшем).
+## Layout
 
-Доки: [Agent SDK TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md) · [streaming](https://code.claude.com/docs/en/agent-sdk/streaming-output.md) · [sessions](https://code.claude.com/docs/en/agent-sdk/sessions.md) · [subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md) · [permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md)
-
-## План (обновлён 2026-07-31)
-
-1. ~~День 1: скелет хост-агента на SDK + тесты открытых вопросов: image-ввод, `accountInfo()`/rate-limits.~~ ✅ 2026-07-31: `src/host/` (Chat/HostAgent/usage-адаптер), тесты в `experiments/`.
-2. ~~Локально (браузер → хост напрямую, без relay): один проект, список чатов, лента, ввод, стриминг.~~ ✅ 2026-07-31: `src/host/server.js` (WS-протокол, порт 7699, только 127.0.0.1) + `src/web/` (`npm start`).
-3. ~~Сворачивание tool-вывода и сабагентов.~~ ✅ chips-детали + чекбокс «скрыть инструменты»; сабагенты сгруппированы по `parent_tool_use_id`.
-4. ~~Permission-кнопки + переключатель `permissionMode`.~~ ✅ баннеры разрешить/запретить (мультиклиент, с replay при переподключении) + селектор режима; вставка картинок из буфера и виджет лимитов тоже готовы.
-4b. ✅ Прошлые чаты (2026-07-31): «⏳ прошлые чаты» в сайдбаре → список сессий с диска (заголовок/превью/дата) → возобновление с полной историей в ленте. Внимание: сессию, открытую прямо сейчас в VS Code, возобновлять нельзя (два писателя).
-5. ~~Relay: Lightsail + Caddy + домен (Route53), Google OAuth + whitelist, пейринг хостов.~~ ✅ 2026-07-31: **работает сквозняком** — Lightsail nano, Caddy + Let's Encrypt, `src/relay/relay.js` (systemd), параметры и секреты в AWS Secrets Manager (`remaude/google-oauth`, `remaude/relay-deploy`), деплой `scripts/deploy-relay.ps1`. Пейринг: сайт показывает 6-значный код → локальный UI ⚙ → токен в host.json → исходящий WSS-туннель; удалённые браузеры обслуживаются тем же кодом, что локальные (VirtualClient). Развёртывание с нуля — [DEPLOY.md](DEPLOY.md).
-6. Мультихост (модель заложена: relay хранит несколько хостов на email, UI пока берёт первый), агрегация проектов ✅, индикаторы ✅, виджет лимитов ✅.
-7. PWA + Web Push.
-8. Портабельная сборка хост-агента (трей, автостарт): **винда (мой) + макось (друга)**, доверенные устройства, онбординг друга.
-
-Замечания по безопасности (актуальные): доверенные устройства ещё не реализованы — любой залогиненный на сайте управляет хостом в bypass; кука живёт 90 дней. До онбординга друга — приемлемо, к этапу 8 сделать trusted devices.
-
-## Отвергнутые варианты
-
-- **Пассивный вьювер JSONL-транскриптов** (watcher на `~/.claude/projects/**/*.jsonl`) — не даёт писать в ответ: у сессий VS Code нет входного API. Формат JSONL к тому же недокументирован и меняется между версиями.
-- **Встроенные средства** — claude.ai/code показывает только облачные сессии; `/export` — одноразовый plain text.
-- **Headless CLI со stream-json** — см. выше, нет двунаправленного режима.
-- **Хостинг на самом ПК (домен → домашний IP, без relay)** — динамический IP требует DDNS, нужен проброс порта на роутере, при CGNAT у провайдера не работает вообще, TLS-серт и открытый порт под сканботами на домашней машине; у друга всё то же самое плюс свой домен. Relay за ~5 $/мес снимает всё разом, хосты ходят только исходящими соединениями.
+```
+src/host/    host agent: SDK sessions, WS protocol, transcripts, relay link
+src/relay/   relay: OAuth, tunnelling, push, pairing
+src/web/     UI (vanilla JS, no build step) and the macOS installer
+scripts/     deployment and autostart helpers
+experiments/ live probes used to verify SDK behaviour and the UI
+```
