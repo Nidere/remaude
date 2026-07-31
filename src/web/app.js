@@ -53,6 +53,86 @@ function saveDraft(chatId, text) {
   }
 }
 
+// The transcript of the chat you were last in is kept locally, so a relaunch
+// after iOS evicted the app paints the conversation instantly instead of an
+// empty feed; the live history from the host replaces it a moment later.
+const TRANSCRIPT_KEEP = 120; // messages — most of them are tool calls, few are text
+const TRANSCRIPT_BUDGET = 300_000; // characters — well under the storage quota
+
+/** Strip what must never reach storage: base64 images and huge tool payloads. */
+function slimMessage(msg) {
+  const content = msg.message?.content;
+  if (!Array.isArray(content)) return msg;
+  return {
+    ...msg,
+    message: {
+      ...msg.message,
+      content: content.map((b) => {
+        if (b.type === 'image') return { type: 'text', text: '🖼' };
+        if (b.type === 'tool_result' && typeof b.content === 'string')
+          return { ...b, content: b.content.slice(0, 500) };
+        if (b.type === 'tool_result' && Array.isArray(b.content))
+          return {
+            ...b,
+            content: b.content.map((c) =>
+              c.type === 'image' ? { type: 'text', text: '🖼' } : { ...c, text: c.text?.slice(0, 500) }
+            ),
+          };
+        return b;
+      }),
+    },
+  };
+}
+
+function cacheTranscript(chatId) {
+  const chat = chats.get(chatId);
+  if (!chat?.msgs?.length) return;
+  let slim = chat.msgs.slice(-TRANSCRIPT_KEEP).map(slimMessage);
+  let payload = JSON.stringify(slim);
+  while (payload.length > TRANSCRIPT_BUDGET && slim.length > 1) {
+    slim = slim.slice(Math.ceil(slim.length / 2)); // drop the oldest half and retry
+    payload = JSON.stringify(slim);
+  }
+  try {
+    localStorage.setItem('transcript', JSON.stringify({ key: draftKey(chatId), msgs: slim }));
+  } catch {
+    /* quota — the cache is a nicety, not a requirement */
+  }
+}
+
+/**
+ * Paint the cached transcript before the socket says anything — after an
+ * eviction the connection may take seconds, or never come back if we are
+ * offline, and an empty feed is the whole problem we are solving.
+ */
+function bootFromCache() {
+  const chatId = localStorage.getItem('lastChat');
+  const key = localStorage.getItem('lastSession') ?? chatId;
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem('transcript') ?? 'null');
+  } catch {
+    return;
+  }
+  if (!chatId || !saved || saved.key !== key || !saved.msgs?.length) return;
+  const chat = getChat(chatId);
+  chat.sessionId = localStorage.getItem('lastSession') ?? undefined;
+  chat.fromCache = true;
+  feedHost.innerHTML = '';
+  feedHost.append(chat.feedEl);
+  for (const m of saved.msgs) renderSdkMessage(chatId, m, true);
+  scrollToBottom(true);
+}
+
+function cachedTranscript(chatId) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('transcript') ?? 'null');
+    return saved?.key === draftKey(chatId) ? saved.msgs : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Send a command to the host that owns this chat. */
 function sendTo(hostId, obj) {
   send(hostId && hostId !== LOCAL_HOST ? { ...obj, _host: hostId } : obj);
@@ -214,8 +294,13 @@ const handlers = {
     chat.feedEl.innerHTML = '';
     chat.chips.clear();
     chat.subagents.clear();
+    chat.msgs = [];
+    chat.fromCache = false;
     for (const m of messages) renderSdkMessage(chatId, m);
-    if (chatId === activeChatId) scrollToBottom(true);
+    if (chatId === activeChatId) {
+      scrollToBottom(true);
+      cacheTranscript(chatId);
+    }
   },
 
   root_listing({ root, dirs, added, error, _host }) {
@@ -331,6 +416,15 @@ function requestHistory(chatId) {
   const chat = getChat(chatId);
   if (chat.historyRequested) return;
   chat.historyRequested = true;
+  // paint the cached transcript while the real one travels from the host
+  if (!chat.feedEl.childElementCount && !chat.fromCache) {
+    const cached = cachedTranscript(chatId);
+    if (cached) {
+      chat.fromCache = true;
+      for (const m of cached) renderSdkMessage(chatId, m, true);
+      if (chatId === activeChatId) scrollToBottom(true);
+    }
+  }
   sendTo(chatHostId(chatId), { type: 'history', chatId });
 }
 
@@ -380,8 +474,13 @@ function syncHeaderSelects(chat) {
 
 // ---------- rendering SDK messages ----------
 
-function renderSdkMessage(chatId, msg) {
+function renderSdkMessage(chatId, msg, fromCache = false) {
   const chat = getChat(chatId);
+  if (!fromCache && msg.type !== 'stream_event') {
+    (chat.msgs ??= []).push(msg);
+    if (chat.msgs.length > TRANSCRIPT_KEEP * 2) chat.msgs.splice(0, chat.msgs.length - TRANSCRIPT_KEEP);
+    if (msg.type === 'result' && chatId === activeChatId) cacheTranscript(chatId);
+  }
 
   if (msg.type === 'stream_event') {
     const ev = msg.event;
@@ -1040,6 +1139,8 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 function reportFocus() {
   const watching = document.visibilityState === 'visible' ? activeChatId : null;
   if (activeChatId) sendTo(chatHostId(activeChatId), { type: 'focus', chatId: watching });
+  // going away may mean eviction: save the transcript while we still can
+  if (!watching && activeChatId) cacheTranscript(activeChatId);
 }
 document.addEventListener('visibilitychange', reportFocus);
 
@@ -1082,4 +1183,5 @@ $('hide-tools').addEventListener('change', function () {
   feedHost.classList.toggle('hide-tools', this.checked);
 });
 
+bootFromCache();
 connect();
