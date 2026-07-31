@@ -486,7 +486,13 @@ function renderSidebar(projects) {
     const btnOld = el('button', '', '⏳');
     btnOld.title = 'прошлые чаты';
     btnOld.onclick = () => send({ type: 'list_sessions', projectPath: p.path });
-    actions.append(btnNew, btnOld);
+    const btnClose = el('button', '', '✕');
+    btnClose.title = 'убрать проект из панели (файлы и сессии останутся)';
+    btnClose.onclick = () => {
+      if (confirm(`Убрать «${shortPath(p.path)}» из панели? Открытые чаты закроются, на диске ничего не удалится.`))
+        send({ type: 'close_project', path: p.path });
+    };
+    actions.append(btnNew, btnOld, btnClose);
     head.append(name, actions);
     proj.append(head);
 

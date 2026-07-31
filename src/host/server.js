@@ -403,6 +403,22 @@ const handlers = {
     send(ws, { type: 'root_listing', root: projectsRoot, dirs, added: [...agent.projects.keys()], error });
   },
 
+  /** Убрать проект из панели: чаты закрываются, на диске ничего не трогаем. */
+  close_project(ws, { path }) {
+    const abs = resolve(path);
+    const project = agent.projects.get(abs);
+    if (project) {
+      for (const chat of project.chats.values()) {
+        chat.close();
+        chatHistories.delete(chat.id);
+      }
+      agent.projects.delete(abs);
+    }
+    config.projects = (config.projects ?? []).filter((p) => resolve(p) !== abs);
+    saveOpenChats(); // пересобирает список открытых чатов из живых — закрытые уйдут
+    broadcast(stateSnapshot());
+  },
+
   add_from_root(ws, { name }) {
     if (name.includes('/') || name.includes('\\') || name === '..') throw new Error('bad name');
     handlers.add_project(ws, { path: join(projectsRoot, name) });
