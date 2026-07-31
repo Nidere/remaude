@@ -266,39 +266,42 @@ body {
 }
 #lightbox img { max-width: 96vw; max-height: 96vh; border-radius: 6px; }
 
-#pick-project {
-  margin: 10px 10px 0;
-  padding: 8px;
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  cursor: pointer;
-  border-top: 1px solid var(--border);
-}
-#pick-project:hover { border-color: var(--accent); }
-#pick-project:disabled { opacity: 0.5; cursor: default; }
+#sidebar-footer { padding: 8px 10px; border-top: 1px solid var(--border); }
 
-#add-project-form {
-  display: flex;
-  gap: 6px;
-  padding: 10px;
+/* the host header mirrors a project header: name on the left, actions on the right */
+.host-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
+.host-actions button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--dim);
+  width: 24px;
+  height: 22px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
 }
-#add-project-path {
+.host-actions button:hover { border-color: var(--accent); color: var(--text); }
+
+#picker-form { display: flex; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--border); }
+#picker-form[hidden] { display: none; }
+#picker-input {
   flex: 1;
   min-width: 0;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 7px 10px;
+  font: inherit;
 }
-#add-project-form button {
+#picker-form button {
   background: var(--bg-3);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 6px;
-  width: 32px;
+  padding: 7px 12px;
   cursor: pointer;
 }
 
@@ -374,8 +377,6 @@ body.guest #model-select,
 body.guest #effort-select,
 body.guest #settings-btn,
 body.guest #stop-btn,
-body.guest #pick-project,
-body.guest #add-project-form,
 body.guest #limits,
 body.guest .new-chat,
 body.guest .project-actions,
@@ -715,6 +716,41 @@ body.guest .chat-actions { display: none !important; }
 
 .chat-label { overflow: hidden; text-overflow: ellipsis; flex: 1; }
 
+/* ---------- sidebar edit mode ---------- */
+
+#edit-btn.active { border-color: var(--accent); color: var(--accent); }
+
+.edit-actions { display: flex; gap: 2px; flex-shrink: 0; margin-left: auto; }
+.edit-actions button {
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 5px;
+  line-height: 1;
+}
+.edit-actions button:hover { color: var(--text); }
+.edit-actions button:last-child:hover { color: var(--red); }
+
+/* rows follow the finger instead of scrolling the sidebar */
+body.editing .chat-item,
+body.editing .project,
+body.editing .host-head {
+  touch-action: none;
+  user-select: none;
+}
+body.editing .chat-item,
+body.editing .project-head,
+body.editing .host-head {
+  cursor: grab;
+}
+body.editing .host-actions { display: none; }
+body.editing .chat-item { background: var(--bg-3); border-radius: 6px; }
+body.editing .project { outline: 1px dashed var(--border); border-radius: 8px; padding-bottom: 4px; }
+.dragging { opacity: 0.6; cursor: grabbing !important; }
+body.editing .agent-item { display: none; } /* agents are not editable */
+
 /* subagent rows: informational only, nested a level deeper than chats */
 .agent-item {
   display: flex;
@@ -843,7 +879,10 @@ body.guest .chat-actions { display: none !important; }
 /* ---------- host sections in the sidebar ---------- */
 
 .host-head {
-  padding: 10px 16px 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 4px 16px;
   font-size: 11px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -851,11 +890,12 @@ body.guest .chat-actions { display: none !important; }
   border-top: 1px solid var(--border);
   margin-top: 4px;
 }
+.host-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-head.guest { color: var(--accent); }
 
 .add-host {
   display: block;
-  width: calc(100% - 20px);
+  width: 100%;
   margin: 10px;
   padding: 7px;
   background: none;

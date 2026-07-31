@@ -330,7 +330,9 @@ const handlers = {
               check: isAdded,
               onclick: isAdded ? null : () => sendTo(hostKey(_host), { type: 'add_from_root', name }),
             };
-          })
+          }),
+      // a folder outside the projects root is still reachable — by full path
+      { placeholder: '…or type a full path', onSubmit: (path) => sendTo(hostKey(_host), { type: 'add_project', path }) }
     );
   },
 
@@ -660,8 +662,22 @@ function renderSubagent(chat, msg) {
 
 // ---------- list modal ----------
 
-function openModal(title, items) {
+/** @param input optional {placeholder, onSubmit} row under the list (e.g. a manual path) */
+function openModal(title, items, input = null) {
   $('picker-title').textContent = title;
+  const form = $('picker-form');
+  form.hidden = !input;
+  if (input) {
+    $('picker-input').placeholder = input.placeholder ?? '';
+    $('picker-input').value = '';
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const value = $('picker-input').value.trim();
+      if (!value) return;
+      $('picker').hidden = true;
+      input.onSubmit(value);
+    };
+  }
   const list = $('picker-list');
   list.innerHTML = '';
   for (const it of items) {
@@ -691,10 +707,41 @@ function renderSidebar() {
     const meta = knownHosts.find((h) => h.id === hostId);
     // shared hosts are labelled by their owner's email, own ones by machine name
     const label = hostState.guest ? (meta?.owner ?? 'shared') : (meta?.name ?? 'this computer');
-    root.append(el('div', `host-head${hostState.guest ? ' guest' : ''}`, label));
+    const head = el('div', `host-head${hostState.guest ? ' guest' : ''}`, '');
+    head.append(el('span', 'host-name', label));
+    if (!editMode && !hostState.guest) {
+      // same shape as "+ new chat" inside a project, one level up
+      const actions = el('span', 'host-actions', '');
+      const btnAdd = el('button', '', '+');
+      btnAdd.title = 'add project';
+      btnAdd.onclick = (e) => {
+        e.stopPropagation();
+        sendTo(hostId, { type: 'list_root' });
+      };
+      actions.append(btnAdd);
+      head.append(actions);
+    }
+    if (editMode && !hostState.guest && meta) {
+      head.dataset.sortId = hostId;
+      makeDraggable(head, 'host', (ids) => hostApi('order', { ids }).catch((e) => alert(e.message)));
+      head.append(
+        editActions({
+          onRename: async () => {
+            const name = prompt('Host name:', meta.name ?? '');
+            if (name?.trim()) await hostApi('rename', { hostId, name: name.trim() }).catch((e) => alert(e.message));
+          },
+          onDelete: async () => {
+            if (!confirm(`Unpair “${meta.name ?? hostId}”? That machine will need a new invite link.`)) return;
+            await hostApi('delete', { hostId }).catch((e) => alert(e.message));
+          },
+          deleteTitle: 'unpair this computer',
+        })
+      );
+    }
+    root.append(head);
     renderHostProjects(root, hostId, hostState);
   }
-  renderAddHost(root);
+  renderAddHost($('sidebar-footer'));
 }
 
 function renderHostProjects(root, hostId, hostState) {
@@ -702,10 +749,27 @@ function renderHostProjects(root, hostId, hostState) {
     const proj = el('div', 'project', '');
 
     const head = el('div', 'project-head', '');
-    const name = el('span', 'project-name', p.path.split(/[\\/]/).filter(Boolean).pop());
+    const name = el('span', 'project-name', p.name ?? p.path.split(/[\\/]/).filter(Boolean).pop());
     name.title = p.path;
     proj.append(head);
-    if (!hostState.guest) {
+    if (editMode && !hostState.guest) {
+      proj.dataset.sortId = p.path;
+      makeDraggable(proj, `projects-${hostId}`, (paths) => sendTo(hostId, { type: 'reorder_projects', paths }));
+      head.append(
+        name,
+        editActions({
+          onRename: () => {
+            const label = prompt('Project name (display only):', p.name ?? '');
+            if (label !== null) sendTo(hostId, { type: 'rename_project', path: p.path, name: label });
+          },
+          onDelete: () => {
+            if (confirm(`Remove “${shortPath(p.path)}” from the sidebar? Nothing is deleted on disk.`))
+              sendTo(hostId, { type: 'close_project', path: p.path });
+          },
+          deleteTitle: 'remove project from the sidebar',
+        })
+      );
+    } else if (!hostState.guest) {
       const actions = el('span', 'project-actions', '');
       const btnNew = el('button', '', '+');
       btnNew.title = 'new chat';
@@ -751,28 +815,31 @@ function renderHostProjects(root, hostId, hostState) {
         item.append(el('span', 'unread-badge', String(chat.unread)));
       }
 
-      if (!hostState.guest) {
-        const actions = el('span', 'chat-actions', '');
-        const btnRename = el('button', '', '✏');
-        btnRename.title = 'rename';
-        btnRename.onclick = (e) => {
-          e.stopPropagation();
-          const name = prompt('Chat name:', c.title ?? '');
-          if (name?.trim()) sendTo(hostId, { type: 'rename_chat', chatId: c.id, title: name.trim() });
-        };
-        const btnHide = el('button', '', '✕');
-        btnHide.title = 'close chat (the session stays on disk)';
-        btnHide.onclick = (e) => {
-          e.stopPropagation();
-          if (confirm('Close this chat? The session stays — reopen it via “past chats”.'))
-            sendTo(hostId, { type: 'hide_chat', chatId: c.id });
-        };
-        actions.append(btnRename, btnHide);
-        item.append(actions);
+      if (editMode && !hostState.guest) {
+        item.dataset.sortId = c.id;
+        makeDraggable(item, `chats-${p.path}`, (chatIds) =>
+          sendTo(hostId, { type: 'reorder_chats', projectPath: p.path, chatIds })
+        );
+        item.append(
+          editActions({
+            onRename: () => {
+              const name = prompt('Chat name:', c.title ?? '');
+              if (name?.trim()) sendTo(hostId, { type: 'rename_chat', chatId: c.id, title: name.trim() });
+            },
+            onDelete: () => {
+              if (confirm('Close this chat? The session stays — reopen it via “past chats”.'))
+                sendTo(hostId, { type: 'hide_chat', chatId: c.id });
+            },
+            deleteTitle: 'close chat (the session stays on disk)',
+          })
+        );
       }
 
       if (c.id === activeChatId) item.classList.add('active');
-      item.onclick = () => selectChat(c.id);
+      // in edit mode a tap must not navigate — that is the whole point of it
+      item.onclick = () => {
+        if (!editMode) selectChat(c.id);
+      };
       proj.append(item);
 
       // running subagents, one line each, purely informational
@@ -794,6 +861,84 @@ function renderHostProjects(root, hostId, hostState) {
   }
 }
 
+// ---------- sidebar edit mode ----------
+// One switch turns the sidebar from navigation into editing: rows become
+// draggable (pointer events, so a finger works like a mouse), rename/remove
+// appear, and plain clicks stop navigating so nothing happens by accident.
+
+let editMode = false;
+
+function setEditMode(on) {
+  editMode = on;
+  document.body.classList.toggle('editing', on);
+  $('edit-btn').classList.toggle('active', on);
+  renderSidebar(cachedProjects);
+}
+
+/**
+ * Reorder rows by dragging. `group` marks which rows may swap with each other,
+ * so chats stay inside their project and projects inside their host.
+ * onDrop receives the new order of data-sort-id values within the group.
+ */
+function makeDraggable(row, group, onDrop) {
+  row.dataset.sortGroup = group;
+  row.addEventListener('pointerdown', (e) => {
+    if (!editMode || e.button > 0 || e.target.closest('button')) return;
+    e.preventDefault();
+    const siblings = () => [...row.parentElement.querySelectorAll(`[data-sort-group="${group}"]`)];
+    row.setPointerCapture(e.pointerId);
+    row.classList.add('dragging');
+
+    const onMove = (ev) => {
+      const target = document
+        .elementFromPoint(ev.clientX, ev.clientY)
+        ?.closest(`[data-sort-group="${group}"]`);
+      if (!target || target === row) return;
+      const rect = target.getBoundingClientRect();
+      const after = ev.clientY > rect.top + rect.height / 2;
+      target.parentElement.insertBefore(row, after ? target.nextSibling : target);
+    };
+    const onUp = () => {
+      row.classList.remove('dragging');
+      row.removeEventListener('pointermove', onMove);
+      row.removeEventListener('pointerup', onUp);
+      row.removeEventListener('pointercancel', onUp);
+      onDrop(siblings().map((n) => n.dataset.sortId));
+    };
+    row.addEventListener('pointermove', onMove);
+    row.addEventListener('pointerup', onUp);
+    row.addEventListener('pointercancel', onUp);
+  });
+}
+
+/** The rename/remove pair shown on a row in edit mode. */
+function editActions({ onRename, onDelete, deleteTitle }) {
+  const box = el('span', 'edit-actions', '');
+  const rename = el('button', '', '✎');
+  rename.title = 'rename';
+  rename.onclick = (e) => {
+    e.stopPropagation();
+    onRename();
+  };
+  const remove = el('button', '', '✕');
+  remove.title = deleteTitle ?? 'remove';
+  remove.onclick = (e) => {
+    e.stopPropagation();
+    onDelete();
+  };
+  box.append(rename, remove);
+  return box;
+}
+
+async function hostApi(path, body) {
+  const res = await fetch(`/api/hosts/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('the relay declined the request (works through the relay, not on localhost)');
+}
+
 function agentElapsed(a) {
   if (a.status !== 'running') return a.status === 'done' ? '✓' : '✕';
   const sec = Math.max(0, Math.round((Date.now() - a.startedAt) / 1000));
@@ -810,6 +955,7 @@ setInterval(() => {
 
 /** "Add host": the relay mints a one-time invite link to open (or curl) on that machine. */
 function renderAddHost(root) {
+  root.innerHTML = '';
   const btn = el('button', 'add-host', '＋ add host');
   btn.title = 'connect another computer to this account';
   btn.onclick = async () => {
@@ -1091,18 +1237,9 @@ $('input').addEventListener('paste', (e) => {
   }
 });
 
-$('pick-project').onclick = () => sendTo(ownHostId(), { type: 'list_root' });
 $('picker-cancel').onclick = () => ($('picker').hidden = true);
 $('picker').addEventListener('click', (e) => {
   if (e.target.id === 'picker') $('picker').hidden = true;
-});
-
-$('add-project-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const path = $('add-project-path').value.trim();
-  if (!path) return;
-  sendTo(ownHostId(), { type: 'add_project', path });
-  $('add-project-path').value = '';
 });
 
 $('permission-mode').addEventListener('change', function () {
@@ -1188,6 +1325,8 @@ $('pair-btn').onclick = () => {
   sendTo(ownHostId(), { type: 'pair_relay', code });
   $('set-pair-code').value = '';
 };
+
+$('edit-btn').onclick = () => setEditMode(!editMode);
 
 $('settings-btn').onclick = () => sendTo(ownHostId(), { type: 'get_settings' });
 $('settings-cancel').onclick = () => ($('settings').hidden = true);

@@ -19,15 +19,12 @@
   <aside id="sidebar">
     <div id="logo-row">
       <div id="logo">remaude</div>
+      <button id="edit-btn" title="Edit sidebar: drag to reorder, rename, remove">✎</button>
       <button id="settings-btn" title="Settings">⚙</button>
     </div>
     <input id="search" placeholder="search chats" spellcheck="false" />
     <div id="projects"></div>
-    <button id="pick-project" title="Open the system folder picker on the host">📁 add project</button>
-    <form id="add-project-form">
-      <input id="add-project-path" placeholder="…or type a path" spellcheck="false" />
-      <button title="Add project">+</button>
-    </form>
+    <div id="sidebar-footer"></div>
   </aside>
 
   <main id="main">
@@ -118,6 +115,10 @@
     <div id="picker-box">
       <div id="picker-title"></div>
       <div id="picker-list"></div>
+      <form id="picker-form" hidden>
+        <input id="picker-input" spellcheck="false" />
+        <button type="submit">Add</button>
+      </form>
       <div id="picker-actions"><button id="picker-cancel">Cancel</button></div>
     </div>
   </div>

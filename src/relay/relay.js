@@ -332,6 +332,58 @@ const httpServer = createServer(async (req, res) => {
     }
 
     // -- invite link for a new host: open it (or curl it) on the host machine --
+    // -- host bookkeeping: rename, unpair, sidebar order (all owner-only) --
+    if (url.pathname.startsWith('/api/hosts/') && req.method === 'POST') {
+      if (!email || readDevice(req) !== email) {
+        res.writeHead(401).end();
+        return;
+      }
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const ownedToken = (hostId) =>
+        Object.entries(state.hosts).find(([, h]) => h.id === hostId && h.email === email)?.[0] ?? null;
+
+      if (url.pathname === '/api/hosts/rename') {
+        const token = ownedToken(body.hostId);
+        if (!token) {
+          res.writeHead(404).end();
+          return;
+        }
+        state.hosts[token].name = String(body.name ?? '').trim().slice(0, 60) || state.hosts[token].name;
+        saveState();
+        for (const link of hostLinks.get(email) ?? []) if (link.hostId === body.hostId) link.name = state.hosts[token].name;
+        refreshBrowsers();
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
+
+      if (url.pathname === '/api/hosts/delete') {
+        const token = ownedToken(body.hostId);
+        if (!token) {
+          res.writeHead(404).end();
+          return;
+        }
+        delete state.hosts[token]; // the machine must be paired again to come back
+        saveState();
+        for (const link of [...(hostLinks.get(email) ?? [])])
+          if (link.hostId === body.hostId) {
+            link.ws.close(4401, 'unpaired');
+            hostLinks.get(email).delete(link);
+          }
+        refreshBrowsers();
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
+
+      if (url.pathname === '/api/hosts/order') {
+        state.hostOrder ??= {};
+        state.hostOrder[email] = (body.ids ?? []).filter((id) => typeof id === 'string');
+        saveState();
+        refreshBrowsers();
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
+    }
+
     if (url.pathname === '/api/host-link' && req.method === 'POST') {
       if (!email || readDevice(req) !== email) {
         res.writeHead(401).end();
@@ -502,14 +554,21 @@ function linksFor(email) {
 const browsers = new Set(); // live browser sockets, for host list updates
 
 function hostsSnapshot(email) {
+  const order = state.hostOrder?.[email] ?? [];
+  const rank = (id) => {
+    const i = order.indexOf(id);
+    return i === -1 ? order.length : i; // unranked hosts sit after the ordered ones
+  };
   return {
     type: 'hosts',
-    hosts: linksFor(email).map(({ link, guest }) => ({
-      id: link.hostId,
-      name: link.name,
-      owner: link.ownerEmail,
-      own: !guest,
-    })),
+    hosts: linksFor(email)
+      .map(({ link, guest }) => ({
+        id: link.hostId,
+        name: link.name,
+        owner: link.ownerEmail,
+        own: !guest,
+      }))
+      .sort((a, b) => rank(a.id) - rank(b.id)),
   };
 }
 

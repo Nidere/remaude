@@ -593,6 +593,7 @@ function stateSnapshot() {
     type: 'state',
     projects: [...agent.projects.values()].map((p) => ({
       path: p.path,
+      name: config.projectNames?.[p.path] ?? null,
       chats: [...p.chats.values()].map((c) => ({
         id: c.id,
         sessionId: c.sessionId,
@@ -761,6 +762,42 @@ const handlers = {
       announceShares();
     }
     send(ws, { type: 'share_result', chatId, emails: [] });
+  },
+
+  /** Sidebar order of projects: the config array itself is the order. */
+  reorder_projects(ws, { paths }) {
+    const wanted = paths.map((p) => resolve(p));
+    const rest = [...agent.projects.keys()].filter((p) => !wanted.includes(p));
+    const ordered = [...wanted.filter((p) => agent.projects.has(p)), ...rest];
+    const projects = new Map(ordered.map((p) => [p, agent.projects.get(p)]));
+    agent.projects.clear();
+    for (const [k, v] of projects) agent.projects.set(k, v);
+    config.projects = ordered;
+    saveConfig(config);
+    broadcast(stateSnapshot());
+  },
+
+  /** Sidebar order of chats inside one project. */
+  reorder_chats(ws, { projectPath, chatIds }) {
+    const project = agent.projects.get(resolve(projectPath));
+    if (!project) throw new Error('no such project');
+    const rest = [...project.chats.keys()].filter((id) => !chatIds.includes(id));
+    const ordered = [...chatIds.filter((id) => project.chats.has(id)), ...rest];
+    const chats = new Map(ordered.map((id) => [id, project.chats.get(id)]));
+    project.chats.clear();
+    for (const [k, v] of chats) project.chats.set(k, v);
+    saveOpenChats();
+    broadcast(stateSnapshot());
+  },
+
+  /** A display alias for a project; the folder on disk keeps its name. */
+  rename_project(ws, { path, name }) {
+    const abs = resolve(path);
+    config.projectNames ??= {};
+    if (name?.trim()) config.projectNames[abs] = name.trim().slice(0, 60);
+    else delete config.projectNames[abs];
+    saveConfig(config);
+    broadcast(stateSnapshot());
   },
 
   rename_chat(ws, { chatId, title }) {
