@@ -22,6 +22,7 @@ const attachments = []; // {mediaType, data(base64), url}
 const LOCAL_HOST = 'local';
 let knownHosts = []; // [{id, name, owner, own}] as reported by the relay
 const hostStates = new Map(); // hostId -> {projects, guest}
+let liveChats = new Set(); // chat ids the hosts actually report right now
 const hostKey = (id) => id ?? LOCAL_HOST;
 
 // Drafts survive the tab being evicted (iOS kills backgrounded PWAs at will),
@@ -118,6 +119,7 @@ function bootFromCache() {
   const chat = getChat(chatId);
   chat.sessionId = localStorage.getItem('lastSession') ?? undefined;
   chat.fromCache = true;
+  activeChatId = chatId; // keeps the composer usable; the state handler retargets it
   feedHost.innerHTML = '';
   feedHost.append(chat.feedEl);
   for (const m of saved.msgs) renderSdkMessage(chatId, m, true);
@@ -198,22 +200,27 @@ const handlers = {
     // guest mode is per host now: the UI is restricted only while the active
     // chat belongs to someone else's host
     renderSidebar();
-    // after a page reload we return to the last open chat;
-    // after a server restart the ids differ — look it up by session id
-    if (!activeChatId) {
+    // Only chats the host actually reports are real. The cache restore creates a
+    // placeholder entry for the id we saw last time, and after a host restart
+    // that id is dead: selecting it would leave the UI stuck on a chat nobody
+    // updates — green status, messages going nowhere.
+    const live = new Set();
+    for (const st of hostStates.values()) for (const p of st.projects) for (const c of p.chats) live.add(c.id);
+    liveChats = live;
+
+    if (!activeChatId || !live.has(activeChatId)) {
       const last = localStorage.getItem('lastChat');
-      if (last && chats.has(last)) selectChat(last);
-      else {
-        const lastSession = localStorage.getItem('lastSession');
-        if (lastSession) {
-          for (const [id, chat] of chats) {
-            if (chat.sessionId === lastSession) {
-              selectChat(id);
-              break;
-            }
+      const lastSession = localStorage.getItem('lastSession');
+      let target = last && live.has(last) ? last : null;
+      if (!target && lastSession) {
+        for (const id of live) {
+          if (chats.get(id)?.sessionId === lastSession) {
+            target = id;
+            break;
           }
         }
       }
+      if (target) selectChat(target);
     }
   },
 
@@ -874,6 +881,13 @@ function sendMessage() {
   if (!activeChatId) return;
   const content = currentContent();
   if (!content) return;
+  // Never swallow a message: if this chat is not one the host currently reports
+  // (still connecting, or the id died with a host restart), say so and keep the
+  // text in the composer instead of sending it into the void.
+  if (!liveChats.has(activeChatId)) {
+    appendTo(activeChatId, el('div', 'error-banner', 'not connected to this chat yet — the message was not sent'));
+    return;
+  }
   // draw the bubble at once instead of waiting for the echo to travel
   // browser → relay → host → back; the echo is then skipped by this id
   const localId = crypto.randomUUID();
