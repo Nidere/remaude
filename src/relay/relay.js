@@ -85,6 +85,39 @@ function makeSessionCookie(email) {
   return `${payload}.${sign(payload)}`;
 }
 
+// ---------- доверенные устройства ----------
+// Тот же механизм, что пейринг хоста, в обратную сторону: НЕдоверенное
+// устройство показывает код с сайта, а вводится он в настройках remaude на
+// уже доверенном устройстве (или на локалхосте хоста). Совпало — кука навсегда.
+
+const devicePendings = new Map(); // code -> {email, pendingId, exp}
+const deviceApproved = new Map(); // pendingId -> {email, exp}
+
+function hasHosts(email) {
+  return Object.values(state.hosts).some((h) => h.email === email);
+}
+
+function readPendingId(req) {
+  return /(?:^|;\s*)rmd_device_pending=([^;]+)/.exec(req.headers.cookie ?? '')?.[1] ?? null;
+}
+
+function makeDeviceCookie(email) {
+  const payload = Buffer.from(JSON.stringify({ email, iat: Date.now() })).toString('base64url');
+  return `${payload}.${sign(payload)}`;
+}
+
+function readDevice(req) {
+  const m = /(?:^|;\s*)rmd_device=([^;]+)/.exec(req.headers.cookie ?? '');
+  if (!m) return null;
+  const [payload, sig] = m[1].split('.');
+  if (!payload || !sig || sign(payload) !== sig) return null;
+  try {
+    return JSON.parse(Buffer.from(payload, 'base64url').toString()).email ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function readSession(req) {
   const m = /(?:^|;\s*)rmd_session=([^;]+)/.exec(req.headers.cookie ?? '');
   if (!m) return null;
@@ -113,7 +146,7 @@ function firstHostLink(email) {
 
 const PAGE_STYLE = `<style>body{background:#14151a;color:#d8dae4;font:15px/1.6 system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .box{max-width:420px;text-align:center;padding:24px}h1{color:#7aa2f7;font-size:22px;letter-spacing:1px}
-a.btn,code{display:inline-block;margin-top:12px}a.btn{background:#7aa2f7;color:#10141f;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600}
+.btn,code{display:inline-block;margin-top:12px}.btn{background:#7aa2f7;color:#10141f;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600}
 code{font-size:32px;letter-spacing:6px;background:#242732;padding:12px 20px;border-radius:10px}p.dim{color:#8a8fa3;font-size:13px}</style>`;
 
 const loginPage = () => `<!doctype html><meta charset="utf-8"><title>remaude</title>${PAGE_STYLE}
@@ -127,6 +160,14 @@ const pairPage = (code) => `<!doctype html><meta charset="utf-8"><title>remaude 
 
 const deniedPage = (email) => `<!doctype html><meta charset="utf-8"><title>remaude</title>${PAGE_STYLE}
 <div class="box"><h1>не пускаю</h1><p>${email} нет в списке. Если это ошибка — попроси владельца добавить тебя.</p></div>`;
+
+const devicePage = (code) => `<!doctype html><meta charset="utf-8"><title>remaude · новое устройство</title>${PAGE_STYLE}
+<div class="box"><h1>новое устройство</h1>
+<p>Введи этот код в настройках remaude (⚙ → «код с сайта») на уже доверенном устройстве или прямо на компьютере-хосте:</p>
+<code>${code}</code>
+<p class="dim">Код живёт 10 минут. Как только введёшь — страница откроется сама.</p>
+<script>setInterval(()=>fetch('/api/device/status').then(r=>r.json()).then(s=>{if(s.approved)location.reload()}).catch(()=>{}),3000)</script>
+</div>`;
 
 // ---------- HTTP ----------
 
@@ -222,7 +263,7 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/push/key') {
-      if (!email) {
+      if (!email || readDevice(req) !== email) {
         res.writeHead(401).end();
         return;
       }
@@ -231,7 +272,7 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/push/subscribe' && req.method === 'POST') {
-      if (!email) {
+      if (!email || readDevice(req) !== email) {
         res.writeHead(401).end();
         return;
       }
@@ -277,6 +318,48 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
+    // -- доверенное устройство. Пока у аккаунта нет хостов, гейт не нужен
+    // (нечего защищать) — первое устройство доверяется автоматически, это
+    // и есть онбординг нового пользователя.
+    const deviceOk = readDevice(req) === email || !hasHosts(email);
+
+    // опрос со страницы кода: одобрили? (доступен без device-куки)
+    if (url.pathname === '/api/device/status') {
+      const pendingId = readPendingId(req);
+      const ok = deviceApproved.get(pendingId);
+      if (ok && ok.email === email && ok.exp > Date.now()) {
+        deviceApproved.delete(pendingId);
+        res
+          .writeHead(200, {
+            'content-type': 'application/json',
+            'set-cookie': `rmd_device=${makeDeviceCookie(email)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${2 * 365 * 24 * 3600}`,
+          })
+          .end('{"approved":true}');
+      } else {
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"approved":false}');
+      }
+      return;
+    }
+
+    if (!deviceOk) {
+      // показываем код; повторный заход с той же pending-кукой переиспользует код
+      let pendingId = readPendingId(req);
+      let code = null;
+      for (const [c, entry] of devicePendings) {
+        if (entry.pendingId === pendingId && entry.email === email && entry.exp > Date.now()) code = c;
+        if (entry.exp < Date.now()) devicePendings.delete(c);
+      }
+      const headers = { 'content-type': 'text/html; charset=utf-8' };
+      if (!code) {
+        pendingId = randomUUID();
+        code = String(randomInt(100000, 999999));
+        devicePendings.set(code, { email, pendingId, exp: Date.now() + 600e3 });
+        headers['set-cookie'] = `rmd_device_pending=${pendingId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`;
+      }
+      res.writeHead(200, headers).end(devicePage(code));
+      return;
+    }
+
     if (url.pathname === '/') {
       if (!firstHostLink(email)) {
         // хост не подключён: показываем код привязки
@@ -307,7 +390,7 @@ httpServer.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, BASE_URL);
   if (url.pathname === '/ws') {
     const email = readSession(req);
-    if (!email) {
+    if (!email || readDevice(req) !== email) {
       socket.destroy();
       return;
     }
@@ -360,6 +443,16 @@ function attachHost(ws, info) {
       for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(msg.data);
     } else if (msg.t === 'push') {
       pushToUser(info.email, { url: BASE_URL, ...msg.payload });
+    } else if (msg.t === 'approve_device') {
+      // код с недоверенного устройства, введённый на доверенном → одобряем
+      const code = String(msg.code ?? '').trim();
+      const entry = devicePendings.get(code);
+      const ok = Boolean(entry && entry.email === info.email && entry.exp > Date.now());
+      if (ok) {
+        devicePendings.delete(code);
+        deviceApproved.set(entry.pendingId, { email: info.email, exp: Date.now() + 600e3 });
+      }
+      ws.send(JSON.stringify({ t: 'device_approved', code, ok }));
     }
   });
   ws.on('close', () => {

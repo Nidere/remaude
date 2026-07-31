@@ -200,6 +200,11 @@ const handlers = {
     renderRelayStatus(relay);
   },
 
+  device_approved() {
+    const node = $('relay-status');
+    if (node) node.textContent = 'устройство одобрено ✓ — обнови страницу на нём';
+  },
+
   error({ message }) {
     if (activeChatId) appendTo(activeChatId, el('div', 'error-banner', `ошибка: ${message}`));
     else alert(message);

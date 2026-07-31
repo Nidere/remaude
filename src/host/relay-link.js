@@ -36,6 +36,7 @@ export class RelayLink extends EventEmitter {
       if (msg.t === 'open') this.emit('client_open', msg.id);
       else if (msg.t === 'msg') this.emit('client_msg', msg.id, msg.data);
       else if (msg.t === 'close') this.emit('client_close', msg.id);
+      else if (msg.t === 'device_approved') this.emit('device_approved', msg.code, msg.ok);
     });
     const onDown = () => {
       if (this.connected) {
@@ -60,6 +61,12 @@ export class RelayLink extends EventEmitter {
   /** Попросить relay отправить push-уведомление владельцу хоста. */
   push(payload) {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'push', payload }));
+  }
+
+  /** Одобрить код нового устройства (введён на доверенном устройстве). */
+  approveDevice(code) {
+    if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'approve_device', code }));
+    else throw new Error('нет соединения с relay');
   }
 
   stop() {

@@ -223,6 +223,7 @@ async function refreshLimits(force = false) {
 const RELAY_DEFAULT_URL = 'https://remaude.nidere.com';
 let relayLink = null;
 const virtualClients = new Map(); // id -> VirtualClient
+const pendingDeviceApprovals = new Map(); // code -> ws, ждущий ответа relay
 
 /** Удалённый браузер, живущий за туннелем relay — с интерфейсом обычного ws-клиента. */
 class VirtualClient {
@@ -260,6 +261,17 @@ function startRelay() {
   relayLink.on('status', (up) => {
     console.log(`relay ${up ? 'connected' : 'disconnected'}`);
     broadcast({ type: 'relay_status', paired: true, connected: up });
+  });
+  relayLink.on('device_approved', (code, ok) => {
+    const requester = pendingDeviceApprovals.get(code);
+    pendingDeviceApprovals.delete(code);
+    if (requester)
+      send(
+        requester,
+        ok
+          ? { type: 'device_approved' }
+          : { type: 'error', message: 'relay не принял код устройства (истёк или опечатка)' }
+      );
   });
 }
 
@@ -429,8 +441,16 @@ const handlers = {
     });
   },
 
-  /** Привязка к relay одноразовым кодом с сайта. */
+  /**
+   * Единое поле «код с сайта»: если хост ещё не привязан — это привязка хоста,
+   * если привязан — одобрение нового устройства (тот же механизм, обратная сторона).
+   */
   async pair_relay(ws, { code, url }) {
+    if (config.relay?.token) {
+      pendingDeviceApprovals.set(String(code).trim(), ws);
+      relayLink.approveDevice(code);
+      return;
+    }
     const base = (url ?? config.relay?.url ?? RELAY_DEFAULT_URL).replace(/\/$/, '');
     const res = await fetch(base + '/pair', {
       method: 'POST',
