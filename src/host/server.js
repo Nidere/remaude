@@ -847,6 +847,7 @@ const handlers = {
 
   send(ws, { chatId, content, localId }) {
     const chat = findChat(chatId);
+    ws.watching = chatId; // whoever is typing here is plainly watching it
     chat.send(content);
     if (!chat.title) {
       const text = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;

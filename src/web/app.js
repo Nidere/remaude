@@ -167,7 +167,10 @@ function connect() {
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
     // history may have drifted after a reconnect — re-request it for the active chat
     for (const chat of chats.values()) chat.historyRequested = false;
-    if (activeChatId) requestHistory(activeChatId);
+    if (activeChatId) {
+      requestHistory(activeChatId);
+      reportFocus(); // the host forgot we are watching; otherwise it pushes at us
+    }
   };
   ws.onclose = () => {
     $('conn-dot').classList.remove('on');
@@ -1701,6 +1704,10 @@ function reportFocus() {
   if (!watching && activeChatId) cacheTranscript(activeChatId);
 }
 document.addEventListener('visibilitychange', reportFocus);
+// A reconnect (or a host restart) gives the host a brand-new client with no
+// idea what we are looking at — it would then push "done" into our face while
+// we sit and read the chat. Say it again as soon as the socket is back.
+window.addEventListener('focus', reportFocus);
 
 // push notifications — relay only (localhost has no subscription backend)
 function notifyStatus(text, ok = false) {
