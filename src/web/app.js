@@ -337,7 +337,7 @@ function renderSdkMessage(chatId, msg) {
     // обычное сообщение пользователя
     const bubble = el('div', 'msg msg-user', '');
     if (msg.author) bubble.append(el('div', 'msg-author', msg.author));
-    if (typeof content === 'string') bubble.textContent = content;
+    if (typeof content === 'string') bubble.append(document.createTextNode(content));
     else
       for (const block of content ?? []) {
         if (block.type === 'text') bubble.append(document.createTextNode(block.text));
