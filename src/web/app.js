@@ -523,14 +523,11 @@ function renderSidebar() {
   const sections = [...hostStates.entries()].sort(
     (a, b) => Number(a[1].guest) - Number(b[1].guest) || a[0].localeCompare(b[0])
   );
-  const multi = sections.length > 1 || knownHosts.length > 1;
   for (const [hostId, hostState] of sections) {
     const meta = knownHosts.find((h) => h.id === hostId);
-    if (multi) {
-      // shared hosts are labelled by their owner's email, own ones by machine name
-      const label = hostState.guest ? (meta?.owner ?? 'shared') : (meta?.name ?? 'this computer');
-      root.append(el('div', `host-head${hostState.guest ? ' guest' : ''}`, label));
-    }
+    // shared hosts are labelled by their owner's email, own ones by machine name
+    const label = hostState.guest ? (meta?.owner ?? 'shared') : (meta?.name ?? 'this computer');
+    root.append(el('div', `host-head${hostState.guest ? ' guest' : ''}`, label));
     renderHostProjects(root, hostId, hostState);
   }
   renderAddHost(root);
