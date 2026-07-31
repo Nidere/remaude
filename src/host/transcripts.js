@@ -13,6 +13,96 @@ function slugCandidates(cwd) {
   return [...new Set([cwd, cwd[0].toLowerCase() + cwd.slice(1), cwd[0].toUpperCase() + cwd.slice(1)])].map(sanitize);
 }
 
+/** The folder name Claude Code derives from a working directory. */
+export function slugFor(cwd) {
+  return slugCandidates(cwd)[0];
+}
+
+/** Every session file on this machine: [{id, file, slug, mtime}] */
+export function listAllSessionFiles() {
+  const out = [];
+  let slugs = [];
+  try {
+    slugs = readdirSync(PROJECTS_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return out;
+  }
+  for (const slug of slugs) {
+    const dir = join(PROJECTS_DIR, slug);
+    let files = [];
+    try {
+      files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      const file = join(dir, f);
+      try {
+        out.push({ id: f.slice(0, -6), file, slug, mtime: statSync(file).mtimeMs });
+      } catch {
+        /* the file may vanish between listing and stat */
+      }
+    }
+  }
+  return out;
+}
+
+function plainText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join(' ');
+}
+
+function snippetAround(text, idx, len) {
+  const from = Math.max(0, idx - 60);
+  const to = Math.min(text.length, idx + len + 90);
+  return (from ? '…' : '') + text.slice(from, to).replace(/\s+/g, ' ').trim() + (to < text.length ? '…' : '');
+}
+
+/**
+ * Search one transcript for a lowercase needle. Only what a human said or was
+ * told counts — tool traffic and sidechains are noise for finding a conversation.
+ * @returns {{matches:number, snippet:string, title:string|null, cwd:string|null}|null}
+ */
+export function searchSessionFile(file, needle) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf-8');
+  } catch {
+    return null;
+  }
+  if (!text.toLowerCase().includes(needle)) return null; // cheap reject before parsing
+  let matches = 0;
+  let snippet = null;
+  let title = null;
+  let cwd = null;
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!cwd && entry.cwd) cwd = entry.cwd;
+    if (!title && entry.type === 'ai-title' && typeof entry.title === 'string') title = entry.title;
+    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta || entry.isSidechain) continue;
+    if (entry.type === 'user' && entry.origin?.kind) continue;
+    const body = plainText(entry.message?.content);
+    if (!body) continue;
+    const idx = body.toLowerCase().indexOf(needle);
+    if (idx === -1) continue;
+    matches++;
+    if (!snippet) snippet = snippetAround(body, idx, needle.length);
+  }
+  return matches ? { matches, snippet, title, cwd } : null;
+}
+
 export function sessionDir(cwd) {
   for (const slug of slugCandidates(cwd)) {
     const dir = join(PROJECTS_DIR, slug);

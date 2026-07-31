@@ -310,6 +310,12 @@ const handlers = {
     }
   },
 
+  search_results({ query, results, hasMore, scanned, total, _host }) {
+    if (query !== $('search').value.trim()) return; // a stale page for an older query
+    renderSearchResults(results, { hasMore, scanned, total, hostId: hostKey(_host), append: searchAppending });
+    searchAppending = false;
+  },
+
   agents({ chatId, agents }) {
     getChat(chatId).agents = agents;
     renderSidebar(cachedProjects);
@@ -861,6 +867,63 @@ function renderHostProjects(root, hostId, hostState) {
   }
 }
 
+// ---------- search across saved transcripts ----------
+// The sidebar filter alone only ever saw open chats. Real search asks the host
+// to grep its saved sessions, page by page, so digging deeper stays possible.
+
+let searchTimer = null;
+let searchAppending = false;
+
+function runSearch(more = false) {
+  const query = $('search').value.trim();
+  if (query.length < 2) {
+    $('search-results').innerHTML = '';
+    return;
+  }
+  searchAppending = more;
+  if (!more) $('search-results').innerHTML = `<div class="search-head">searching…</div>`;
+  sendTo(ownHostId(), { type: 'search', query, more });
+}
+
+function renderSearchResults(results, { hasMore, scanned, total, hostId, append }) {
+  const root = $('search-results');
+  if (!append) root.innerHTML = '';
+  root.querySelector('.search-head')?.remove();
+  root.querySelector('.search-more')?.remove();
+
+  const count = root.querySelectorAll('.search-item').length + results.length;
+  const head = el('div', 'search-head', count ? `found in past chats: ${count}` : 'nothing found in past chats');
+  root.prepend(head);
+
+  for (const r of results) {
+    const item = el('div', 'search-item', '');
+    item.append(el('div', 'search-title', r.title ?? r.sessionId.slice(0, 8)));
+    if (r.snippet) item.append(el('div', 'search-snippet', r.snippet));
+    const where = [r.projectPath ? shortPath(r.projectPath) : null, new Date(r.mtime).toLocaleDateString()]
+      .filter(Boolean)
+      .join(' · ');
+    item.append(el('div', 'search-meta', `${where} · ${r.matches} match${r.matches > 1 ? 'es' : ''}`));
+    if (r.projectPath)
+      item.onclick = () =>
+        sendTo(hostId, {
+          type: 'open_session',
+          projectPath: r.projectPath,
+          sessionId: r.sessionId,
+          permissionMode: $('permission-mode').value,
+        });
+    root.append(item);
+  }
+
+  if (hasMore) {
+    const more = el('button', 'search-more', `show more (${scanned}/${total} scanned)`);
+    more.onclick = () => {
+      more.textContent = 'searching…';
+      runSearch(true);
+    };
+    root.append(more);
+  }
+}
+
 // ---------- sidebar edit mode ----------
 // One switch turns the sidebar from navigation into editing: rows become
 // draggable (pointer events, so a finger works like a mouse), rename/remove
@@ -1343,7 +1406,11 @@ $('settings-save').onclick = () => {
 };
 
 // chat search — filtering over the cached last state
-$('search').addEventListener('input', () => renderSidebar());
+$('search').addEventListener('input', () => {
+  renderSidebar(); // instant: filter the chats already on screen
+  clearTimeout(searchTimer); // then, after a pause, ask the host to dig through disk
+  searchTimer = setTimeout(() => runSearch(false), 400);
+});
 
 // Safari ignores user-scalable=no in a tab — suppress pinch manually.
 // Images are viewed in the lightbox anyway, so zoom is not needed.

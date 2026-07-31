@@ -21,7 +21,15 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { HostAgent } from './agent.js';
-import { listSessions, loadHistory, sessionFile, mapEntry } from './transcripts.js';
+import {
+  listSessions,
+  loadHistory,
+  sessionFile,
+  mapEntry,
+  listAllSessionFiles,
+  searchSessionFile,
+  slugFor,
+} from './transcripts.js';
 import { RelayLink } from './relay-link.js';
 
 const PORT = 7699;
@@ -764,6 +772,53 @@ const handlers = {
     send(ws, { type: 'share_result', chatId, emails: [] });
   },
 
+  /**
+   * Full-text search over saved transcripts, one page at a time so a deep dig
+   * stays possible without ever scanning gigabytes up front. Files are visited
+   * in the order the user cares about: the chat they are in, then the projects
+   * on screen, then everything else this machine has ever recorded.
+   */
+  search(ws, { query, more }) {
+    const needle = String(query ?? '').trim().toLowerCase();
+    if (needle.length < 2) {
+      send(ws, { type: 'search_results', query, results: [], hasMore: false, done: true });
+      return;
+    }
+
+    if (!more || searchCursor?.needle !== needle) {
+      const openSlugs = [...agent.projects.keys()].map((p) => slugFor(p));
+      const currentSlug = ws.watching ? slugFor(findChatSafe(ws.watching)?.cwd ?? '') : null;
+      const rank = (slug) => (slug === currentSlug ? 0 : openSlugs.includes(slug) ? 1 : 2);
+      const files = listAllSessionFiles().sort((a, b) => rank(a.slug) - rank(b.slug) || b.mtime - a.mtime);
+      searchCursor = { needle, files, idx: 0 };
+    }
+
+    const cursor = searchCursor;
+    const results = [];
+    const deadline = Date.now() + 2500; // a page must not hang the sidebar
+    while (cursor.idx < cursor.files.length && results.length < 8 && Date.now() < deadline) {
+      const entry = cursor.files[cursor.idx++];
+      const hit = searchSessionFile(entry.file, needle);
+      if (!hit) continue;
+      results.push({
+        sessionId: entry.id,
+        projectPath: hit.cwd,
+        title: hit.title,
+        snippet: hit.snippet,
+        matches: hit.matches,
+        mtime: entry.mtime,
+      });
+    }
+    send(ws, {
+      type: 'search_results',
+      query,
+      results,
+      hasMore: cursor.idx < cursor.files.length,
+      scanned: cursor.idx,
+      total: cursor.files.length,
+    });
+  },
+
   /** Sidebar order of projects: the config array itself is the order. */
   reorder_projects(ws, { paths }) {
     const wanted = paths.map((p) => resolve(p));
@@ -921,6 +976,13 @@ const handlers = {
     setTimeout(() => process.exit(0), 300);
   },
 };
+
+let searchCursor = null; // {needle, files, idx} — lets "load more" resume the scan
+
+function findChatSafe(chatId) {
+  for (const chat of agent.allChats()) if (chat.id === chatId) return chat;
+  return null;
+}
 
 function findChat(chatId) {
   for (const chat of agent.allChats()) if (chat.id === chatId) return chat;
