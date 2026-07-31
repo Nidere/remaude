@@ -260,7 +260,18 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
-    // -- страницы/статика --
+    // -- статика без авторизации: манифест/SW/иконки браузер тянет без куки,
+    // а секретов в статике нет — данные ходят только через авторизованный WS --
+    if (url.pathname !== '/') {
+      const file = join(WEB_ROOT, url.pathname);
+      if (file.startsWith(WEB_ROOT) && existsSync(file) && statSync(file).isFile()) {
+        res
+          .writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' })
+          .end(await readFile(file));
+        return;
+      }
+    }
+
     if (!email) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(loginPage());
       return;
@@ -275,14 +286,6 @@ const httpServer = createServer(async (req, res) => {
         return;
       }
       res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' }).end(await readFile(join(WEB_ROOT, 'index.html')));
-      return;
-    }
-
-    const file = join(WEB_ROOT, url.pathname);
-    if (file.startsWith(WEB_ROOT) && existsSync(file) && statSync(file).isFile()) {
-      res
-        .writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' })
-        .end(await readFile(file));
       return;
     }
     res.writeHead(404).end('not found');
