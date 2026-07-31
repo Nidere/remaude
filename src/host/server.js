@@ -275,6 +275,31 @@ function startRelay() {
   });
 }
 
+// ---------- аутентификация Claude на хосте (логин из веб-UI) ----------
+
+let loginChild = null; // единственный активный процесс `claude auth login`
+
+function runClaudeJson(args) {
+  return new Promise((resolveRun) => {
+    const p = spawn('claude', args, { shell: true });
+    let out = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.on('close', () => {
+      try {
+        resolveRun(JSON.parse(out));
+      } catch {
+        resolveRun(null);
+      }
+    });
+    p.on('error', () => resolveRun(null));
+  });
+}
+
+async function claudeAuthStatus() {
+  const st = await runClaudeJson(['auth', 'status']);
+  return st ? { loggedIn: st.loggedIn, email: st.email, subscriptionType: st.subscriptionType } : null;
+}
+
 // ---------- WebSocket ----------
 
 function broadcast(obj) {
@@ -428,7 +453,7 @@ const handlers = {
     sendChatMeta(chatId);
   },
 
-  get_settings(ws) {
+  async get_settings(ws) {
     send(ws, {
       type: 'settings',
       userName,
@@ -438,7 +463,36 @@ const handlers = {
         connected: relayLink?.connected ?? false,
         url: config.relay?.url ?? RELAY_DEFAULT_URL,
       },
+      claudeAuth: await claudeAuthStatus(),
     });
+  },
+
+  /** Запустить `claude auth login`: ссылку — в UI, код вернётся через claude_login_code. */
+  claude_login_start(ws) {
+    loginChild?.kill();
+    const child = spawn('claude', ['auth', 'login'], { shell: true });
+    loginChild = child;
+    let buf = '';
+    const onData = (d) => {
+      buf += d.toString();
+      const m = /https:\/\/\S+/.exec(buf.replace(/\x1b\[[0-9;]*m/g, ''));
+      if (m) {
+        send(ws, { type: 'claude_login_url', url: m[0] });
+        child.stdout.off('data', onData);
+      }
+    };
+    child.stdout.on('data', onData);
+    child.on('close', async () => {
+      if (loginChild === child) loginChild = null;
+      broadcast({ type: 'claude_auth', status: await claudeAuthStatus() });
+    });
+    child.on('error', () => send(ws, { type: 'error', message: 'не удалось запустить claude auth login' }));
+    setTimeout(() => child === loginChild && child.kill(), 600e3); // не висим вечно
+  },
+
+  claude_login_code(ws, { code }) {
+    if (!loginChild) throw new Error('логин-процесс не запущен (начни заново)');
+    loginChild.stdin.write(String(code).trim() + '\n');
   },
 
   /**

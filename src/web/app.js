@@ -189,11 +189,26 @@ const handlers = {
     $('conn-dot').classList.remove('on');
   },
 
-  settings({ userName, projectsRoot, relay }) {
+  settings({ userName, projectsRoot, relay, claudeAuth }) {
     $('set-username').value = userName ?? '';
     $('set-root').value = projectsRoot ?? '';
     renderRelayStatus(relay);
+    renderClaudeAuth(claudeAuth);
     $('settings').hidden = false;
+  },
+
+  claude_login_url({ url }) {
+    const link = $('claude-login-link');
+    link.href = url;
+    $('claude-login-flow').hidden = false;
+    $('claude-login-btn').textContent = 'Начать заново';
+  },
+
+  claude_auth({ status }) {
+    renderClaudeAuth(status);
+    $('claude-login-flow').hidden = true;
+    $('claude-login-btn').textContent = 'Войти в Claude';
+    $('claude-login-code').value = '';
   },
 
   relay_status(relay) {
@@ -311,6 +326,11 @@ function renderSdkMessage(chatId, msg) {
   if (msg.type === 'assistant') {
     if (isSub) return renderSubagent(chat, msg);
     dropStream(chat);
+    if (msg.error === 'authentication_failed') {
+      chat.feedEl.append(
+        el('div', 'error-banner', 'Хост разлогинен из Claude. Войти заново: ⚙ настройки → «Войти в Claude».')
+      );
+    }
     for (const block of msg.message?.content ?? []) {
       if (block.type === 'text' && block.text.trim()) {
         const node = el('div', 'msg msg-assistant md-body', '');
@@ -774,6 +794,26 @@ $('effort-select').addEventListener('change', function () {
 });
 
 // настройки
+function renderClaudeAuth(status) {
+  const node = $('claude-auth-status');
+  if (!status) {
+    node.textContent = 'аккаунт Claude: статус неизвестен';
+    node.className = '';
+  } else if (status.loggedIn) {
+    node.textContent = `аккаунт Claude: ${status.email} · ${status.subscriptionType} ✓`;
+    node.className = 'ok';
+  } else {
+    node.textContent = 'аккаунт Claude: разлогинен — сессии не работают!';
+    node.className = 'bad';
+  }
+}
+
+$('claude-login-btn').onclick = () => send({ type: 'claude_login_start' });
+$('claude-login-send').onclick = () => {
+  const code = $('claude-login-code').value.trim();
+  if (code) send({ type: 'claude_login_code', code });
+};
+
 function renderRelayStatus(relay) {
   const node = $('relay-status');
   if (!node) return;

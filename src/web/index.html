@@ -84,9 +84,20 @@
       <div id="settings-title">Настройки</div>
       <label>Имя (подпись сообщений)<input id="set-username" spellcheck="false" /></label>
       <label>Корень проектов<input id="set-root" spellcheck="false" /></label>
+      <div id="auth-block">
+        <div id="claude-auth-status">аккаунт Claude: …</div>
+        <div id="claude-login-flow" hidden>
+          <a id="claude-login-link" target="_blank" rel="noopener">1. Открыть страницу входа →</a>
+          <div class="pair-row">
+            <input id="claude-login-code" placeholder="2. код со страницы" spellcheck="false" />
+            <button id="claude-login-send">Отправить</button>
+          </div>
+        </div>
+        <button id="claude-login-btn">Войти в Claude</button>
+      </div>
       <div id="relay-block">
         <div id="relay-status">relay: не привязан</div>
-        <div id="relay-pair-row">
+        <div class="pair-row">
           <input id="set-pair-code" placeholder="код с сайта" spellcheck="false" />
           <button id="pair-btn">Привязать</button>
         </div>
