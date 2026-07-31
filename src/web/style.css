@@ -16,13 +16,19 @@
 body {
   margin: 0;
   display: flex;
-  height: 100vh;
-  height: 100dvh; /* iOS: honest height under browser chrome */
+  /* документ намертво прибит: скроллятся только внутренние контейнеры,
+     iOS-резинка на краях не дёргает всё приложение */
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
   background: var(--bg);
   color: var(--text);
   font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
-  overflow-x: hidden; /* документ никогда не скроллится вбок */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
+
+#feed, #sidebar, #picker-list { overscroll-behavior: contain; }
 
 /* ---------- сайдбар ---------- */
 
