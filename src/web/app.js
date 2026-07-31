@@ -870,6 +870,11 @@ $('settings-save').onclick = () => {
 // поиск по чатам — фильтрация по кэшу последнего state
 $('search').addEventListener('input', () => renderSidebar(cachedProjects));
 
+// Safari игнорирует user-scalable=no во вкладке — гасим пинч вручную.
+// Картинки при этом смотрим лайтбоксом, так что зум не нужен.
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend'])
+  document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+
 // PWA: service worker (нужен для установки и push)
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 

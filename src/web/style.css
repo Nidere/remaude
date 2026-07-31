@@ -26,6 +26,7 @@ body {
   font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
   overflow: hidden;
   overscroll-behavior: none;
+  touch-action: manipulation; /* без зума по двойному тапу */
 }
 
 #feed, #sidebar, #picker-list { overscroll-behavior: contain; }
