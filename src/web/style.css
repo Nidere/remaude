@@ -312,16 +312,19 @@ body {
 #limits .crit { color: var(--red); }
 
 #restart-server {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--dim);
-  width: 24px;
-  height: 22px;
+  padding: 7px 10px;
   cursor: pointer;
-  padding: 0;
+  font: inherit;
+  font-size: 13px;
 }
-#restart-server:hover { border-color: var(--accent); color: var(--text); }
+#restart-server:hover { border-color: var(--red); color: var(--red); }
 
 #conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); }
 #conn-dot.on { background: var(--green); }

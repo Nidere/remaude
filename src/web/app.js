@@ -767,8 +767,10 @@ $('settings-save').onclick = () => {
 $('search').addEventListener('input', () => renderSidebar(cachedProjects));
 
 $('restart-server').onclick = () => {
-  if (confirm('Перезапустить сервер? Живые чаты закроются (возобновимы через «прошлые чаты»).'))
+  if (confirm('Перезапустить сервер? Живые чаты закроются (возобновимы через «прошлые чаты»).')) {
     send({ type: 'restart_server' });
+    $('settings').hidden = true;
+  }
 };
 
 setModeSelect($('permission-mode').value); // подсветка bypass при старте
