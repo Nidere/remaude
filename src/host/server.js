@@ -229,20 +229,63 @@ const pendingDeviceApprovals = new Map(); // code -> ws, ждущий ответ
 class VirtualClient {
   readyState = 1;
   OPEN = 1;
-  constructor(id) {
+  constructor(id, guest = null) {
     this.id = id;
+    this.guest = guest; // {email, sessions: [sessionId]} — гость расшаренных чатов
   }
   send(data) {
     relayLink?.sendTo(this.id, data);
   }
 }
 
+// ---------- шаринг чатов (гости) ----------
+
+function sharesList() {
+  return Object.entries(config.shares ?? {}).map(([sessionId, emails]) => ({ sessionId, emails }));
+}
+
+function announceShares() {
+  relayLink?.setShares(sharesList());
+}
+
+/** id живых чатов, доступных гостю */
+function guestChatIds(guest) {
+  const ids = new Set();
+  for (const chat of agent.allChats()) {
+    const sid = chat.sessionId ?? chat.resumeId;
+    if (sid && guest.sessions.includes(sid)) ids.add(chat.id);
+  }
+  return ids;
+}
+
+function guestState(guest) {
+  const allowed = guestChatIds(guest);
+  const snapshot = stateSnapshot();
+  return {
+    ...snapshot,
+    guest: true,
+    projects: snapshot.projects
+      .map((p) => ({ ...p, chats: p.chats.filter((c) => allowed.has(c.id)) }))
+      .filter((p) => p.chats.length),
+  };
+}
+
+/** Что из трансляций видно гостю. */
+function guestCanSee(guest, obj) {
+  if (obj.type === 'chat_message' || obj.type === 'chat_status' || obj.type === 'chat_meta' || obj.type === 'chat_error')
+    return guestChatIds(guest).has(obj.chatId);
+  return false; // state обрабатывается отдельно; permissions/limits/relay — только владельцу
+}
+
+/** Команды, разрешённые гостям (и только по их чатам). */
+const GUEST_TYPES = new Set(['send', 'history']);
+
 function startRelay() {
   if (!config.relay?.token) return;
   relayLink?.stop();
   relayLink = new RelayLink(config.relay.url ?? RELAY_DEFAULT_URL, config.relay.token);
-  relayLink.on('client_open', (id) => {
-    const vc = new VirtualClient(id);
+  relayLink.on('client_open', (id, guest) => {
+    const vc = new VirtualClient(id, guest);
     virtualClients.set(id, vc);
     initClient(vc);
   });
@@ -260,6 +303,7 @@ function startRelay() {
   });
   relayLink.on('status', (up) => {
     console.log(`relay ${up ? 'connected' : 'disconnected'}`);
+    if (up) announceShares();
     broadcast({ type: 'relay_status', paired: true, connected: up });
   });
   relayLink.on('device_approved', (code, ok) => {
@@ -304,7 +348,16 @@ async function claudeAuthStatus() {
 
 function broadcast(obj) {
   const data = JSON.stringify(obj);
-  for (const ws of clients) if (ws.readyState === ws.OPEN) ws.send(data);
+  for (const ws of clients) {
+    if (ws.readyState !== ws.OPEN) continue;
+    if (ws.guest) {
+      // гостям — только их чаты; state пересобирается под их скоуп
+      if (obj.type === 'state') ws.send(JSON.stringify(guestState(ws.guest)));
+      else if (guestCanSee(ws.guest, obj)) ws.send(data);
+      continue;
+    }
+    ws.send(data);
+  }
 }
 
 function stateSnapshot() {
@@ -376,7 +429,7 @@ const handlers = {
       parent_tool_use_id: null,
       message: { role: 'user', content },
       timestamp: new Date().toISOString(),
-      author: userName,
+      author: ws.guest ? ws.guest.email.split('@')[0] : userName,
     };
     pushHistory(chatId, userMsg);
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
@@ -425,6 +478,31 @@ const handlers = {
 
   get_limits() {
     refreshLimits(true);
+  },
+
+  /** Дать/забрать доступ к чату по почте. Ключ — стабильный sessionId. */
+  share_chat(ws, { chatId, email }) {
+    const chat = findChat(chatId);
+    const sid = chat.sessionId ?? chat.resumeId;
+    if (!sid) throw new Error('у чата ещё нет session id — отправь в него хоть одно сообщение');
+    config.shares ??= {};
+    const emails = (config.shares[sid] ??= []);
+    const clean = String(email).trim().toLowerCase();
+    if (!emails.includes(clean)) emails.push(clean);
+    saveConfig(config);
+    announceShares();
+    send(ws, { type: 'share_result', chatId, emails });
+  },
+
+  unshare_chat(ws, { chatId }) {
+    const chat = findChat(chatId);
+    const sid = chat.sessionId ?? chat.resumeId;
+    if (sid && config.shares?.[sid]) {
+      delete config.shares[sid];
+      saveConfig(config);
+      announceShares();
+    }
+    send(ws, { type: 'share_result', chatId, emails: [] });
   },
 
   rename_chat(ws, { chatId, title }) {
@@ -599,6 +677,10 @@ wss.on('error', () => {});
 /** Единая инициализация клиента — локального WS и туннельного через relay. */
 function initClient(ws) {
   clients.add(ws);
+  if (ws.guest) {
+    send(ws, guestState(ws.guest)); // гостям — только их чаты, без лимитов и permissions
+    return;
+  }
   send(ws, stateSnapshot());
   if (lastLimits) send(ws, { type: 'limits', limits: lastLimits });
   refreshLimits();
@@ -621,6 +703,10 @@ function dispatch(ws, raw) {
   let msg;
   try {
     msg = JSON.parse(raw);
+    if (ws.guest) {
+      if (!GUEST_TYPES.has(msg.type)) throw new Error('это может только владелец хоста');
+      if (msg.chatId && !guestChatIds(ws.guest).has(msg.chatId)) throw new Error('нет доступа к этому чату');
+    }
     // async-обработчики тоже должны доносить ошибки до клиента
     Promise.resolve(handlers[msg.type]?.(ws, msg)).catch((e) =>
       send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type })

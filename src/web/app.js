@@ -41,8 +41,9 @@ function send(obj) {
 // ---------- входящие ----------
 
 const handlers = {
-  state({ projects }) {
+  state({ projects, guest }) {
     cachedProjects = projects;
+    document.body.classList.toggle('guest', Boolean(guest));
     renderSidebar(projects);
     // после перезагрузки страницы возвращаемся в последний открытый чат;
     // после рестарта сервера id другие — ищем по session id
@@ -183,6 +184,10 @@ const handlers = {
           }))
         : [{ label: 'сохранённых сессий нет', muted: true }]
     );
+  },
+
+  share_result({ chatId, emails }) {
+    alert(emails.length ? `Доступ к чату: ${emails.join(', ')}` : 'Доступ отозван у всех');
   },
 
   server_restarting() {
@@ -770,6 +775,15 @@ $('lightbox').onclick = () => ($('lightbox').hidden = true);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('lightbox').hidden = true;
 });
+
+// шаринг активного чата
+$('share-btn').onclick = () => {
+  if (!activeChatId) return;
+  const email = prompt('Кому дать доступ (email)? Пустая строка — отозвать доступ у всех:');
+  if (email === null) return;
+  if (email.trim()) send({ type: 'share_chat', chatId: activeChatId, email: email.trim() });
+  else send({ type: 'unshare_chat', chatId: activeChatId });
+};
 
 // мобильное меню
 $('menu-btn').onclick = () => {

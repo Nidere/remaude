@@ -142,6 +142,18 @@ function firstHostLink(email) {
   return null;
 }
 
+/** Чужой хост-линк, где для email есть расшаренные чаты: {link, sessions}. */
+function sharedLinkFor(email) {
+  for (const [ownerEmail, links] of hostLinks) {
+    if (ownerEmail === email) continue;
+    for (const link of links) {
+      const sessions = (link.shares ?? []).filter((s) => s.emails?.includes(email)).map((s) => s.sessionId);
+      if (sessions.length) return { link, sessions };
+    }
+  }
+  return null;
+}
+
 // ---------- страницы ----------
 
 const PAGE_STYLE = `<style>body{background:#14151a;color:#d8dae4;font:15px/1.6 system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
@@ -322,6 +334,12 @@ const httpServer = createServer(async (req, res) => {
     // (нечего защищать) — первое устройство доверяется автоматически, это
     // и есть онбординг нового пользователя.
     const deviceOk = readDevice(req) === email || !hasHosts(email);
+    // бутстрап-доверие (аккаунт без хостов) должен сразу материализоваться в куку,
+    // иначе /ws, который проверяет куку жёстко, не пустит свежего гостя
+    const bootstrapCookie =
+      readDevice(req) !== email && deviceOk
+        ? { 'set-cookie': `rmd_device=${makeDeviceCookie(email)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${2 * 365 * 24 * 3600}` }
+        : {};
 
     // опрос со страницы кода: одобрили? (доступен без device-куки)
     if (url.pathname === '/api/device/status') {
@@ -361,14 +379,23 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (url.pathname === '/') {
+      if (!firstHostLink(email) && sharedLinkFor(email)) {
+        // своего хоста нет, но есть расшаренные чаты — впускаем в UI гостем
+        res
+          .writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache', ...bootstrapCookie })
+          .end(await readFile(join(WEB_ROOT, 'index.html')));
+        return;
+      }
       if (!firstHostLink(email)) {
         // хост не подключён: показываем код привязки
         const code = String(randomInt(100000, 999999));
         pairCodes.set(code, { email, exp: Date.now() + 600e3 });
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(pairPage(code));
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...bootstrapCookie }).end(pairPage(code));
         return;
       }
-      res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' }).end(await readFile(join(WEB_ROOT, 'index.html')));
+      res
+        .writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache', ...bootstrapCookie })
+        .end(await readFile(join(WEB_ROOT, 'index.html')));
       return;
     }
     res.writeHead(404).end('not found');
@@ -409,14 +436,22 @@ httpServer.on('upgrade', (req, socket, head) => {
 });
 
 function attachBrowser(ws, email) {
-  const link = firstHostLink(email);
+  let link = firstHostLink(email);
+  let guest = null;
+  if (!link) {
+    const shared = sharedLinkFor(email);
+    if (shared) {
+      link = shared.link;
+      guest = { email, sessions: shared.sessions };
+    }
+  }
   if (!link) {
     ws.close(4503, 'host offline');
     return;
   }
   const id = randomUUID();
   link.clients.set(id, ws);
-  link.ws.send(JSON.stringify({ t: 'open', id }));
+  link.ws.send(JSON.stringify({ t: 'open', id, guest }));
   ws.on('message', (raw) => link.ws.send(JSON.stringify({ t: 'msg', id, data: raw.toString() })));
   ws.on('close', () => {
     link.clients.delete(id);
@@ -443,6 +478,8 @@ function attachHost(ws, info) {
       for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(msg.data);
     } else if (msg.t === 'push') {
       pushToUser(info.email, { url: BASE_URL, ...msg.payload });
+    } else if (msg.t === 'shares') {
+      link.shares = Array.isArray(msg.shares) ? msg.shares : [];
     } else if (msg.t === 'approve_device') {
       // код с недоверенного устройства, введённый на доверенном → одобряем
       const code = String(msg.code ?? '').trim();

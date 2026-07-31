@@ -350,6 +350,32 @@ body {
   max-width: 90px;
 }
 
+#share-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--dim);
+  width: 26px;
+  height: 24px;
+  cursor: pointer;
+  padding: 0;
+}
+#share-btn:hover { border-color: var(--accent); color: var(--text); }
+
+/* гостевой режим: управление хостом скрыто, остаётся читать и писать */
+body.guest #share-btn,
+body.guest #permission-mode,
+body.guest #model-select,
+body.guest #effort-select,
+body.guest #settings-btn,
+body.guest #stop-btn,
+body.guest #pick-project,
+body.guest #add-project-form,
+body.guest #limits,
+body.guest .new-chat,
+body.guest .project-actions,
+body.guest .chat-actions { display: none !important; }
+
 #chat-meta { white-space: nowrap; font-variant-numeric: tabular-nums; }
 #chat-meta .warn { color: var(--yellow); }
 #chat-meta .crit { color: var(--red); }

@@ -33,7 +33,7 @@ export class RelayLink extends EventEmitter {
       } catch {
         return;
       }
-      if (msg.t === 'open') this.emit('client_open', msg.id);
+      if (msg.t === 'open') this.emit('client_open', msg.id, msg.guest ?? null);
       else if (msg.t === 'msg') this.emit('client_msg', msg.id, msg.data);
       else if (msg.t === 'close') this.emit('client_close', msg.id);
       else if (msg.t === 'device_approved') this.emit('device_approved', msg.code, msg.ok);
@@ -67,6 +67,11 @@ export class RelayLink extends EventEmitter {
   approveDevice(code) {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'approve_device', code }));
     else throw new Error('нет соединения с relay');
+  }
+
+  /** Объявить relay текущий список шарингов: [{sessionId, emails}] */
+  setShares(shares) {
+    if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'shares', shares }));
   }
 
   stop() {
