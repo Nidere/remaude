@@ -142,8 +142,9 @@ agent.on('chat_message', ({ chatId, msg }) => {
   if (msg.type === 'result') {
     refreshLimits(true);
     sendChatMeta(chatId);
-    // nobody is watching — worth buzzing the phone
-    if (clients.size === 0) {
+    // nobody has this chat on screen — worth buzzing the phone. Merely having a
+    // tab open elsewhere must not silence it, or the push never fires at all.
+    if (![...clients].some((c) => c.watching === chatId)) {
       let title = null;
       try {
         title = findChat(chatId).title;
@@ -280,7 +281,7 @@ function guestCanSee(guest, obj) {
 }
 
 /** The commands allowed to guests (and only on their own chats). */
-const GUEST_TYPES = new Set(['send', 'history']);
+const GUEST_TYPES = new Set(['send', 'history', 'focus']);
 
 function startRelay() {
   if (!config.relay?.token) return;
@@ -496,6 +497,11 @@ const handlers = {
 
   get_limits() {
     refreshLimits(true);
+  },
+
+  /** Which chat this client is looking at right now (null when hidden). */
+  focus(ws, { chatId }) {
+    ws.watching = chatId ?? null;
   },
 
   /** Grant/revoke access to a chat by email. The key is the stable sessionId. */

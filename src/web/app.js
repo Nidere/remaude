@@ -24,6 +24,35 @@ let knownHosts = []; // [{id, name, owner, own}] as reported by the relay
 const hostStates = new Map(); // hostId -> {projects, guest}
 const hostKey = (id) => id ?? LOCAL_HOST;
 
+// Drafts survive the tab being evicted (iOS kills backgrounded PWAs at will),
+// so they live in localStorage keyed by session id — chat ids change when the
+// host restarts. Attachments stay in memory: base64 images would blow the quota.
+const DRAFTS_KEY = 'drafts';
+const loadDrafts = () => {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFTS_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+};
+
+function draftKey(chatId) {
+  const chat = chats.get(chatId);
+  return chat?.sessionId ?? chatId;
+}
+
+function saveDraft(chatId, text) {
+  if (!chatId) return;
+  const drafts = loadDrafts();
+  if (text.trim()) drafts[draftKey(chatId)] = text;
+  else delete drafts[draftKey(chatId)];
+  try {
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+  } catch {
+    /* quota — the draft simply stays in memory */
+  }
+}
+
 /** Send a command to the host that owns this chat. */
 function sendTo(hostId, obj) {
   send(hostId && hostId !== LOCAL_HOST ? { ...obj, _host: hostId } : obj);
@@ -316,7 +345,7 @@ function selectChat(chatId) {
   localStorage.setItem('lastChat', chatId);
   const chat = getChat(chatId);
   if (chat.sessionId) localStorage.setItem('lastSession', chat.sessionId);
-  $('input').value = chat.draftText ?? '';
+  $('input').value = chat.draftText ?? loadDrafts()[draftKey(chatId)] ?? '';
   $('input').dispatchEvent(new Event('input')); // recompute the height
   attachments.length = 0;
   attachments.push(...(chat.draftAtt ?? []));
@@ -332,6 +361,7 @@ function selectChat(chatId) {
   const cur = chats.get(chatId);
   // host controls stay hidden while we are looking at someone else's chat
   document.body.classList.toggle('guest', activeIsGuest());
+  reportFocus();
   cur.unread = 0;
   updateChatItem(chatId);
   updateTabState();
@@ -752,6 +782,7 @@ function sendMessage() {
   if (chat) {
     chat.draftText = '';
     chat.draftAtt = [];
+    saveDraft(activeChatId, '');
   }
 }
 
@@ -831,6 +862,7 @@ function autoGrowInput(el) {
 }
 $('input').addEventListener('input', function () {
   autoGrowInput(this);
+  saveDraft(activeChatId, this.value);
 });
 
 // Every pasted image is normalized to PNG (the Windows clipboard can hand over bmp
@@ -990,6 +1022,14 @@ for (const ev of ['gesturestart', 'gesturechange', 'gestureend'])
 
 // PWA: service worker (needed for install and push)
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+// Tell the host which chat this client is actually looking at, so it can push a
+// notification when a task finishes with nobody watching that chat.
+function reportFocus() {
+  const watching = document.visibilityState === 'visible' ? activeChatId : null;
+  if (activeChatId) sendTo(chatHostId(activeChatId), { type: 'focus', chatId: watching });
+}
+document.addEventListener('visibilitychange', reportFocus);
 
 // push notifications — relay only (localhost has no subscription backend)
 $('notify-btn').onclick = async function () {
