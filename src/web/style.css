@@ -715,6 +715,25 @@ body.guest .chat-actions { display: none !important; }
 
 .chat-label { overflow: hidden; text-overflow: ellipsis; flex: 1; }
 
+/* subagent rows: informational only, nested a level deeper than chats */
+.agent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px 4px 38px;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: default;
+}
+.agent-label { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.agent-time { font-variant-numeric: tabular-nums; opacity: 0.75; flex-shrink: 0; }
+.status-dot.agent-running { background: var(--yellow); animation: pulse 1.2s infinite; }
+.status-dot.agent-done { background: var(--green); }
+.status-dot.agent-failed { background: var(--red); }
+.status-dot.agent-aborted { background: #555; }
+
 .chat-item.unread .chat-label { font-weight: 700; }
 .unread-badge {
   background: var(--accent);

@@ -149,6 +149,7 @@ agent.on('chat_message', ({ chatId, msg }) => {
   // chat feed — filtered here as well as in the transcript reader
   if (msg.type === 'assistant' && msg.parent_tool_use_id === null && isHarnessNoise(msg)) return;
   if (msg.type !== 'stream_event') pushHistory(chatId, msg);
+  if (msg.type === 'assistant' || msg.type === 'user') trackAgents(chatId, msg);
   broadcast({ type: 'chat_message', chatId, msg });
   if (msg.type === 'system' && msg.subtype === 'init') {
     sendChatMeta(chatId);
@@ -170,6 +171,11 @@ agent.on('chat_message', ({ chatId, msg }) => {
     if (text) lastReplies.set(chatId, text);
   }
   if (msg.type === 'result') {
+    // the turn is over: whatever is still marked running never reported back
+    let aborted = false;
+    for (const agent of agentsOf(chatId).values())
+      if (finishAgent(chatId, agent.id, 'aborted')) aborted = true;
+    if (aborted) broadcastAgents(chatId);
     refreshLimits(true);
     sendChatMeta(chatId);
     // nobody has this chat on screen — worth buzzing the phone. Merely having a
@@ -232,6 +238,72 @@ agent.on('chat_status', ({ chatId, status }) => broadcast({ type: 'chat_status',
 agent.on('chat_error', ({ chatId, error }) =>
   broadcast({ type: 'chat_error', chatId, error: String(error?.message ?? error) })
 );
+
+// ---------- subagent tracking ----------
+// An Agent tool_use starts one; the matching tool_result ends it; anything still
+// running when the turn ends was aborted. The sidebar shows these live, so the
+// bookkeeping lives here rather than being guessed at from the feed.
+
+const chatAgents = new Map(); // chatId -> Map(toolUseId -> {id, label, type, status, startedAt, endedAt})
+const AGENT_LINGER_MS = 30_000; // how long a finished agent stays visible
+
+function agentsOf(chatId) {
+  if (!chatAgents.has(chatId)) chatAgents.set(chatId, new Map());
+  return chatAgents.get(chatId);
+}
+
+function broadcastAgents(chatId) {
+  const list = [...agentsOf(chatId).values()].map((a) => ({
+    id: a.id,
+    label: a.label,
+    type: a.type,
+    status: a.status,
+    startedAt: a.startedAt,
+    endedAt: a.endedAt ?? null,
+  }));
+  broadcast({ type: 'agents', chatId, agents: list });
+}
+
+function finishAgent(chatId, id, status) {
+  const agent = agentsOf(chatId).get(id);
+  if (!agent || agent.status !== 'running') return false;
+  agent.status = status;
+  agent.endedAt = Date.now();
+  setTimeout(() => {
+    agentsOf(chatId).delete(id);
+    broadcastAgents(chatId);
+  }, AGENT_LINGER_MS).unref?.();
+  return true;
+}
+
+function trackAgents(chatId, msg) {
+  let changed = false;
+  const content = msg.message?.content;
+  if (!Array.isArray(content)) return;
+
+  if (msg.type === 'assistant' && msg.parent_tool_use_id === null) {
+    for (const block of content) {
+      if (block.type !== 'tool_use' || block.name !== 'Agent') continue;
+      agentsOf(chatId).set(block.id, {
+        id: block.id,
+        label: block.input?.description ?? block.input?.prompt?.slice(0, 60) ?? 'agent',
+        type: block.input?.subagent_type ?? null,
+        status: 'running',
+        startedAt: Date.now(),
+      });
+      changed = true;
+    }
+  }
+
+  if (msg.type === 'user') {
+    for (const block of content) {
+      if (block.type !== 'tool_result') continue;
+      if (finishAgent(chatId, block.tool_use_id, block.is_error ? 'failed' : 'done')) changed = true;
+    }
+  }
+
+  if (changed) broadcastAgents(chatId);
+}
 
 /** The harness's stand-in for "this turn needs no answer". */
 function isHarnessNoise(msg) {
@@ -914,6 +986,8 @@ function initClient(ws) {
     });
   }
   if (relayLink) send(ws, { type: 'relay_status', paired: true, connected: relayLink.connected });
+  // a fresh client should see agents that are already running
+  for (const [chatId, agents] of chatAgents) if (agents.size) broadcastAgents(chatId);
 }
 
 /** The single dispatcher for incoming messages. */

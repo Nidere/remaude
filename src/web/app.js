@@ -310,6 +310,11 @@ const handlers = {
     }
   },
 
+  agents({ chatId, agents }) {
+    getChat(chatId).agents = agents;
+    renderSidebar(cachedProjects);
+  },
+
   root_listing({ root, dirs, added, error, _host }) {
     const addedSet = new Set(added.map((p) => p.toLowerCase()));
     const sep = root.includes('\\') ? '\\' : '/';
@@ -769,11 +774,39 @@ function renderHostProjects(root, hostId, hostState) {
       if (c.id === activeChatId) item.classList.add('active');
       item.onclick = () => selectChat(c.id);
       proj.append(item);
+
+      // running subagents, one line each, purely informational
+      for (const a of chat.agents ?? []) {
+        const row = el('div', 'agent-item', '');
+        row.dataset.agentId = a.id;
+        row.append(el('span', `status-dot agent-${a.status}`, ''));
+        row.append(el('span', 'agent-label', a.label ?? a.type ?? 'agent'));
+        const time = el('span', 'agent-time', agentElapsed(a));
+        time.dataset.startedAt = a.startedAt;
+        time.dataset.status = a.status;
+        row.append(time);
+        row.title = [a.type, a.status].filter(Boolean).join(' · ');
+        proj.append(row);
+      }
     }
     if (filter && !visibleChats && !p.path.toLowerCase().includes(filter)) continue;
     root.append(proj);
   }
 }
+
+function agentElapsed(a) {
+  if (a.status !== 'running') return a.status === 'done' ? '✓' : '✕';
+  const sec = Math.max(0, Math.round((Date.now() - a.startedAt) / 1000));
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}`;
+}
+
+// tick the running agents' timers without redrawing the whole sidebar
+setInterval(() => {
+  for (const node of document.querySelectorAll('.agent-time')) {
+    if (node.dataset.status !== 'running') continue;
+    node.textContent = agentElapsed({ status: 'running', startedAt: Number(node.dataset.startedAt) });
+  }
+}, 1000);
 
 /** "Add host": the relay mints a one-time invite link to open (or curl) on that machine. */
 function renderAddHost(root) {
