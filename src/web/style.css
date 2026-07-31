@@ -191,6 +191,37 @@ body {
   overflow-wrap: break-word;
 }
 
+/* финальный текст ассистента — маркдаун, переносы делает разметка */
+.msg-assistant.md-body { white-space: normal; }
+.md-body code {
+  background: var(--bg-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12.5px;
+}
+.md-body .md-code {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 6px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.md-body .md-code code { background: none; padding: 0; }
+.md-body a { color: var(--accent); }
+.md-body ul, .md-body ol { margin: 4px 0; padding-left: 22px; }
+.md-body li { margin: 2px 0; }
+.md-body h3, .md-body h4, .md-body h5 { margin: 10px 0 4px; }
+.md-body blockquote {
+  margin: 4px 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--dim);
+}
+.md-body .md-gap { height: 8px; }
+
 .msg-assistant.streaming::after {
   content: "▍";
   color: var(--accent);

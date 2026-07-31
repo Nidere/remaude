@@ -1,4 +1,5 @@
 // remaude web-UI: тонкий клиент поверх WS-протокола хост-агента.
+import { mdToHtml } from './md.js';
 
 const $ = (id) => document.getElementById(id);
 const feedHost = $('feed');
@@ -212,7 +213,9 @@ function renderSdkMessage(chatId, msg) {
     dropStream(chat);
     for (const block of msg.message?.content ?? []) {
       if (block.type === 'text' && block.text.trim()) {
-        chat.feedEl.append(el('div', 'msg msg-assistant', block.text));
+        const node = el('div', 'msg msg-assistant md-body', '');
+        node.innerHTML = mdToHtml(block.text);
+        chat.feedEl.append(node);
       } else if (block.type === 'tool_use') {
         const chip = makeChip(`${block.name}`, JSON.stringify(block.input, null, 2).slice(0, 4000));
         chat.chips.set(block.id, chip);
@@ -503,7 +506,10 @@ $('permission-mode').addEventListener('change', function () {
   if (activeChatId) send({ type: 'set_permission_mode', chatId: activeChatId, mode: this.value });
 });
 
+$('hide-tools').checked = localStorage.getItem('hideTools') === '1';
+feedHost.classList.toggle('hide-tools', $('hide-tools').checked);
 $('hide-tools').addEventListener('change', function () {
+  localStorage.setItem('hideTools', this.checked ? '1' : '0');
   feedHost.classList.toggle('hide-tools', this.checked);
 });
 
