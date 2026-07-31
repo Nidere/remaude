@@ -1,5 +1,5 @@
-// Адаптер данных виджета лимитов. Единственное место, знающее про
-// нестабильную структуру экспериментального usage-API — при смене SDK чинить тут.
+// Data adapter for the limits widget. The single place that knows about the
+// unstable shape of the experimental usage API — when the SDK changes, fix it here.
 
 /**
  * @returns {{fiveHour: {utilization:number|null, resetsAt:string|null}|null,

@@ -1,4 +1,4 @@
-// Генерация PNG-иконок PWA из SVG через headless Chrome.
+// Generating PWA PNG icons from SVG via headless Chrome.
 import { chromium } from 'playwright-core';
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';

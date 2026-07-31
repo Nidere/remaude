@@ -1,5 +1,5 @@
-# Деплой relay на инстанс. Все параметры инфраструктуры — в AWS Secrets Manager,
-# в репозитории их нет:
+# Deploying the relay to the instance. All infrastructure parameters live in AWS Secrets Manager,
+# they are not in the repository:
 #   remaude/google-oauth  {clientId, clientSecret}
 #   remaude/relay-deploy  {instanceIp, domain, whitelist, contactEmail, sshKeyPath}
 $ErrorActionPreference = 'Stop'
@@ -17,7 +17,7 @@ $target = "ubuntu@$($cfg.instanceIp)"
 $sshOpts = @('-i', $pem, '-o', 'StrictHostKeyChecking=accept-new')
 $repo = Split-Path $PSScriptRoot -Parent
 
-# 1. окружение сервиса
+# 1. the service environment
 $envContent = @(
   "GOOGLE_CLIENT_ID=$($oauth.clientId)"
   "GOOGLE_CLIENT_SECRET=$($oauth.clientSecret)"
@@ -30,8 +30,8 @@ $envContent = @(
 $tmpEnv = "$env:TEMP\remaude-relay.env"
 [IO.File]::WriteAllText($tmpEnv, $envContent + "`n", [Text.UTF8Encoding]::new($false))
 
-# 2. код на сервер. package.json у relay свой, минимальный: корневой тянет весь
-# Agent SDK, который на nano-инстансе не нужен и не влезает по памяти.
+# 2. the code onto the server. The relay has its own, minimal package.json: the root one pulls in the whole
+# Agent SDK, which is not needed on a nano instance and does not fit in memory.
 $relayPkg = '{"name":"remaude-relay","private":true,"type":"module","dependencies":{"ws":"^8.21.1","web-push":"^3.6.7"}}'
 $tmpPkg = "$env:TEMP\remaude-relay-pkg.json"
 [IO.File]::WriteAllText($tmpPkg, $relayPkg, [Text.UTF8Encoding]::new($false))
@@ -41,7 +41,7 @@ scp @sshOpts $tmpPkg "${target}:/opt/remaude/package.json"
 scp @sshOpts $tmpEnv "${target}:/opt/remaude/.env"
 Remove-Item $tmpEnv, $tmpPkg -Force
 
-# 3. зависимости + systemd + caddy
+# 3. dependencies + systemd + caddy
 $remote = @"
 set -e
 cd /opt/remaude

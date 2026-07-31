@@ -1,7 +1,7 @@
-// remaude relay: публичная точка входа (домен задаётся BASE_URL).
-// Браузеры: статика веб-UI + Google OAuth (whitelist) + WSS /ws.
-// Хосты: исходящий WSS /host?token=… ; пейринг: POST /pair {code}.
-// Контент чатов не хранится — только маршрутизация и учёт токенов хостов.
+// remaude relay: the public entry point (the domain is set via BASE_URL).
+// Browsers: web UI static files + Google OAuth (whitelist) + WSS /ws.
+// Hosts: outbound WSS /host?token=… ; pairing: POST /pair {code}.
+// Chat content is not stored — only routing and bookkeeping of host tokens.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
@@ -31,13 +31,13 @@ const MIME = {
   '.webmanifest': 'application/manifest+json',
 };
 
-// ---------- состояние (cookie-секрет + токены хостов) ----------
+// ---------- state (cookie secret + host tokens) ----------
 
 let state = { cookieSecret: null, hosts: {} }; // hosts: token -> {email, name, createdAt}
 try {
   state = JSON.parse(readFileSync(STATE_PATH, 'utf-8'));
 } catch {
-  /* первый запуск */
+  /* first run */
 }
 if (!state.cookieSecret) {
   state.cookieSecret = randomBytes(32).toString('hex');
@@ -63,7 +63,7 @@ async function pushToUser(email, payload) {
       await webpush.sendNotification(sub, body, { TTL: 3600 });
     } catch (e) {
       if (e.statusCode === 404 || e.statusCode === 410) {
-        subs.splice(subs.indexOf(sub), 1); // подписка умерла — вычищаем
+        subs.splice(subs.indexOf(sub), 1); // the subscription is dead — clean it out
         dirty = true;
       } else {
         console.error('push failed:', e.statusCode ?? e.message);
@@ -77,7 +77,7 @@ function saveState() {
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
-// ---------- сессии: stateless подписанная кука ----------
+// ---------- sessions: a stateless signed cookie ----------
 
 function sign(data) {
   return createHmac('sha256', state.cookieSecret).update(data).digest('base64url');
@@ -89,10 +89,10 @@ function makeSessionCookie(email) {
   return `${payload}.${sign(payload)}`;
 }
 
-// ---------- доверенные устройства ----------
-// Тот же механизм, что пейринг хоста, в обратную сторону: НЕдоверенное
-// устройство показывает код с сайта, а вводится он в настройках remaude на
-// уже доверенном устройстве (или на локалхосте хоста). Совпало — кука навсегда.
+// ---------- trusted devices ----------
+// The same mechanism as host pairing, but in the opposite direction: an UNtrusted
+// device shows a code from the site, and it is entered in the remaude settings on
+// an already trusted device (or on the host's localhost). If it matches — the cookie is forever.
 
 const devicePendings = new Map(); // code -> {email, pendingId, exp}
 const deviceApproved = new Map(); // pendingId -> {email, exp}
@@ -102,8 +102,8 @@ function hasHosts(email) {
 }
 
 /**
- * Публичный IP клиента. Caddy проксирует на 127.0.0.1, поэтому X-Forwarded-For
- * доверяем только когда сокет пришёл от него самого — иначе заголовок подделывается.
+ * The client's public IP. Caddy proxies to 127.0.0.1, so we trust X-Forwarded-For
+ * only when the socket came from Caddy itself — otherwise the header can be forged.
  */
 function clientIp(req) {
   const socketIp = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
@@ -114,10 +114,10 @@ function clientIp(req) {
   return socketIp;
 }
 
-/** Сравнение сетей: IPv4 — точное совпадение, IPv6 — префикс /64 (адрес у каждого свой). */
+/** Comparing networks: IPv4 — an exact match, IPv6 — the /64 prefix (everyone has their own address). */
 function sameNetwork(a, b) {
   if (!a || !b) return false;
-  // страховка: если XFF вдруг не проставлен, все выглядят как loopback — не доверяем никому
+  // safeguard: if XFF is suddenly not set, everyone looks like loopback — we trust no one
   if (a === '127.0.0.1' || a === '::1' || b === '127.0.0.1' || b === '::1') return false;
   if (a === b) return true;
   if (a.includes(':') && b.includes(':')) {
@@ -127,7 +127,7 @@ function sameNetwork(a, b) {
   return false;
 }
 
-/** Устройство сидит за тем же NAT, что и хост пользователя → дома. */
+/** The device sits behind the same NAT as the user's host → it is at home. */
 function sameNetworkAsHost(email, req) {
   const ip = clientIp(req);
   for (const link of hostLinks.get(email) ?? []) if (sameNetwork(ip, link.ip)) return true;
@@ -168,7 +168,7 @@ function readSession(req) {
   }
 }
 
-// ---------- живые соединения ----------
+// ---------- live connections ----------
 
 const hostLinks = new Map(); // email -> Set<link>; link = {ws, name, clients: Map<id, browserWs>}
 const pairCodes = new Map(); // code -> {email, exp}
@@ -179,7 +179,7 @@ function firstHostLink(email) {
   return null;
 }
 
-/** Чужой хост-линк, где для email есть расшаренные чаты: {link, sessions}. */
+/** Someone else's host link that has chats shared with this email: {link, sessions}. */
 function sharedLinkFor(email) {
   for (const [ownerEmail, links] of hostLinks) {
     if (ownerEmail === email) continue;
@@ -191,7 +191,7 @@ function sharedLinkFor(email) {
   return null;
 }
 
-// ---------- страницы ----------
+// ---------- pages ----------
 
 const PAGE_STYLE = `<style>body{background:#14151a;color:#d8dae4;font:15px/1.6 system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .box{max-width:420px;text-align:center;padding:24px}h1{color:#7aa2f7;font-size:22px;letter-spacing:1px}
@@ -199,22 +199,22 @@ const PAGE_STYLE = `<style>body{background:#14151a;color:#d8dae4;font:15px/1.6 s
 code{font-size:32px;letter-spacing:6px;background:#242732;padding:12px 20px;border-radius:10px}p.dim{color:#8a8fa3;font-size:13px}</style>`;
 
 const loginPage = () => `<!doctype html><meta charset="utf-8"><title>remaude</title>${PAGE_STYLE}
-<div class="box"><h1>remaude</h1><p>Вход только для своих.</p><a class="btn" href="/auth/google">Войти через Google</a></div>`;
+<div class="box"><h1>remaude</h1><p>Sign-in for insiders only.</p><a class="btn" href="/auth/google">Sign in with Google</a></div>`;
 
-const pairPage = (code) => `<!doctype html><meta charset="utf-8"><title>remaude · привязка</title>${PAGE_STYLE}
-<div class="box"><h1>привязка хоста</h1>
-<p>На машине с Claude Code открой локальный remaude (localhost:7699) → ⚙ настройки → «Привязка к relay» и введи код:</p>
+const pairPage = (code) => `<!doctype html><meta charset="utf-8"><title>remaude · pairing</title>${PAGE_STYLE}
+<div class="box"><h1>host pairing</h1>
+<p>On the machine with Claude Code open the local remaude (localhost:7699) → ⚙ settings → “Relay pairing” and enter the code:</p>
 <code>${code}</code>
-<p class="dim">Код живёт 10 минут. После привязки обнови эту страницу.</p></div>`;
+<p class="dim">The code lives for 10 minutes. Once paired, refresh this page.</p></div>`;
 
 const deniedPage = (email) => `<!doctype html><meta charset="utf-8"><title>remaude</title>${PAGE_STYLE}
-<div class="box"><h1>не пускаю</h1><p>${email} нет в списке. Если это ошибка — попроси владельца добавить тебя.</p></div>`;
+<div class="box"><h1>not letting you in</h1><p>${email} is not on the list. If this is a mistake — ask the owner to add you.</p></div>`;
 
-const devicePage = (code) => `<!doctype html><meta charset="utf-8"><title>remaude · новое устройство</title>${PAGE_STYLE}
-<div class="box"><h1>новое устройство</h1>
-<p>Введи этот код в настройках remaude (⚙ → «код с сайта») на уже доверенном устройстве или прямо на компьютере-хосте:</p>
+const devicePage = (code) => `<!doctype html><meta charset="utf-8"><title>remaude · new device</title>${PAGE_STYLE}
+<div class="box"><h1>new device</h1>
+<p>Enter this code in the remaude settings (⚙ → “code from the site”) on an already trusted device or right on the host computer:</p>
 <code>${code}</code>
-<p class="dim">Код живёт 10 минут. Как только введёшь — страница откроется сама.</p>
+<p class="dim">The code lives for 10 minutes. As soon as you enter it — the page will open by itself.</p>
 <script>setInterval(()=>fetch('/api/device/status').then(r=>r.json()).then(s=>{if(s.approved)location.reload()}).catch(()=>{}),3000)</script>
 </div>`;
 
@@ -270,7 +270,7 @@ const httpServer = createServer(async (req, res) => {
         res.writeHead(401).end('oauth failed');
         return;
       }
-      // id_token получен напрямую от Google по TLS — проверяем клеймы
+      // the id_token came straight from Google over TLS — we verify the claims
       const claims = JSON.parse(Buffer.from(tokens.id_token.split('.')[1], 'base64url').toString());
       const userEmail = String(claims.email ?? '').toLowerCase();
       if (claims.aud !== CLIENT_ID || !claims.email_verified || !userEmail) {
@@ -295,7 +295,7 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
-    // -- пейринг хоста (без сессии: хост шлёт одноразовый код) --
+    // -- host pairing (no session: the host sends a one-time code) --
     if (url.pathname === '/pair' && req.method === 'POST') {
       const { code, name } = JSON.parse(await readBody(req));
       const entry = pairCodes.get(String(code));
@@ -350,16 +350,16 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
-    // установщик хоста: подставляем адрес ЭТОГО relay, чтобы в репозитории
-    // не было ничьего домена и любой деплой обслуживал своих пользователей
+    // the host installer: we substitute the address of THIS relay, so that the repository
+    // contains nobody's domain and any deployment serves its own users
     if (url.pathname === '/install.sh') {
       const script = (await readFile(join(WEB_ROOT, 'install.sh'), 'utf-8')).replaceAll('__RELAY_URL__', BASE_URL);
       res.writeHead(200, { 'content-type': 'text/x-shellscript; charset=utf-8', 'cache-control': 'no-cache' }).end(script);
       return;
     }
 
-    // -- статика без авторизации: манифест/SW/иконки браузер тянет без куки,
-    // а секретов в статике нет — данные ходят только через авторизованный WS --
+    // -- static files without authorization: the browser fetches the manifest/SW/icons without a cookie,
+    // and there are no secrets in the static files — data travels only over the authorized WS --
     if (url.pathname !== '/') {
       const file = join(WEB_ROOT, url.pathname);
       if (file.startsWith(WEB_ROOT) && existsSync(file) && statSync(file).isFile()) {
@@ -375,20 +375,20 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
-    // -- доверенное устройство. Пока у аккаунта нет хостов, гейт не нужен
-    // (нечего защищать) — первое устройство доверяется автоматически, это
-    // и есть онбординг нового пользователя.
-    // Доверяем устройству, если: кука уже есть; аккаунт ещё без хостов (онбординг);
-    // или оно за тем же NAT, что и хост владельца — то есть дома.
+    // -- trusted device. As long as the account has no hosts, the gate is not needed
+    // (there is nothing to protect) — the first device is trusted automatically, and that
+    // is exactly the onboarding of a new user.
+    // We trust the device if: the cookie is already there; the account still has no hosts (onboarding);
+    // or it is behind the same NAT as the owner's host — that is, at home.
     const deviceOk = readDevice(req) === email || !hasHosts(email) || sameNetworkAsHost(email, req);
-    // бутстрап-доверие (аккаунт без хостов) должен сразу материализоваться в куку,
-    // иначе /ws, который проверяет куку жёстко, не пустит свежего гостя
+    // bootstrap trust (an account without hosts) has to materialize into a cookie right away,
+    // otherwise /ws, which checks the cookie strictly, will not let a fresh guest in
     const bootstrapCookie =
       readDevice(req) !== email && deviceOk
         ? { 'set-cookie': `rmd_device=${makeDeviceCookie(email)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${2 * 365 * 24 * 3600}` }
         : {};
 
-    // опрос со страницы кода: одобрили? (доступен без device-куки)
+    // polling from the code page: has it been approved? (available without the device cookie)
     if (url.pathname === '/api/device/status') {
       const pendingId = readPendingId(req);
       const ok = deviceApproved.get(pendingId);
@@ -407,7 +407,7 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (!deviceOk) {
-      // показываем код; повторный заход с той же pending-кукой переиспользует код
+      // we show the code; coming back with the same pending cookie reuses the code
       let pendingId = readPendingId(req);
       let code = null;
       for (const [c, entry] of devicePendings) {
@@ -427,14 +427,14 @@ const httpServer = createServer(async (req, res) => {
 
     if (url.pathname === '/') {
       if (!firstHostLink(email) && sharedLinkFor(email)) {
-        // своего хоста нет, но есть расшаренные чаты — впускаем в UI гостем
+        // no host of their own, but there are shared chats — we let them into the UI as a guest
         res
           .writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache', ...bootstrapCookie })
           .end(await readFile(join(WEB_ROOT, 'index.html')));
         return;
       }
       if (!firstHostLink(email)) {
-        // хост не подключён: показываем код привязки
+        // the host is not connected: we show the pairing code
         const code = String(randomInt(100000, 999999));
         pairCodes.set(code, { email, exp: Date.now() + 600e3 });
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...bootstrapCookie }).end(pairPage(code));
@@ -453,7 +453,7 @@ const httpServer = createServer(async (req, res) => {
   }
 });
 
-// ---------- WebSocket: браузеры (/ws) и хосты (/host) ----------
+// ---------- WebSocket: browsers (/ws) and hosts (/host) ----------
 
 const wssBrowser = new WebSocketServer({ noServer: true });
 const wssHost = new WebSocketServer({ noServer: true });
@@ -528,7 +528,7 @@ function attachHost(ws, info, ip) {
     } else if (msg.t === 'shares') {
       link.shares = Array.isArray(msg.shares) ? msg.shares : [];
     } else if (msg.t === 'approve_device') {
-      // код с недоверенного устройства, введённый на доверенном → одобряем
+      // a code from an untrusted device entered on a trusted one → we approve it
       const code = String(msg.code ?? '').trim();
       const entry = devicePendings.get(code);
       const ok = Boolean(entry && entry.email === info.email && entry.exp > Date.now());

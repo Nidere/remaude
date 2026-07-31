@@ -1,4 +1,4 @@
-// Генерация тестового PNG без зависимостей: 64x64, верх красный, низ синий.
+// Generating a test PNG without dependencies: 64x64, red top, blue bottom.
 import zlib from 'node:zlib';
 
 const CRC_TABLE = (() => {
@@ -37,8 +37,8 @@ export function makeTestPng(size = 64) {
     const row = Buffer.alloc(1 + size * 3); // filter byte 0 + RGB
     for (let x = 0; x < size; x++) {
       const off = 1 + x * 3;
-      if (y < size / 2) row[off] = 0xff; // красный верх
-      else row[off + 2] = 0xff; // синий низ
+      if (y < size / 2) row[off] = 0xff; // red top
+      else row[off + 2] = 0xff; // blue bottom
     }
     rows.push(row);
   }

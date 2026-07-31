@@ -1,6 +1,6 @@
-// Исходящее соединение хоста с relay: туннель для удалённых браузеров.
-// Протокол: relay→host {t:'open'|'msg'|'close', id, data?}; host→relay
-// {t:'msg', id, data} (одному клиенту) и {t:'cast', data} (всем своим).
+// The host's outbound connection to the relay: a tunnel for remote browsers.
+// Protocol: relay→host {t:'open'|'msg'|'close', id, data?}; host→relay
+// {t:'msg', id, data} (to a single client) and {t:'cast', data} (to all of its own).
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 
@@ -42,7 +42,7 @@ export class RelayLink extends EventEmitter {
       if (this.connected) {
         this.connected = false;
         this.emit('status', false);
-        this.emit('down'); // все туннельные клиенты недействительны
+        this.emit('down'); // every tunnelled client is now invalid
       }
       if (!this.#stopped) setTimeout(() => this.#connect(), 5000);
     };
@@ -58,18 +58,18 @@ export class RelayLink extends EventEmitter {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'cast', data }));
   }
 
-  /** Попросить relay отправить push-уведомление владельцу хоста. */
+  /** Ask the relay to send a push notification to the host owner. */
   push(payload) {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'push', payload }));
   }
 
-  /** Одобрить код нового устройства (введён на доверенном устройстве). */
+  /** Approve a new device's code (entered on an already trusted device). */
   approveDevice(code) {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'approve_device', code }));
-    else throw new Error('нет соединения с relay');
+    else throw new Error('no connection to the relay');
   }
 
-  /** Объявить relay текущий список шарингов: [{sessionId, emails}] */
+  /** Announce the current list of shares to the relay: [{sessionId, emails}] */
   setShares(shares) {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'shares', shares }));
   }

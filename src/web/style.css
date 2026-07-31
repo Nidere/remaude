@@ -16,8 +16,8 @@
 body {
   margin: 0;
   display: flex;
-  /* документ намертво прибит: скроллятся только внутренние контейнеры,
-     iOS-резинка на краях не дёргает всё приложение */
+  /* the document is pinned down: only inner containers scroll,
+     so the iOS rubber-band at the edges never jerks the whole app */
   position: fixed;
   inset: 0;
   height: 100dvh;
@@ -26,12 +26,12 @@ body {
   font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
   overflow: hidden;
   overscroll-behavior: none;
-  touch-action: manipulation; /* без зума по двойному тапу */
+  touch-action: manipulation; /* no zoom on double tap */
 }
 
 #feed, #sidebar, #picker-list { overscroll-behavior: contain; }
 
-/* ---------- сайдбар ---------- */
+/* ---------- sidebar ---------- */
 
 #sidebar {
   width: 260px;
@@ -107,7 +107,7 @@ body {
   padding: 0;
 }
 .project-actions button:hover { border-color: var(--accent); color: var(--text); }
-/* закрытие проекта — только по наведению, как у чатов */
+/* project close shows on hover only, same as chats */
 .project-close { display: none; }
 .project-head:hover .project-close { display: block; }
 
@@ -156,7 +156,7 @@ body {
 }
 #scroll-down:hover { border-color: var(--accent); }
 
-/* ---------- настройки ---------- */
+/* ---------- settings ---------- */
 
 #settings[hidden] { display: none; }
 #settings {
@@ -243,7 +243,7 @@ body {
 }
 #settings-save { background: var(--accent); color: #10141f; border-color: var(--accent); }
 
-/* ---------- мобайл ---------- */
+/* ---------- mobile ---------- */
 
 #sidebar-overlay[hidden] { display: none; }
 #sidebar-overlay {
@@ -302,7 +302,7 @@ body {
   cursor: pointer;
 }
 
-/* ---------- шапка ---------- */
+/* ---------- header ---------- */
 
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -367,7 +367,7 @@ body {
 }
 #share-btn:hover { border-color: var(--accent); color: var(--text); }
 
-/* гостевой режим: управление хостом скрыто, остаётся читать и писать */
+/* guest mode: host controls are hidden, reading and writing stay */
 body.guest #share-btn,
 body.guest #permission-mode,
 body.guest #model-select,
@@ -422,7 +422,7 @@ body.guest .chat-actions { display: none !important; }
 #conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); }
 #conn-dot.on { background: var(--green); }
 
-/* ---------- лента ---------- */
+/* ---------- feed ---------- */
 
 #feed {
   flex: 1;
@@ -451,7 +451,7 @@ body.guest .chat-actions { display: none !important; }
   overflow-wrap: break-word;
 }
 
-/* финальный текст ассистента — маркдаун, переносы делает разметка */
+/* final assistant text is markdown — the markup makes the line breaks */
 .msg-assistant.md-body { white-space: normal; position: relative; }
 
 .copy-btn {
@@ -508,7 +508,7 @@ body.guest .chat-actions { display: none !important; }
   animation: pulse 1s infinite;
 }
 
-/* стрим размышлений — приглушённо, курсивом */
+/* thinking stream — dimmed, italic */
 .msg-assistant.streaming.thinking {
   color: var(--dim);
   font-style: italic;
@@ -525,13 +525,13 @@ body.guest .chat-actions { display: none !important; }
 
 .msg-time {
   display: block;
-  text-align: right; /* у сообщений пользователя — справа */
+  text-align: right; /* right on user messages */
   font-size: 10px;
   color: rgba(216, 218, 228, 0.45);
   margin-top: 4px;
   user-select: none;
 }
-.md-body .msg-time { text-align: left; } /* у ассистента — слева */
+.md-body .msg-time { text-align: left; } /* left on assistant messages */
 
 .msg img, .chip img { max-width: 320px; max-height: 240px; border-radius: 8px; display: block; margin-top: 6px; cursor: zoom-in; }
 
@@ -615,7 +615,7 @@ body.guest .chat-actions { display: none !important; }
 .permission.closed { opacity: 0.45; }
 .permission.closed button { display: none; }
 
-/* ---------- композер ---------- */
+/* ---------- composer ---------- */
 
 #composer {
   border-top: 1px solid var(--border);
@@ -649,7 +649,7 @@ body.guest .chat-actions { display: none !important; }
 #input {
   flex: 1;
   resize: none;
-  overflow-y: hidden; /* авторазмер сам растит высоту; скролл включаем на пределе */
+  overflow-y: hidden; /* auto-grow raises the height; scroll turns on at the cap */
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -660,7 +660,7 @@ body.guest .chat-actions { display: none !important; }
 }
 #input:focus { outline: none; border-color: var(--accent); }
 
-/* ---------- выбор папки проекта ---------- */
+/* ---------- project folder picker ---------- */
 
 #picker[hidden] { display: none; }
 
@@ -768,11 +768,11 @@ body.guest .chat-actions { display: none !important; }
 }
 #attach-btn:hover { border-color: var(--accent); }
 
-/* ---------- мобайл (в конце файла: медиа-правила должны побеждать базовые) ---------- */
+/* ---------- mobile (at the end of the file: media rules must beat the base ones) ---------- */
 
 @media (max-width: 768px) {
   #menu-btn { display: block; }
-  /* хедер в две строки: ☰ + заголовок, ниже — контролы; ничего не распирает вширь */
+  /* header on two rows: ☰ + title, controls below; nothing stretches the width */
   #header { flex-wrap: wrap; row-gap: 6px; }
   #chat-title { flex: 1 1 0; min-width: 0; font-size: 13px; }
   #header-right {
@@ -804,8 +804,8 @@ body.guest .chat-actions { display: none !important; }
   .msg img, .chip img { max-width: 100%; }
 }
 
-/* На тач-устройствах наведения нет — действия видны всегда.
-   Блок держим последним: он должен побеждать базовые display:none. */
+/* Touch devices have no hover — actions are always visible.
+   Keep this block last: it must beat the base display:none. */
 @media (hover: none) {
   .project-close { display: block; }
   .chat-actions { display: flex; }

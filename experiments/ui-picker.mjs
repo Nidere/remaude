@@ -1,4 +1,4 @@
-// Проверка модалки выбора проекта: клик по 📁 → список подпапок корня → скриншот.
+// A check of the project picker modal: click on 📁 → list of the root's subfolders → screenshot.
 import { chromium } from 'playwright-core';
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';

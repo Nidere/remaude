@@ -1,4 +1,4 @@
-// Смоук скелета: проект → чат → стриминг дельт в консоль → лимиты → второй ход.
+// Smoke test of the skeleton: project → chat → streaming deltas to the console → limits → second turn.
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

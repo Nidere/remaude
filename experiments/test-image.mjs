@@ -1,5 +1,5 @@
-// День 1, открытый вопрос №1: принимает ли SDK image-блоки base64 во входном
-// SDKUserMessage. Отправляем картинку (верх красный, низ синий) и просим назвать цвета.
+// Day 1, open question #1: does the SDK accept base64 image blocks in an incoming
+// SDKUserMessage. We send a picture (red top, blue bottom) and ask it to name the colors.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 /**
- * Один чат = одна живая сессия Agent SDK в streaming-input режиме.
+ * One chat = one live Agent SDK session in streaming-input mode.
  *
- * События:
- *  - 'message' (msg)  — каждое SDK-сообщение как есть (system/assistant/user/stream_event/result/...)
+ * Events:
+ *  - 'message' (msg)  — every SDK message as-is (system/assistant/user/stream_event/result/...)
  *  - 'status'  (status) — idle | thinking | waiting_permission | closed
  *  - 'error'   (err)
  */
@@ -16,11 +16,11 @@ export class Chat extends EventEmitter {
   #closed = false;
   #query;
 
-  /** Локальный id; после system:init дополняется sessionId (им же резюмим). */
+  /** Local id; after system:init it is complemented by sessionId (which is what we resume with). */
   id = randomUUID();
   sessionId = null;
   status = 'idle';
-  model = null; // фактическая модель из system:init
+  model = null; // the actual model reported by system:init
   permissionMode = 'default';
 
   constructor({ cwd, resume, permissionMode = 'default', model, onPermissionRequest }) {
@@ -36,13 +36,13 @@ export class Chat extends EventEmitter {
         model,
         includePartialMessages: true,
         canUseTool: async (toolName, input, { signal, suggestions }) => {
-          // Интерактивных опросников в remaude нет (и пользователь их ненавидит) —
-          // заставляем модель переспросить обычным текстом. Хук срабатывает даже в bypass.
+          // remaude has no interactive questionnaires (and the user hates them) — so we
+          // force the model to ask again in plain text. This hook fires even in bypass mode.
           if (toolName === 'AskUserQuestion') {
             return {
               behavior: 'deny',
               message:
-                'Интерактивные опросники здесь не поддерживаются. Задай все свои вопросы обычным текстом в ответе, нумерованным списком, и продолжай после ответа пользователя.',
+                'Interactive questionnaires are not supported here. Ask all of your questions as plain text in your reply, as a numbered list, and continue once the user answers.',
             };
           }
           if (!onPermissionRequest) return { behavior: 'allow', updatedInput: input };
@@ -85,7 +85,7 @@ export class Chat extends EventEmitter {
     }
   }
 
-  /** @param content string | массив content-блоков Messages API (text/image) */
+  /** @param content string | array of Messages API content blocks (text/image) */
   send(content) {
     if (this.#closed) throw new Error('chat is closed');
     this.#queue.push({
@@ -112,7 +112,7 @@ export class Chat extends EventEmitter {
 
   async setModel(model) {
     await this.#query.setModel(model);
-    this.model = model ?? null; // фактическое имя уточнится из следующего init/usage
+    this.model = model ?? null; // the actual name will be clarified by the next init/usage
   }
 
   async setEffort(level) {
@@ -124,7 +124,7 @@ export class Chat extends EventEmitter {
     return this.#query.accountInfo();
   }
 
-  /** Сырой ответ экспериментального usage-API; парсинг — в usage.js */
+  /** Raw response of the experimental usage API; parsing lives in usage.js */
   async rawUsage() {
     return this.#query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
   }

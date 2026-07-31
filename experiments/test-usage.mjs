@@ -1,6 +1,6 @@
-// День 1, открытый вопрос №2: данные для виджета лимитов.
-// Проверяем query.accountInfo() и экспериментальный usage-метод (структура /usage),
-// плюс ловим rate_limit_event в стриме.
+// Day 1, open question #2: data for the limits widget.
+// We check query.accountInfo() and the experimental usage method (the /usage structure),
+// plus we catch rate_limit_event in the stream.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ async function* input() {
     parent_tool_use_id: null,
     message: { role: 'user', content: 'Ответь ровно одним словом: ок' },
   };
-  await done; // держим сессию живой, пока не опросим usage
+  await done; // keep the session alive until we have queried usage
 }
 
 const q = query({

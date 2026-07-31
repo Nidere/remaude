@@ -1,5 +1,5 @@
-# Автостарт хоста remaude (задача Планировщика «при логине»).
-# Идемпотентен: если порт уже занят живым сервером — тихо выходим.
+# Autostart of the remaude host (a Task Scheduler task "at logon").
+# Idempotent: if the port is already taken by a live server — we quietly exit.
 $port = if ($env:REMAUDE_PORT) { [int]$env:REMAUDE_PORT } else { 7699 }
 if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { exit 0 }
 

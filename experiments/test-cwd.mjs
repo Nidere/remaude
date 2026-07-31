@@ -1,4 +1,4 @@
-// Проверка: долетает ли cwd до SDK-сессии (system:init несёт фактический cwd).
+// Check: does the cwd reach the SDK session (system:init carries the actual cwd).
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -1,4 +1,4 @@
-// remaude web-UI: тонкий клиент поверх WS-протокола хост-агента.
+// remaude web UI: a thin client on top of the host agent's WS protocol.
 import { mdToHtml } from './md.js';
 
 const $ = (id) => document.getElementById(id);
@@ -12,14 +12,14 @@ const attachments = []; // {mediaType, data(base64), url}
 
 // ---------- WS ----------
 
-const outbox = []; // сообщения, отправленные до открытия WS
+const outbox = []; // messages sent before the WS opened
 
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.onopen = () => {
     $('conn-dot').classList.add('on');
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
-    // после реконнекта история могла уехать — перезапросим для активного чата
+    // history may have drifted after a reconnect — re-request it for the active chat
     for (const chat of chats.values()) chat.historyRequested = false;
     if (activeChatId) requestHistory(activeChatId);
   };
@@ -38,15 +38,15 @@ function send(obj) {
   else outbox.push(obj);
 }
 
-// ---------- входящие ----------
+// ---------- incoming ----------
 
 const handlers = {
   state({ projects, guest }) {
     cachedProjects = projects;
     document.body.classList.toggle('guest', Boolean(guest));
     renderSidebar(projects);
-    // после перезагрузки страницы возвращаемся в последний открытый чат;
-    // после рестарта сервера id другие — ищем по session id
+    // after a page reload we return to the last open chat;
+    // after a server restart the ids differ — look it up by session id
     if (!activeChatId) {
       const last = localStorage.getItem('lastChat');
       if (last && chats.has(last)) selectChat(last);
@@ -70,7 +70,7 @@ const handlers = {
 
   chat_message({ chatId, msg }) {
     renderSdkMessage(chatId, msg);
-    // непрочитанное: содержательные события в неактивных чатах
+    // unread: meaningful events in inactive chats
     if (chatId !== activeChatId && (msg.type === 'assistant' || msg.type === 'result')) {
       const chat = getChat(chatId);
       chat.unread = (chat.unread ?? 0) + (msg.type === 'result' ? 1 : 0);
@@ -88,23 +88,23 @@ const handlers = {
   },
 
   chat_error({ chatId, error }) {
-    appendTo(chatId, el('div', 'error-banner', `ошибка: ${error}`));
+    appendTo(chatId, el('div', 'error-banner', `error: ${error}`));
   },
 
   permission_request({ requestId, chatId, toolName, input }) {
     const box = el('div', 'permission');
     box.dataset.requestId = requestId;
     box.append(
-      el('div', 'perm-tool', `Разрешить ${toolName}?`),
+      el('div', 'perm-tool', `Allow ${toolName}?`),
       el('pre', '', JSON.stringify(input, null, 2).slice(0, 2000))
     );
     const buttons = el('div', 'perm-buttons');
-    const allow = el('button', 'perm-allow', 'Разрешить');
-    const deny = el('button', 'perm-deny', 'Запретить');
+    const allow = el('button', 'perm-allow', 'Allow');
+    const deny = el('button', 'perm-deny', 'Deny');
     allow.onclick = () =>
       send({ type: 'permission_response', requestId, result: { behavior: 'allow', updatedInput: input } });
     deny.onclick = () =>
-      send({ type: 'permission_response', requestId, result: { behavior: 'deny', message: 'Отклонено пользователем' } });
+      send({ type: 'permission_response', requestId, result: { behavior: 'deny', message: 'Denied by the user' } });
     buttons.append(allow, deny);
     box.append(buttons);
     appendTo(chatId, box);
@@ -149,9 +149,9 @@ const handlers = {
     const addedSet = new Set(added.map((p) => p.toLowerCase()));
     const sep = root.includes('\\') ? '\\' : '/';
     openModal(
-      `Папки в ${root}`,
+      `Folders in ${root}`,
       error
-        ? [{ label: `ошибка: ${error}`, muted: true }]
+        ? [{ label: `error: ${error}`, muted: true }]
         : dirs.map((name) => {
             const isAdded = addedSet.has(`${root}${sep}${name}`.toLowerCase());
             return {
@@ -166,11 +166,11 @@ const handlers = {
 
   sessions({ projectPath, sessions, live }) {
     openModal(
-      `Прошлые чаты · ${shortPath(projectPath)}`,
+      `Past chats · ${shortPath(projectPath)}`,
       sessions.length
         ? sessions.map((s) => ({
             label: s.title ?? s.preview ?? s.id.slice(0, 8),
-            sub: `${new Date(s.mtime).toLocaleString()}${live[s.id] ? ' · уже открыт' : ''}`,
+            sub: `${new Date(s.mtime).toLocaleString()}${live[s.id] ? ' · already open' : ''}`,
             check: Boolean(live[s.id]),
             onclick: live[s.id]
               ? () => selectChat(live[s.id])
@@ -182,12 +182,12 @@ const handlers = {
                     permissionMode: $('permission-mode').value,
                   }),
           }))
-        : [{ label: 'сохранённых сессий нет', muted: true }]
+        : [{ label: 'no saved sessions', muted: true }]
     );
   },
 
   share_result({ chatId, emails }) {
-    alert(emails.length ? `Доступ к чату: ${emails.join(', ')}` : 'Доступ отозван у всех');
+    alert(emails.length ? `Chat access: ${emails.join(', ')}` : 'Access revoked for everyone');
   },
 
   server_restarting() {
@@ -206,13 +206,13 @@ const handlers = {
     const link = $('claude-login-link');
     link.href = url;
     $('claude-login-flow').hidden = false;
-    $('claude-login-btn').textContent = 'Начать заново';
+    $('claude-login-btn').textContent = 'Start over';
   },
 
   claude_auth({ status }) {
     renderClaudeAuth(status);
     $('claude-login-flow').hidden = true;
-    $('claude-login-btn').textContent = 'Войти в Claude';
+    $('claude-login-btn').textContent = 'Sign in to Claude';
     $('claude-login-code').value = '';
   },
 
@@ -222,16 +222,16 @@ const handlers = {
 
   device_approved() {
     const node = $('relay-status');
-    if (node) node.textContent = 'устройство одобрено ✓ — обнови страницу на нём';
+    if (node) node.textContent = 'device approved ✓ — reload the page on it';
   },
 
   error({ message }) {
-    if (activeChatId) appendTo(activeChatId, el('div', 'error-banner', `ошибка: ${message}`));
+    if (activeChatId) appendTo(activeChatId, el('div', 'error-banner', `error: ${message}`));
     else alert(message);
   },
 };
 
-// ---------- модель чата ----------
+// ---------- chat model ----------
 
 function getChat(chatId, projectPath) {
   if (!chats.has(chatId)) {
@@ -262,7 +262,7 @@ function requestHistory(chatId) {
 }
 
 function selectChat(chatId) {
-  // черновик привязан к чату: сохраняем текущий, восстанавливаем новый
+  // the draft belongs to the chat: save the current one, restore the new one
   if (activeChatId && chats.has(activeChatId)) {
     const prev = chats.get(activeChatId);
     prev.draftText = $('input').value;
@@ -273,7 +273,7 @@ function selectChat(chatId) {
   const chat = getChat(chatId);
   if (chat.sessionId) localStorage.setItem('lastSession', chat.sessionId);
   $('input').value = chat.draftText ?? '';
-  $('input').dispatchEvent(new Event('input')); // пересчёт высоты
+  $('input').dispatchEvent(new Event('input')); // recompute the height
   attachments.length = 0;
   attachments.push(...(chat.draftAtt ?? []));
   renderAttachments();
@@ -291,18 +291,20 @@ function selectChat(chatId) {
   updateTabState();
   syncHeaderSelects(cur);
   closeSidebar();
-  $('input').focus();
+  // focus only where a keyboard is already there: on touch devices this would
+  // pop the on-screen keyboard over the transcript every time a chat is opened
+  if (window.matchMedia('(hover: hover)').matches) $('input').focus();
   scrollToBottom(true);
 }
 
 function syncHeaderSelects(chat) {
   const shortModel = (chat.model ?? '').replace(/^claude-/, '').replace(/-[\d.]+.*$/, '');
   $('model-select').value = ['fable', 'opus', 'sonnet', 'haiku'].includes(shortModel) ? shortModel : '';
-  // фактические усилия приходят с сервера в chat_meta (override или дефолт хоста)
+  // the effective effort comes from the server in chat_meta (override or host default)
   $('effort-select').value = ['low', 'medium', 'high', 'xhigh', 'max'].includes(chat.effort) ? chat.effort : '';
 }
 
-// ---------- рендер SDK-сообщений ----------
+// ---------- rendering SDK messages ----------
 
 function renderSdkMessage(chatId, msg) {
   const chat = getChat(chatId);
@@ -313,7 +315,7 @@ function renderSdkMessage(chatId, msg) {
     const kind = ev.delta?.type === 'text_delta' ? 'text' : ev.delta?.type === 'thinking_delta' ? 'think' : null;
     if (!kind) return;
     if (!chat.streamEl || chat.streamKind !== kind) {
-      // переход thinking → текст (или наоборот): новый пузырь
+      // thinking → text transition (or the other way round): a new bubble
       if (chat.streamEl && chat.streamKind === 'think') chat.streamEl.remove();
       chat.streamEl = el('div', `msg msg-assistant streaming${kind === 'think' ? ' thinking' : ''}`, '');
       chat.streamText = '';
@@ -333,7 +335,7 @@ function renderSdkMessage(chatId, msg) {
     dropStream(chat);
     if (msg.error === 'authentication_failed') {
       chat.feedEl.append(
-        el('div', 'error-banner', 'Хост разлогинен из Claude. Войти заново: ⚙ настройки → «Войти в Claude».')
+        el('div', 'error-banner', 'The host is signed out of Claude. Sign in again: ⚙ settings → “Sign in to Claude”.')
       );
     }
     for (const block of msg.message?.content ?? []) {
@@ -343,7 +345,7 @@ function renderSdkMessage(chatId, msg) {
         node.title = msg.timestamp ? new Date(msg.timestamp).toLocaleString() : new Date().toLocaleString();
         node.append(el('span', 'msg-time', fmtTime(msg.timestamp)));
         const copyBtn = el('button', 'copy-btn', '⧉');
-        copyBtn.title = 'скопировать как markdown';
+        copyBtn.title = 'copy as markdown';
         const source = block.text;
         copyBtn.onclick = () => {
           navigator.clipboard.writeText(source);
@@ -369,7 +371,7 @@ function renderSdkMessage(chatId, msg) {
       for (const block of content) if (block.type === 'tool_result') attachToolResult(chat, block);
       return;
     }
-    // обычное сообщение пользователя
+    // an ordinary user message
     const bubble = el('div', 'msg msg-user', '');
     if (msg.author) bubble.append(el('div', 'msg-author', msg.author));
     if (typeof content === 'string') bubble.append(document.createTextNode(content));
@@ -392,7 +394,7 @@ function renderSdkMessage(chatId, msg) {
     dropStream(chat);
     const meta = el('div', 'msg-meta', `${(msg.duration_ms / 1000).toFixed(1)}s`);
     if (msg.total_cost_usd != null)
-      meta.title = `расчётный эквивалент API: $${msg.total_cost_usd.toFixed(2)} — при подписке не списывается, реальный расход виден в виджете лимитов`;
+      meta.title = `estimated API equivalent: $${msg.total_cost_usd.toFixed(2)} — not charged on a subscription; real usage is in the limits widget`;
     chat.feedEl.append(meta);
     scrollToBottom();
   }
@@ -416,7 +418,7 @@ function makeChip(title, body) {
 
 function attachToolResult(chat, block) {
   const chip = chat.chips.get(block.tool_use_id);
-  const target = chip ?? chat.feedEl.appendChild(makeChip('результат', ''));
+  const target = chip ?? chat.feedEl.appendChild(makeChip('result', ''));
   const wrap = el('div', 'result-block', '');
   const content = block.content;
   if (typeof content === 'string') wrap.append(el('pre', '', content.slice(0, 4000)));
@@ -435,9 +437,9 @@ function attachToolResult(chat, block) {
 function renderSubagent(chat, msg) {
   const pid = msg.parent_tool_use_id;
   if (!chat.subagents.has(pid)) {
-    const group = makeChip(`сабагент ${pid.slice(-6)}`, '');
+    const group = makeChip(`subagent ${pid.slice(-6)}`, '');
     chat.subagents.set(pid, group);
-    // если есть chip Agent-инструмента — кладём рядом, иначе в конец
+    // if there is an Agent-tool chip, put it next to that one, otherwise at the end
     chat.feedEl.append(group);
   }
   const group = chat.subagents.get(pid);
@@ -448,7 +450,7 @@ function renderSubagent(chat, msg) {
   if (text.trim()) group.append(el('pre', '', `[${msg.type}] ${text.slice(0, 2000)}`));
 }
 
-// ---------- модалка со списком ----------
+// ---------- list modal ----------
 
 function openModal(title, items) {
   $('picker-title').textContent = title;
@@ -468,7 +470,7 @@ function openModal(title, items) {
   $('picker').hidden = false;
 }
 
-// ---------- сайдбар ----------
+// ---------- sidebar ----------
 
 function renderSidebar(projects) {
   const root = $('projects');
@@ -481,15 +483,15 @@ function renderSidebar(projects) {
     name.title = p.path;
     const actions = el('span', 'project-actions', '');
     const btnNew = el('button', '', '+');
-    btnNew.title = 'новый чат';
+    btnNew.title = 'new chat';
     btnNew.onclick = () => send({ type: 'create_chat', projectPath: p.path, permissionMode: $('permission-mode').value });
     const btnOld = el('button', '', '⏳');
-    btnOld.title = 'прошлые чаты';
+    btnOld.title = 'past chats';
     btnOld.onclick = () => send({ type: 'list_sessions', projectPath: p.path });
     const btnClose = el('button', 'project-close', '✕');
-    btnClose.title = 'убрать проект из панели (файлы и сессии останутся)';
+    btnClose.title = 'remove project from the sidebar (files and sessions stay)';
     btnClose.onclick = () => {
-      if (confirm(`Убрать «${shortPath(p.path)}» из панели? Открытые чаты закроются, на диске ничего не удалится.`))
+      if (confirm(`Remove “${shortPath(p.path)}” from the sidebar? Open chats will close; nothing is deleted on disk.`))
         send({ type: 'close_project', path: p.path });
     };
     actions.append(btnNew, btnOld, btnClose);
@@ -505,7 +507,7 @@ function renderSidebar(projects) {
       chat.sessionId = c.sessionId;
       if (c.model) chat.model = c.model;
       if (c.permissionMode) chat.mode = c.permissionMode;
-      const labelText = c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'новый');
+      const labelText = c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'new');
       if (filter && !labelText.toLowerCase().includes(filter) && !p.path.toLowerCase().includes(filter)) continue;
       visibleChats++;
 
@@ -522,17 +524,17 @@ function renderSidebar(projects) {
 
       const actions = el('span', 'chat-actions', '');
       const btnRename = el('button', '', '✏');
-      btnRename.title = 'переименовать';
+      btnRename.title = 'rename';
       btnRename.onclick = (e) => {
         e.stopPropagation();
-        const name = prompt('Название чата:', c.title ?? '');
+        const name = prompt('Chat name:', c.title ?? '');
         if (name?.trim()) send({ type: 'rename_chat', chatId: c.id, title: name.trim() });
       };
       const btnHide = el('button', '', '✕');
-      btnHide.title = 'закрыть чат (сессия останется на диске)';
+      btnHide.title = 'close chat (the session stays on disk)';
       btnHide.onclick = (e) => {
         e.stopPropagation();
-        if (confirm('Закрыть чат? Сессия останется, откроешь через «прошлые чаты».'))
+        if (confirm('Close this chat? The session stays — reopen it via “past chats”.'))
           send({ type: 'hide_chat', chatId: c.id });
       };
       actions.append(btnRename, btnHide);
@@ -556,7 +558,7 @@ function updateChatItem(chatId) {
   if (chat.unread) item.insertBefore(el('span', 'unread-badge', String(chat.unread)), item.querySelector('.chat-actions'));
 }
 
-// ---------- вкладка: заголовок + favicon ----------
+// ---------- tab: title + favicon ----------
 
 const FAVICON_BASE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%F0%9F%92%AC%3C/text%3E%3C/svg%3E";
@@ -570,7 +572,7 @@ function updateTabState() {
     if (chat.status === 'waiting_permission') waiting = true;
     unread += chat.unread ?? 0;
   }
-  document.title = waiting ? '● ждёт разрешения — remaude' : unread ? `(${unread}) remaude` : 'remaude';
+  document.title = waiting ? '● waiting for permission — remaude' : unread ? `(${unread}) remaude` : 'remaude';
   document.querySelector('link[rel="icon"]').href = waiting || unread ? FAVICON_ALERT : FAVICON_BASE;
 }
 
@@ -580,7 +582,7 @@ function updateStatusDot(chatId, status) {
   });
 }
 
-// ---------- мета чата в хедере ----------
+// ---------- chat meta in the header ----------
 
 function renderMeta(chat) {
   const root = $('chat-meta');
@@ -589,31 +591,31 @@ function renderMeta(chat) {
   const pct = chat.context?.percentage;
   const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
   const ctxSpan = el('span', cls, `ctx ${pct != null ? pct + '%' : '—'}`);
-  if (chat.context) ctxSpan.title = `${chat.context.totalTokens.toLocaleString()} / ${chat.context.maxTokens.toLocaleString()} токенов`;
+  if (chat.context) ctxSpan.title = `${chat.context.totalTokens.toLocaleString()} / ${chat.context.maxTokens.toLocaleString()} tokens`;
   root.append(ctxSpan);
 }
 
-// ---------- лимиты ----------
+// ---------- limits ----------
 
 function renderLimits(limits) {
   const root = $('limits');
   root.innerHTML = '';
   if (!limits) return;
   const parts = [];
-  if (limits.fiveHour) parts.push(['5ч', limits.fiveHour]);
-  if (limits.sevenDay) parts.push(['нед', limits.sevenDay]);
+  if (limits.fiveHour) parts.push(['5h', limits.fiveHour]);
+  if (limits.sevenDay) parts.push(['wk', limits.sevenDay]);
   for (const m of limits.modelScoped ?? []) parts.push([m.name, m]);
   root.append(
     ...parts.map(([label, w], i) => {
       const cls = w.utilization >= 90 ? 'crit' : w.utilization >= 70 ? 'warn' : '';
       const span = el('span', cls, `${i ? ' · ' : ''}${label} ${Math.round(w.utilization ?? 0)}%`);
-      if (w.resetsAt) span.title = `сброс: ${new Date(w.resetsAt).toLocaleString()}`;
+      if (w.resetsAt) span.title = `resets: ${new Date(w.resetsAt).toLocaleString()}`;
       return span;
     })
   );
 }
 
-// ---------- композер ----------
+// ---------- composer ----------
 
 function currentContent() {
   const text = $('input').value.trim();
@@ -663,7 +665,7 @@ function renderAttachments() {
   });
 }
 
-// ---------- утилиты и события ----------
+// ---------- utilities and events ----------
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -720,12 +722,12 @@ $('input').addEventListener('input', function () {
   autoGrowInput(this);
 });
 
-// Любую вставленную картинку нормализуем в PNG (Windows-буфер может отдать bmp
-// и прочее, что API не принимает) и ужимаем слишком большие скриншоты.
+// Every pasted image is normalized to PNG (the Windows clipboard can hand over bmp
+// and other things the API rejects) and oversized screenshots are scaled down.
 async function addImageAttachment(file) {
   try {
     const bmp = await createImageBitmap(file);
-    const MAX = 1568; // оптимум по докам vision
+    const MAX = 1568; // the optimum per the vision docs
     const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(bmp.width * scale);
@@ -735,7 +737,7 @@ async function addImageAttachment(file) {
     attachments.push({ mediaType: 'image/png', data: url.split(',')[1], url });
     renderAttachments();
   } catch {
-    /* в буфере не картинка — игнорируем */
+    /* the clipboard holds something other than an image — ignore it */
   }
 }
 
@@ -774,7 +776,7 @@ $('permission-mode').addEventListener('change', function () {
   if (activeChatId) send({ type: 'set_permission_mode', chatId: activeChatId, mode: this.value });
 });
 
-// лайтбокс: клик по любой картинке в ленте — полноэкранный просмотр
+// lightbox: clicking any image in the feed opens a full-screen view
 feedHost.addEventListener('click', (e) => {
   if (e.target.tagName === 'IMG') {
     $('lightbox').querySelector('img').src = e.target.src;
@@ -786,30 +788,30 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('lightbox').hidden = true;
 });
 
-// шаринг активного чата
+// sharing the active chat
 $('share-btn').onclick = () => {
   if (!activeChatId) return;
-  const email = prompt('Кому дать доступ (email)? Пустая строка — отозвать доступ у всех:');
+  const email = prompt('Who gets access (email)? Empty string revokes access for everyone:');
   if (email === null) return;
   if (email.trim()) send({ type: 'share_chat', chatId: activeChatId, email: email.trim() });
   else send({ type: 'unshare_chat', chatId: activeChatId });
 };
 
-// мобильное меню
+// mobile menu
 $('menu-btn').onclick = () => {
   document.getElementById('sidebar').classList.add('open');
   $('sidebar-overlay').hidden = false;
 };
 $('sidebar-overlay').onclick = closeSidebar;
 
-// кнопка «вниз»
+// the “scroll down” button
 feedHost.addEventListener('scroll', () => {
   const nearBottom = feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight < 200;
   $('scroll-down').hidden = nearBottom;
 });
 $('scroll-down').onclick = () => scrollToBottom(true);
 
-// модель и усилия активного чата
+// model and effort of the active chat
 $('model-select').addEventListener('change', function () {
   if (activeChatId && this.value) send({ type: 'set_model', chatId: activeChatId, model: this.value });
 });
@@ -817,17 +819,17 @@ $('effort-select').addEventListener('change', function () {
   if (activeChatId && this.value) send({ type: 'set_effort', chatId: activeChatId, effort: this.value });
 });
 
-// настройки
+// settings
 function renderClaudeAuth(status) {
   const node = $('claude-auth-status');
   if (!status) {
-    node.textContent = 'аккаунт Claude: статус неизвестен';
+    node.textContent = 'Claude account: status unknown';
     node.className = '';
   } else if (status.loggedIn) {
-    node.textContent = `аккаунт Claude: ${status.email} · ${status.subscriptionType} ✓`;
+    node.textContent = `Claude account: ${status.email} · ${status.subscriptionType} ✓`;
     node.className = 'ok';
   } else {
-    node.textContent = 'аккаунт Claude: разлогинен — сессии не работают!';
+    node.textContent = 'Claude account: signed out — sessions will not work!';
     node.className = 'bad';
   }
 }
@@ -842,9 +844,9 @@ function renderRelayStatus(relay) {
   const node = $('relay-status');
   if (!node) return;
   $('set-relay-url').value = relay?.url ?? '';
-  $('set-relay-url').parentElement.hidden = Boolean(relay?.paired); // привязан — адрес менять незачем
-  if (!relay?.paired) node.textContent = 'relay: не привязан';
-  else node.textContent = relay.connected ? 'relay: подключён ✓' : 'relay: привязан, нет соединения…';
+  $('set-relay-url').parentElement.hidden = Boolean(relay?.paired); // once paired there is no reason to change the address
+  if (!relay?.paired) node.textContent = 'relay: not paired';
+  else node.textContent = relay.connected ? 'relay: connected ✓' : 'relay: paired, no connection…';
   node.className = relay?.connected ? 'ok' : '';
 }
 
@@ -869,24 +871,24 @@ $('settings-save').onclick = () => {
   $('settings').hidden = true;
 };
 
-// поиск по чатам — фильтрация по кэшу последнего state
+// chat search — filtering over the cached last state
 $('search').addEventListener('input', () => renderSidebar(cachedProjects));
 
-// Safari игнорирует user-scalable=no во вкладке — гасим пинч вручную.
-// Картинки при этом смотрим лайтбоксом, так что зум не нужен.
+// Safari ignores user-scalable=no in a tab — suppress pinch manually.
+// Images are viewed in the lightbox anyway, so zoom is not needed.
 for (const ev of ['gesturestart', 'gesturechange', 'gestureend'])
   document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
 
-// PWA: service worker (нужен для установки и push)
+// PWA: service worker (needed for install and push)
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
-// push-уведомления — только через relay (у localhost нет подписочного бэка)
+// push notifications — relay only (localhost has no subscription backend)
 $('notify-btn').onclick = async function () {
   try {
     const keyRes = await fetch('/api/push/key');
-    if (!keyRes.ok) throw new Error('уведомления работают только через relay (не с localhost)');
+    if (!keyRes.ok) throw new Error('notifications work only via relay (not on localhost)');
     const { publicKey } = await keyRes.json();
-    if ((await Notification.requestPermission()) !== 'granted') throw new Error('разрешение на уведомления не дано');
+    if ((await Notification.requestPermission()) !== 'granted') throw new Error('notification permission was not granted');
     const reg = await navigator.serviceWorker.ready;
     const raw = atob(publicKey.replace(/-/g, '+').replace(/_/g, '/'));
     const appKey = Uint8Array.from(raw, (c) => c.charCodeAt(0));
@@ -896,21 +898,21 @@ $('notify-btn').onclick = async function () {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(sub),
     });
-    if (!saveRes.ok) throw new Error('не удалось сохранить подписку');
-    this.textContent = '🔔 Уведомления включены ✓';
+    if (!saveRes.ok) throw new Error('could not save the subscription');
+    this.textContent = '🔔 Notifications enabled ✓';
   } catch (e) {
     alert(e.message);
   }
 };
 
 $('restart-server').onclick = () => {
-  if (confirm('Перезапустить сервер? Живые чаты закроются (возобновимы через «прошлые чаты»).')) {
+  if (confirm('Restart the server? Live chats will close (resumable via “past chats”).')) {
     send({ type: 'restart_server' });
     $('settings').hidden = true;
   }
 };
 
-setModeSelect($('permission-mode').value); // подсветка bypass при старте
+setModeSelect($('permission-mode').value); // highlight bypass on startup
 
 $('hide-tools').checked = localStorage.getItem('hideTools') === '1';
 feedHost.classList.toggle('hide-tools', $('hide-tools').checked);

@@ -1,5 +1,5 @@
-// Прогон реального UI: создаём чат (model=haiku) по WS, дальше всё — кликами
-// в headless Edge: выбор чата, отправка сообщения, стриминг, скриншоты.
+// A run through the real UI: we create a chat (model=haiku) over WS, everything else is done by clicking
+// in headless Edge: choosing a chat, sending a message, streaming, screenshots.
 import { chromium } from 'playwright-core';
 import WebSocket from 'ws';
 import { mkdtempSync, mkdirSync } from 'node:fs';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const SHOTS = join(dirname(fileURLToPath(import.meta.url)), 'shots');
 mkdirSync(SHOTS, { recursive: true });
 
-// -- подготовка: проект + чат с дешёвой моделью через WS --
+// -- preparation: project + chat with a cheap model over WS --
 const projectDir = mkdtempSync(join(tmpdir(), 'remaude-ui-'));
 await new Promise((resolve, reject) => {
   const ws = new WebSocket('ws://127.0.0.1:7699/ws');
@@ -29,7 +29,7 @@ await new Promise((resolve, reject) => {
   setTimeout(() => reject(new Error('ws timeout')), 10_000);
 });
 
-// -- браузер --
+// -- browser --
 const browser = await chromium.launch({
   executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   headless: true,
@@ -50,7 +50,7 @@ await page.press('#input', 'Enter');
 await page.waitForSelector('.msg-user', { timeout: 5_000 });
 console.log('user bubble: ok');
 await page.waitForSelector('.msg-assistant', { timeout: 60_000 });
-await page.waitForSelector('.msg-meta', { timeout: 60_000 }); // result пришёл
+await page.waitForSelector('.msg-meta', { timeout: 60_000 }); // result arrived
 await page.waitForFunction(() => document.getElementById('limits').textContent.length > 0, { timeout: 30_000 });
 await page.screenshot({ path: join(SHOTS, '2-reply.png') });
 

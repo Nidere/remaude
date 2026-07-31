@@ -1,5 +1,5 @@
-// Сквозной тест WS-протокола: проект → чат → сообщение → permission (Write) →
-// allow → проверка, что файл реально создан → история.
+// End-to-end test of the WS protocol: project → chat → message → permission (Write) →
+// allow → check that the file was actually created → history.
 import WebSocket from 'ws';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -68,7 +68,7 @@ const finished = new Promise((resolve, reject) => {
 
 try {
   await finished;
-  console.log(`[stream] ${streamed.trim().slice(0, 100) || '(пусто)'}`);
+  console.log(`[stream] ${streamed.trim().slice(0, 100) || '(empty)'}`);
   console.log(`[perm seen] ${sawPermission}`);
   console.log(`[file] ${readFileSync(join(projectDir, 'hello.txt'), 'utf-8').trim()}`);
   console.log('E2E OK');

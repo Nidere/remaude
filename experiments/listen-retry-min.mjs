@@ -1,5 +1,5 @@
-// Минимальный кейс: занять порт 7699 нельзя (уже занят сервером A).
-// Вопрос: ловит ли on('error') ретрай при подключённом WebSocketServer.
+// Minimal case: port 7699 cannot be taken (it is already occupied by server A).
+// Question: does on('error') catch the retry when a WebSocketServer is attached.
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 

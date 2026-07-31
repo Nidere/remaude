@@ -1,4 +1,4 @@
-// Что происходит в SDK-сессии (= в remaude), если модель дёргает AskUserQuestion.
+// What happens in an SDK session (= in remaude) if the model invokes AskUserQuestion.
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +15,7 @@ const chat = new Chat({
 });
 
 const timer = setTimeout(() => {
-  console.log('TIMEOUT 60s — инструмент завис без ответа');
+  console.log('TIMEOUT 60s — the tool hung without a response');
   chat.close();
   process.exit(0);
 }, 60_000);

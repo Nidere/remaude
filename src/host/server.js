@@ -1,5 +1,5 @@
-// Локальный сервер хост-агента: статика веб-UI + WebSocket-протокол.
-// Слушает только 127.0.0.1 — наружу пойдём через relay (см. README).
+// The host agent's local server: the web UI's static files + the WebSocket protocol.
+// It only listens on 127.0.0.1 — we reach the outside world through the relay (see README).
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync, existsSync, statSync, readdirSync, openSync, mkdirSync } from 'node:fs';
@@ -26,7 +26,7 @@ const MIME = {
   '.webmanifest': 'application/manifest+json',
 };
 
-// ---------- конфиг (список проектов) ----------
+// ---------- config (list of projects) ----------
 
 function loadConfig() {
   try {
@@ -41,22 +41,22 @@ async function saveConfig(config) {
   await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
-// ---------- состояние ----------
+// ---------- state ----------
 
 const config = loadConfig();
 
-// Имя автора сообщений (задел под групповые чаты): userName в host.json,
-// по умолчанию — имя пользователя ОС.
+// The author name on messages (groundwork for group chats): userName in host.json,
+// defaulting to the OS user name.
 let userName = config.userName ?? userInfo().username;
 
-// Корень проектов: настраивается в ~/.remaude/host.json (projectsRoot),
-// по умолчанию — Documents\Projects, если есть, иначе домашняя папка.
+// The projects root: configured in ~/.remaude/host.json (projectsRoot),
+// defaulting to Documents\Projects if it exists, otherwise the home folder.
 let projectsRoot =
   config.projectsRoot ??
   (existsSync(join(homedir(), 'Documents', 'Projects')) ? join(homedir(), 'Documents', 'Projects') : homedir());
 const clients = new Set();
 const pendingPermissions = new Map(); // requestId -> {resolve, chatId}
-const chatHistories = new Map(); // chatId -> сообщения для replay при переподключении
+const chatHistories = new Map(); // chatId -> messages to replay on reconnect
 
 const agent = new HostAgent({
   onPermissionRequest: ({ chat, toolName, input, suggestions, signal }) =>
@@ -78,8 +78,8 @@ const agent = new HostAgent({
       });
       broadcast({ type: 'permission_request', requestId, chatId: chat.id, toolName, input, suggestions });
       relayLink?.push({
-        title: 'remaude: ждёт разрешения',
-        body: `${toolName} · ${chat.title ?? 'чат'}`,
+        title: 'remaude: waiting for permission',
+        body: `${toolName} · ${chat.title ?? 'chat'}`,
         tag: `perm-${chat.id}`,
       });
     }),
@@ -93,7 +93,7 @@ for (const p of config.projects) {
   }
 }
 
-// ---------- переживание рестартов: открытые чаты сохраняются и переоткрываются ----------
+// ---------- surviving restarts: open chats are saved and reopened ----------
 
 function saveOpenChats() {
   config.openChats = [...agent.allChats()]
@@ -107,7 +107,7 @@ function saveOpenChats() {
   saveConfig(config);
 }
 
-/** Общий путь открытия сохранённой сессии (open_session и автоподнятие при старте). */
+/** The shared path for opening a saved session (open_session and the auto-restore at startup). */
 function openSavedSession(projectPath, sessionId, { permissionMode, title } = {}) {
   for (const chat of agent.allChats()) {
     if (chat.sessionId === sessionId || chat.resumeId === sessionId) return chat;
@@ -130,32 +130,32 @@ for (const oc of config.openChats ?? []) {
 }
 
 agent.on('chat_message', ({ chatId, msg }) => {
-  // Пользовательский ввод рассылаем сами в handleSend (иначе дубли с replay'ем SDK),
-  // поэтому чистые текстовые user-сообщения основного диалога здесь пропускаем.
+  // We broadcast user input ourselves in handleSend (otherwise it duplicates with the SDK's
+  // replay), so plain text user messages of the main dialogue are skipped here.
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
   if (msg.type !== 'stream_event') pushHistory(chatId, msg);
   broadcast({ type: 'chat_message', chatId, msg });
   if (msg.type === 'system' && msg.subtype === 'init') {
     sendChatMeta(chatId);
-    saveOpenChats(); // sessionId стал известен — зафиксировать для переоткрытия
+    saveOpenChats(); // the sessionId is now known — record it so we can reopen the chat
   }
   if (msg.type === 'result') {
     refreshLimits(true);
     sendChatMeta(chatId);
-    // никто не смотрит — стоит пискнуть на телефон
+    // nobody is watching — worth buzzing the phone
     if (clients.size === 0) {
       let title = null;
       try {
         title = findChat(chatId).title;
       } catch {
-        /* чат мог закрыться */
+        /* the chat may have been closed */
       }
-      relayLink?.push({ title: 'remaude: готово', body: title ?? 'задача завершена', tag: `done-${chatId}` });
+      relayLink?.push({ title: 'remaude: done', body: title ?? 'task finished', tag: `done-${chatId}` });
     }
   }
 });
 
-/** Метаданные чата для хедера: модель, режим, заполненность контекста, усилия. */
+/** Chat metadata for the header: model, mode, how full the context is, effort. */
 async function sendChatMeta(chatId) {
   let chat;
   try {
@@ -169,7 +169,7 @@ async function sendChatMeta(chatId) {
     context = { percentage: Math.round(u.percentage), totalTokens: u.totalTokens, maxTokens: u.maxTokens };
     if (u.model) chat.model = u.model;
   } catch {
-    /* сессия могла ещё не подняться или уже умереть */
+    /* the session may not have started up yet, or may already be dead */
   }
   broadcast({
     type: 'chat_meta',
@@ -181,13 +181,13 @@ async function sendChatMeta(chatId) {
   });
 }
 
-// Усилия: эффективный дефолт хоста из настроек Claude Code (документированный дефолт — high)
+// Effort: the host's effective default taken from the Claude Code settings (the documented default is high)
 let hostEffort = 'high';
 try {
   const settings = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf-8'));
   if (settings.effortLevel) hostEffort = settings.effortLevel;
 } catch {
-  /* нет файла — остаёмся на high */
+  /* no such file — we stay on high */
 }
 agent.on('chat_status', ({ chatId, status }) => broadcast({ type: 'chat_status', chatId, status }));
 agent.on('chat_error', ({ chatId, error }) =>
@@ -204,7 +204,7 @@ function pushHistory(chatId, msg) {
   chatHistories.get(chatId).push(msg);
 }
 
-// ---------- лимиты (виджет) ----------
+// ---------- limits (widget) ----------
 
 let lastLimitsAt = 0;
 let lastLimits = null;
@@ -218,29 +218,29 @@ async function refreshLimits(force = false) {
   }
 }
 
-// ---------- relay: туннель для удалённых браузеров ----------
+// ---------- relay: the tunnel for remote browsers ----------
 
-// Адрес relay берётся из окружения (его прописывает установщик) или из конфига;
-// зашитых доменов в коде нет — проект разворачивается кем угодно.
+// The relay address comes from the environment (the installer writes it there) or from the
+// config; there are no hardcoded domains in the code — anyone can deploy this project.
 const RELAY_DEFAULT_URL = process.env.REMAUDE_RELAY_URL ?? config.relayUrl ?? null;
 let relayLink = null;
 const virtualClients = new Map(); // id -> VirtualClient
-const pendingDeviceApprovals = new Map(); // code -> ws, ждущий ответа relay
+const pendingDeviceApprovals = new Map(); // code -> the ws waiting for the relay's answer
 
-/** Удалённый браузер, живущий за туннелем relay — с интерфейсом обычного ws-клиента. */
+/** A remote browser living behind the relay tunnel — with the interface of a regular ws client. */
 class VirtualClient {
   readyState = 1;
   OPEN = 1;
   constructor(id, guest = null) {
     this.id = id;
-    this.guest = guest; // {email, sessions: [sessionId]} — гость расшаренных чатов
+    this.guest = guest; // {email, sessions: [sessionId]} — a guest of the shared chats
   }
   send(data) {
     relayLink?.sendTo(this.id, data);
   }
 }
 
-// ---------- шаринг чатов (гости) ----------
+// ---------- chat sharing (guests) ----------
 
 function sharesList() {
   return Object.entries(config.shares ?? {}).map(([sessionId, emails]) => ({ sessionId, emails }));
@@ -250,7 +250,7 @@ function announceShares() {
   relayLink?.setShares(sharesList());
 }
 
-/** id живых чатов, доступных гостю */
+/** ids of the live chats available to a guest */
 function guestChatIds(guest) {
   const ids = new Set();
   for (const chat of agent.allChats()) {
@@ -272,14 +272,14 @@ function guestState(guest) {
   };
 }
 
-/** Что из трансляций видно гостю. */
+/** Which of the broadcasts a guest gets to see. */
 function guestCanSee(guest, obj) {
   if (obj.type === 'chat_message' || obj.type === 'chat_status' || obj.type === 'chat_meta' || obj.type === 'chat_error')
     return guestChatIds(guest).has(obj.chatId);
-  return false; // state обрабатывается отдельно; permissions/limits/relay — только владельцу
+  return false; // state is handled separately; permissions/limits/relay — owner only
 }
 
-/** Команды, разрешённые гостям (и только по их чатам). */
+/** The commands allowed to guests (and only on their own chats). */
 const GUEST_TYPES = new Set(['send', 'history']);
 
 function startRelay() {
@@ -316,14 +316,14 @@ function startRelay() {
         requester,
         ok
           ? { type: 'device_approved' }
-          : { type: 'error', message: 'relay не принял код устройства (истёк или опечатка)' }
+          : { type: 'error', message: 'the relay did not accept the device code (expired or mistyped)' }
       );
   });
 }
 
-// ---------- аутентификация Claude на хосте (логин из веб-UI) ----------
+// ---------- Claude authentication on the host (logging in from the web UI) ----------
 
-let loginChild = null; // единственный активный процесс `claude auth login`
+let loginChild = null; // the single active `claude auth login` process
 
 function runClaudeJson(args) {
   return new Promise((resolveRun) => {
@@ -353,7 +353,7 @@ function broadcast(obj) {
   for (const ws of clients) {
     if (ws.readyState !== ws.OPEN) continue;
     if (ws.guest) {
-      // гостям — только их чаты; state пересобирается под их скоуп
+      // guests get only their own chats; state is rebuilt to match their scope
       if (obj.type === 'state') ws.send(JSON.stringify(guestState(ws.guest)));
       else if (guestCanSee(ws.guest, obj)) ws.send(data);
       continue;
@@ -390,7 +390,7 @@ const handlers = {
     broadcast(stateSnapshot());
   },
 
-  /** Подпапки корня проектов — для выбора с любого устройства, включая телефон. */
+  /** Subfolders of the projects root — so they can be picked from any device, phones included. */
   list_root(ws) {
     let dirs = [];
     let error = null;
@@ -405,7 +405,7 @@ const handlers = {
     send(ws, { type: 'root_listing', root: projectsRoot, dirs, added: [...agent.projects.keys()], error });
   },
 
-  /** Убрать проект из панели: чаты закрываются, на диске ничего не трогаем. */
+  /** Remove a project from the sidebar: its chats are closed, nothing on disk is touched. */
   close_project(ws, { path }) {
     const abs = resolve(path);
     const project = agent.projects.get(abs);
@@ -417,7 +417,7 @@ const handlers = {
       agent.projects.delete(abs);
     }
     config.projects = (config.projects ?? []).filter((p) => resolve(p) !== abs);
-    saveOpenChats(); // пересобирает список открытых чатов из живых — закрытые уйдут
+    saveOpenChats(); // rebuilds the list of open chats from the live ones — the closed ones drop out
     broadcast(stateSnapshot());
   },
 
@@ -453,7 +453,7 @@ const handlers = {
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
   },
 
-  /** Сохранённые на диске сессии проекта (включая созданные в VS Code/CLI). */
+  /** The project's sessions saved on disk (including ones created in VS Code/the CLI). */
   list_sessions(ws, { projectPath }) {
     const live = {};
     for (const chat of agent.allChats()) {
@@ -463,7 +463,7 @@ const handlers = {
     send(ws, { type: 'sessions', projectPath, sessions: listSessions(resolve(projectPath)), live });
   },
 
-  /** Возобновить сохранённую сессию: история — из транскрипта, контекст — resume в SDK. */
+  /** Resume a saved session: history comes from the transcript, context from the SDK's resume. */
   open_session(ws, { projectPath, sessionId, permissionMode }) {
     const abs = resolve(projectPath);
     const meta = listSessions(abs).find((s) => s.id === sessionId);
@@ -498,11 +498,11 @@ const handlers = {
     refreshLimits(true);
   },
 
-  /** Дать/забрать доступ к чату по почте. Ключ — стабильный sessionId. */
+  /** Grant/revoke access to a chat by email. The key is the stable sessionId. */
   share_chat(ws, { chatId, email }) {
     const chat = findChat(chatId);
     const sid = chat.sessionId ?? chat.resumeId;
-    if (!sid) throw new Error('у чата ещё нет session id — отправь в него хоть одно сообщение');
+    if (!sid) throw new Error('this chat has no session id yet — send at least one message into it');
     config.shares ??= {};
     const emails = (config.shares[sid] ??= []);
     const clean = String(email).trim().toLowerCase();
@@ -529,7 +529,7 @@ const handlers = {
     broadcast(stateSnapshot());
   },
 
-  /** Закрыть чат и убрать из сайдбара; транскрипт остаётся, возобновим через open_session. */
+  /** Close a chat and remove it from the sidebar; the transcript stays, we resume it via open_session. */
   hide_chat(ws, { chatId }) {
     const chat = findChat(chatId);
     chat.close();
@@ -563,7 +563,7 @@ const handlers = {
     });
   },
 
-  /** Запустить `claude auth login`: ссылку — в UI, код вернётся через claude_login_code. */
+  /** Start `claude auth login`: the link goes to the UI, the code comes back via claude_login_code. */
   claude_login_start(ws) {
     loginChild?.kill();
     const child = spawn('claude', ['auth', 'login'], { shell: true });
@@ -582,18 +582,18 @@ const handlers = {
       if (loginChild === child) loginChild = null;
       broadcast({ type: 'claude_auth', status: await claudeAuthStatus() });
     });
-    child.on('error', () => send(ws, { type: 'error', message: 'не удалось запустить claude auth login' }));
-    setTimeout(() => child === loginChild && child.kill(), 600e3); // не висим вечно
+    child.on('error', () => send(ws, { type: 'error', message: 'failed to start claude auth login' }));
+    setTimeout(() => child === loginChild && child.kill(), 600e3); // don't hang around forever
   },
 
   claude_login_code(ws, { code }) {
-    if (!loginChild) throw new Error('логин-процесс не запущен (начни заново)');
+    if (!loginChild) throw new Error('the login process is not running (start over)');
     loginChild.stdin.write(String(code).trim() + '\n');
   },
 
   /**
-   * Единое поле «код с сайта»: если хост ещё не привязан — это привязка хоста,
-   * если привязан — одобрение нового устройства (тот же механизм, обратная сторона).
+   * A single "code from the website" field: if the host is not paired yet, this pairs the host;
+   * if it is paired, this approves a new device (the same mechanism, seen from the other side).
    */
   async pair_relay(ws, { code, url }) {
     if (config.relay?.token) {
@@ -602,13 +602,13 @@ const handlers = {
       return;
     }
     const base = String(url ?? config.relay?.url ?? RELAY_DEFAULT_URL ?? '').replace(/\/$/, '');
-    if (!base) throw new Error('не задан адрес relay (укажи его в настройках)');
+    if (!base) throw new Error('no relay address is set (specify it in the settings)');
     const res = await fetch(base + '/pair', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ code: String(code).trim(), name: hostname() }),
     });
-    if (!res.ok) throw new Error('relay не принял код (истёк или опечатка)');
+    if (!res.ok) throw new Error('the relay did not accept the code (expired or mistyped)');
     const { token } = await res.json();
     config.relay = { url: base, token };
     saveConfig(config);
@@ -629,19 +629,19 @@ const handlers = {
   },
 
   /**
-   * Самоперезапуск: порождаем отвязанную копию себя и выходим. Копия
-   * ретраит listen, пока мы не отпустим порт. Все живые SDK-сессии умирают —
-   * они возобновляемы через open_session.
+   * Self-restart: we spawn a detached copy of ourselves and exit. The copy keeps
+   * retrying listen until we release the port. All live SDK sessions die — but
+   * they can be resumed through open_session.
    */
   restart_server() {
     console.log('restart requested');
     broadcast({ type: 'server_restarting' });
-    // под супервизором (launchd/systemd) достаточно выйти — он перезапустит сам
+    // under a supervisor (launchd/systemd) exiting is enough — it will restart us itself
     if (process.env.REMAUDE_SUPERVISED) {
       setTimeout(() => process.exit(0), 300);
       return;
     }
-    // stdio копии — в файлы: молчаливая смерть наследника недиагностируема
+    // the copy's stdio goes to files: a silent death of the successor is impossible to diagnose
     const logDir = join(homedir(), '.remaude');
     mkdirSync(logDir, { recursive: true });
     const out = openSync(join(logDir, 'server.log'), 'a');
@@ -668,7 +668,7 @@ function send(ws, obj) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
 }
 
-// ---------- HTTP (статика) ----------
+// ---------- HTTP (static files) ----------
 
 const httpServer = createServer(async (req, res) => {
   try {
@@ -680,7 +680,7 @@ const httpServer = createServer(async (req, res) => {
     }
     res.writeHead(200, {
       'content-type': MIME[extname(file)] ?? 'application/octet-stream',
-      'cache-control': 'no-cache', // dev: иначе браузеры прилипают к старому app.js
+      'cache-control': 'no-cache', // dev: otherwise browsers stick to the old app.js
     });
     res.end(await readFile(file));
   } catch (e) {
@@ -690,25 +690,25 @@ const httpServer = createServer(async (req, res) => {
   }
 });
 
-// Хост должен жить всегда: любые неожиданные ошибки логируем, не падаем.
+// The host must stay alive at all times: we log any unexpected errors instead of crashing.
 process.on('uncaughtException', (e) => console.error('uncaught:', e));
 process.on('unhandledRejection', (e) => console.error('unhandled rejection:', e));
 
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-// ws переизлучает ошибки httpServer на себя; без слушателя это роняет процесс
-// раньше, чем сработает наш listen-ретрай ниже (проверено experiments/listen-retry-min.mjs)
+// ws re-emits the httpServer's errors on itself; without a listener that kills the process
+// before our listen retry below can kick in (verified in experiments/listen-retry-min.mjs)
 wss.on('error', () => {});
-/** Единая инициализация клиента — локального WS и туннельного через relay. */
+/** A single initialization path for clients — both local WS and tunnelled through the relay. */
 function initClient(ws) {
   clients.add(ws);
   if (ws.guest) {
-    send(ws, guestState(ws.guest)); // гостям — только их чаты, без лимитов и permissions
+    send(ws, guestState(ws.guest)); // guests get only their chats, without limits or permissions
     return;
   }
   send(ws, stateSnapshot());
   if (lastLimits) send(ws, { type: 'limits', limits: lastLimits });
   refreshLimits();
-  // незакрытые permission-запросы — новому клиенту тоже
+  // still-open permission requests go to the new client as well
   for (const [requestId, p] of pendingPermissions) {
     send(ws, {
       type: 'permission_request',
@@ -722,16 +722,16 @@ function initClient(ws) {
   if (relayLink) send(ws, { type: 'relay_status', paired: true, connected: relayLink.connected });
 }
 
-/** Единый диспетчер входящих сообщений. */
+/** The single dispatcher for incoming messages. */
 function dispatch(ws, raw) {
   let msg;
   try {
     msg = JSON.parse(raw);
     if (ws.guest) {
-      if (!GUEST_TYPES.has(msg.type)) throw new Error('это может только владелец хоста');
-      if (msg.chatId && !guestChatIds(ws.guest).has(msg.chatId)) throw new Error('нет доступа к этому чату');
+      if (!GUEST_TYPES.has(msg.type)) throw new Error('only the host owner can do that');
+      if (msg.chatId && !guestChatIds(ws.guest).has(msg.chatId)) throw new Error('no access to this chat');
     }
-    // async-обработчики тоже должны доносить ошибки до клиента
+    // async handlers must deliver their errors to the client too
     Promise.resolve(handlers[msg.type]?.(ws, msg)).catch((e) =>
       send(ws, { type: 'error', message: String(e.message ?? e), inResponseTo: msg?.type })
     );
@@ -748,7 +748,7 @@ wss.on('connection', (ws) => {
 
 startRelay();
 
-// Ретрай listen: при самоперезапуске новая копия ждёт, пока старая отпустит порт.
+// Listen retry: during a self-restart the new copy waits until the old one releases the port.
 let listenAttempts = 0;
 httpServer.on('error', (e) => {
   if (e.code === 'EADDRINUSE' && listenAttempts < 40) {

@@ -1,7 +1,7 @@
-// Чтение сохранённых сессий Claude Code из ~/.claude/projects/<slug>/*.jsonl.
-// Формат недокументирован и меняется между версиями — всё читаем best-effort:
-// незнакомые типы записей молча пропускаем, используем только для ОТОБРАЖЕНИЯ
-// истории (контекст при resume восстанавливает сам SDK).
+// Reading saved Claude Code sessions from ~/.claude/projects/<slug>/*.jsonl.
+// The format is undocumented and changes between versions — so we read everything
+// best-effort: unknown record types are silently skipped, and we use this only to
+// DISPLAY history (on resume the SDK itself restores the context).
 import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +21,7 @@ export function sessionDir(cwd) {
   return null;
 }
 
-/** Первые bytes байт файла — чтобы не читать многомегабайтные транскрипты целиком. */
+/** The first `bytes` bytes of the file — so we don't read multi-megabyte transcripts in full. */
 function readHead(file, bytes = 65536) {
   const fd = openSync(file, 'r');
   try {
@@ -40,7 +40,7 @@ function firstUserText(entry) {
   return null;
 }
 
-/** @returns [{id, mtime, title, preview}] по убыванию свежести */
+/** @returns [{id, mtime, title, preview}] ordered from most to least recent */
 export function listSessions(cwd) {
   const dir = sessionDir(cwd);
   if (!dir) return [];
@@ -57,7 +57,7 @@ export function listSessions(cwd) {
         try {
           entry = JSON.parse(line);
         } catch {
-          continue; // последняя строка головы обычно обрезана
+          continue; // the last line of the head chunk is usually truncated
         }
         if (!title && entry.type === 'ai-title' && typeof entry.title === 'string') title = entry.title;
         if (!preview && entry.type === 'user' && !entry.isSidechain && !entry.isMeta) {
@@ -75,8 +75,8 @@ export function listSessions(cwd) {
 }
 
 /**
- * История сессии в виде псевдо-SDK-сообщений — ровно то, что умеет рендерить
- * веб-клиент (type/message/parent_tool_use_id).
+ * Session history as pseudo-SDK messages — exactly what the web client knows how
+ * to render (type/message/parent_tool_use_id).
  */
 export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
   const dir = sessionDir(cwd);
@@ -93,8 +93,8 @@ export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
       continue;
     }
     if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message || entry.isMeta) continue;
-    // системные инъекции харнесса (task-notification и прочее) записаны как
-    // user-сообщения, но несут origin.kind — настоящий ввод пользователя без origin
+    // the harness's system injections (task notifications and the like) are written as
+    // user messages, but carry origin.kind — real user input has no origin
     if (entry.type === 'user' && entry.origin?.kind) continue;
     const isPlainUserText =
       entry.type === 'user' &&
@@ -105,7 +105,7 @@ export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
       message: entry.message,
       parent_tool_use_id: entry.isSidechain ? (entry.parentToolUseId ?? 'past-sidechain') : null,
       timestamp: entry.timestamp ?? null,
-      // в транскрипте автора нет — исторические сообщения подписываем владельцем хоста
+      // the transcript has no author — we sign historical messages with the host owner
       author: isPlainUserText ? defaultAuthor : undefined,
     });
   }

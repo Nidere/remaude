@@ -5,9 +5,9 @@ import { Chat } from './chat.js';
 import { extractLimits } from './usage.js';
 
 /**
- * Хост-агент: проекты (директории) → чаты (живые SDK-сессии).
+ * Host agent: projects (directories) → chats (live SDK sessions).
  *
- * События (для будущего транспорта к relay/браузеру):
+ * Events (for the future transport to the relay/browser):
  *  - 'chat_message' ({chatId, projectPath, msg})
  *  - 'chat_status'  ({chatId, projectPath, status})
  *  - 'chat_error'   ({chatId, projectPath, error})
@@ -16,7 +16,7 @@ export class HostAgent extends EventEmitter {
   /** @type {Map<string, {path: string, chats: Map<string, Chat>}>} */
   projects = new Map();
 
-  /** @param onPermissionRequest общий обработчик permission-запросов всех чатов */
+  /** @param onPermissionRequest shared handler for the permission requests of all chats */
   constructor({ onPermissionRequest } = {}) {
     super();
     this.onPermissionRequest = onPermissionRequest;
@@ -48,14 +48,14 @@ export class HostAgent extends EventEmitter {
     for (const p of this.projects.values()) yield* p.chats.values();
   }
 
-  /** Снимок лимитов для виджета — с любой живой сессии. */
+  /** Snapshot of the limits for the widget — taken from any live session. */
   async limits() {
     for (const chat of this.allChats()) {
       if (chat.status === 'closed') continue;
       try {
         return extractLimits(await chat.rawUsage());
       } catch {
-        continue; // сессия могла умереть между проверкой и вызовом — пробуем следующую
+        continue; // the session could have died between the check and the call — try the next one
       }
     }
     return null;

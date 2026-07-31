@@ -1,5 +1,5 @@
-// Service worker remaude: установка PWA + приём push-уведомлений.
-// Кэширования нет намеренно — UI живой и лёгкий, а stale-статика уже кусала нас в dev.
+// remaude service worker: PWA install + receiving push notifications.
+// Caching is deliberately absent — the UI is live and light, and stale statics already bit us in dev.
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));

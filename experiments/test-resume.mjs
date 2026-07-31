@@ -1,5 +1,5 @@
-// Вопрос: при resume приходят ли старые сообщения в поток (replay)?
-// Сессия A: два хода → закрыли. Сессия B: resume A → смотрим, что придёт до и после нового хода.
+// Question: on resume, do the old messages arrive in the stream (replay)?
+// Session A: two turns → closed it. Session B: resume A → we look at what arrives before and after a new turn.
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +20,7 @@ function turn(chat, text) {
   });
 }
 
-// сессия A
+// session A
 const a = new Chat({ cwd: dir, model: 'haiku' });
 await turn(a, 'Запомни: моё кодовое слово — багульник. Ответь "запомнил".');
 await turn(a, 'Спасибо. Ответь "ок".');
@@ -29,17 +29,17 @@ a.close();
 console.log('session A:', sessionId);
 await new Promise((r) => setTimeout(r, 1500));
 
-// сессия B: resume
+// session B: resume
 const b = new Chat({ cwd: dir, model: 'haiku', resume: sessionId });
 const replayed = [];
 b.on('message', (msg) => replayed.push(`${msg.type}${msg.type === 'user' || msg.type === 'assistant' ? ':' + JSON.stringify(msg.message?.content).slice(0, 60) : ''}`));
 
-// ждём 5 секунд без отправки — придёт ли replay сам?
+// waiting 5 seconds without sending anything — will the replay arrive on its own?
 await new Promise((r) => setTimeout(r, 5000));
-console.log('до нового хода пришло:', replayed.length ? replayed.join(' | ') : '(ничего)');
+console.log('arrived before the new turn:', replayed.length ? replayed.join(' | ') : '(nothing)');
 
 replayed.length = 0;
 await turn(b, 'Какое моё кодовое слово? Ответь одним словом.');
-console.log('после хода:', replayed.join(' | '));
-console.log('resumed session id:', b.sessionId, b.sessionId === sessionId ? '(тот же)' : '(НОВЫЙ!)');
+console.log('after the turn:', replayed.join(' | '));
+console.log('resumed session id:', b.sessionId, b.sessionId === sessionId ? '(the same)' : '(NEW!)');
 b.close();

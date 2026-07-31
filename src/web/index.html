@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <!-- без viewport-fit=cover: браузер сам отступает от чёлки и домашней полоски -->
+  <!-- no viewport-fit=cover: the browser keeps clear of the notch and home bar itself -->
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>remaude</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%F0%9F%92%AC%3C/text%3E%3C/svg%3E" />
@@ -19,62 +19,62 @@
   <aside id="sidebar">
     <div id="logo-row">
       <div id="logo">remaude</div>
-      <button id="settings-btn" title="Настройки">⚙</button>
+      <button id="settings-btn" title="Settings">⚙</button>
     </div>
-    <input id="search" placeholder="поиск по чатам" spellcheck="false" />
+    <input id="search" placeholder="search chats" spellcheck="false" />
     <div id="projects"></div>
-    <button id="pick-project" title="Открыть системный диалог выбора папки на хосте">📁 добавить проект</button>
+    <button id="pick-project" title="Open the system folder picker on the host">📁 add project</button>
     <form id="add-project-form">
-      <input id="add-project-path" placeholder="…или путь вручную" spellcheck="false" />
-      <button title="Добавить проект">+</button>
+      <input id="add-project-path" placeholder="…or type a path" spellcheck="false" />
+      <button title="Add project">+</button>
     </form>
   </aside>
 
   <main id="main">
     <header id="header">
-      <button id="menu-btn" title="Меню">☰</button>
-      <div id="chat-title">выбери или создай чат</div>
+      <button id="menu-btn" title="Menu">☰</button>
+      <div id="chat-title">pick or start a chat</div>
       <div id="header-right">
-        <select id="model-select" title="Модель чата">
-          <option value="">модель</option>
+        <select id="model-select" title="Chat model">
+          <option value="">model</option>
           <option value="fable">fable</option>
           <option value="opus">opus</option>
           <option value="sonnet">sonnet</option>
           <option value="haiku">haiku</option>
         </select>
-        <select id="effort-select" title="Усилия (reasoning effort)">
-          <option value="">усилия</option>
+        <select id="effort-select" title="Reasoning effort">
+          <option value="">effort</option>
           <option value="low">low</option>
           <option value="medium">medium</option>
           <option value="high">high</option>
           <option value="xhigh">xhigh</option>
           <option value="max">max</option>
         </select>
-        <div id="chat-meta" title="модель · усилия · заполненность контекста"></div>
-        <button id="share-btn" title="Поделиться чатом (доступ по почте)">🔗</button>
-        <label id="hide-tools-label"><input type="checkbox" id="hide-tools" /> скрыть инструменты</label>
-        <select id="permission-mode" title="Режим разрешений">
+        <div id="chat-meta" title="model · effort · context usage"></div>
+        <button id="share-btn" title="Share chat (access by email)">🔗</button>
+        <label id="hide-tools-label"><input type="checkbox" id="hide-tools" /> hide tools</label>
+        <select id="permission-mode" title="Permission mode">
           <option value="bypassPermissions" selected>bypass</option>
-          <option value="default">спрашивать</option>
-          <option value="acceptEdits">правки без вопросов</option>
-          <option value="plan">план</option>
+          <option value="default">ask</option>
+          <option value="acceptEdits">auto-accept edits</option>
+          <option value="plan">plan</option>
         </select>
-        <div id="limits" title="Лимиты Claude"></div>
-        <span id="conn-dot" title="соединение"></span>
+        <div id="limits" title="Claude limits"></div>
+        <span id="conn-dot" title="connection"></span>
       </div>
     </header>
 
     <div id="feed"></div>
-    <button id="scroll-down" title="К свежим сообщениям" hidden>↓</button>
+    <button id="scroll-down" title="Jump to latest" hidden>↓</button>
 
     <footer id="composer">
       <div id="attachments"></div>
       <div id="composer-row">
-        <button id="attach-btn" title="Приложить картинку">📎</button>
+        <button id="attach-btn" title="Attach image">📎</button>
         <input id="file-input" type="file" accept="image/*" multiple hidden />
-        <textarea id="input" rows="1" placeholder="Сообщение…"></textarea>
-        <button id="stop-btn" title="Прервать" hidden>■</button>
-        <button id="send-btn" title="Отправить">➤</button>
+        <textarea id="input" rows="1" placeholder="Message…"></textarea>
+        <button id="stop-btn" title="Interrupt" hidden>■</button>
+        <button id="send-btn" title="Send">➤</button>
       </div>
     </footer>
   </main>
@@ -83,35 +83,35 @@
 
   <div id="settings" hidden>
     <div id="settings-box">
-      <div id="settings-title">Настройки</div>
-      <label>Имя (подпись сообщений)<input id="set-username" spellcheck="false" /></label>
-      <label>Корень проектов<input id="set-root" spellcheck="false" /></label>
+      <div id="settings-title">Settings</div>
+      <label>Name (message signature)<input id="set-username" spellcheck="false" /></label>
+      <label>Projects root<input id="set-root" spellcheck="false" /></label>
       <div id="auth-block">
-        <div id="claude-auth-status">аккаунт Claude: …</div>
+        <div id="claude-auth-status">Claude account: …</div>
         <div id="claude-login-flow" hidden>
-          <a id="claude-login-link" target="_blank" rel="noopener">1. Открыть страницу входа →</a>
+          <a id="claude-login-link" target="_blank" rel="noopener">1. Open the sign-in page →</a>
           <div class="pair-row">
-            <input id="claude-login-code" placeholder="2. код со страницы" spellcheck="false" />
-            <button id="claude-login-send">Отправить</button>
+            <input id="claude-login-code" placeholder="2. code from the page" spellcheck="false" />
+            <button id="claude-login-send">Submit</button>
           </div>
         </div>
-        <button id="claude-login-btn">Войти в Claude</button>
+        <button id="claude-login-btn">Sign in to Claude</button>
       </div>
       <div id="relay-block">
-        <div id="relay-status">relay: не привязан</div>
+        <div id="relay-status">relay: not paired</div>
         <div class="pair-row">
           <input id="set-relay-url" placeholder="https://relay.example.com" spellcheck="false" />
         </div>
         <div class="pair-row">
-          <input id="set-pair-code" placeholder="код с сайта" spellcheck="false" />
-          <button id="pair-btn">Привязать</button>
+          <input id="set-pair-code" placeholder="code from the site" spellcheck="false" />
+          <button id="pair-btn">Pair</button>
         </div>
       </div>
-      <button id="notify-btn" title="Push при запросах разрешений и завершении задач (работает через relay, не с localhost)">🔔 Включить уведомления</button>
-      <button id="restart-server" title="Живые чаты закроются, вернёшь их через «прошлые чаты»">⟳ Перезапустить сервер</button>
+      <button id="notify-btn" title="Push on permission requests and finished tasks (works via relay, not on localhost)">🔔 Enable notifications</button>
+      <button id="restart-server" title="Live chats will close; reopen them via “past chats”">⟳ Restart server</button>
       <div id="settings-actions">
-        <button id="settings-save">Сохранить</button>
-        <button id="settings-cancel">Отмена</button>
+        <button id="settings-save">Save</button>
+        <button id="settings-cancel">Cancel</button>
       </div>
     </div>
   </div>
@@ -120,7 +120,7 @@
     <div id="picker-box">
       <div id="picker-title"></div>
       <div id="picker-list"></div>
-      <div id="picker-actions"><button id="picker-cancel">Отмена</button></div>
+      <div id="picker-actions"><button id="picker-cancel">Cancel</button></div>
     </div>
   </div>
 

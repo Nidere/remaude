@@ -1,7 +1,7 @@
 {
   "name": "remaude",
   "version": "1.0.0",
-  "description": "Веб-фронтенд для Claude Code: один браузерный интерфейс вместо множества инстансов VS Code. Показывает чаты, позволяет отвечать, агрегирует все проекты и сессии в одном окне.",
+  "description": "Web shell for Claude Code: one browser UI instead of many VS Code windows — every project and chat in one place, reachable from anywhere.",
   "main": "index.js",
   "scripts": {
     "start": "node src/host/server.js"

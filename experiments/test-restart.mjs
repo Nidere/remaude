@@ -1,5 +1,5 @@
-// Сквозной тест самоперезапуска: restart_server по WS → старый умер →
-// копия поднялась → отвечает по HTTP и WS.
+// End-to-end self-restart test: restart_server over WS → the old one died →
+// the copy came up → it responds over HTTP and WS.
 import WebSocket from 'ws';
 
 function wsOnce(fn) {
@@ -11,7 +11,7 @@ function wsOnce(fn) {
   });
 }
 
-// pid до
+// pid before
 const pidBefore = await wsOnce((ws, resolve) => {
   ws.close();
   resolve(null);
@@ -21,7 +21,7 @@ const pidBefore = await wsOnce((ws, resolve) => {
 });
 console.log('server before: reachable =', pidBefore);
 
-// команда рестарта
+// restart command
 await wsOnce((ws, resolve) => {
   ws.send(JSON.stringify({ type: 'restart_server' }));
   setTimeout(() => {
@@ -31,7 +31,7 @@ await wsOnce((ws, resolve) => {
 });
 console.log('restart sent');
 
-// ждём возрождения (копия ретраит listen до освобождения порта)
+// waiting for the revival (the copy retries listen until the port is freed)
 let alive = false;
 for (let i = 0; i < 30; i++) {
   await new Promise((r) => setTimeout(r, 1000));
@@ -42,7 +42,7 @@ for (let i = 0; i < 30; i++) {
       break;
     }
   } catch {
-    /* ещё поднимается */
+    /* still coming up */
   }
 }
 if (!alive) {
@@ -50,7 +50,7 @@ if (!alive) {
   process.exit(1);
 }
 
-// WS тоже жив?
+// is WS alive too?
 await wsOnce((ws, resolve) => {
   ws.on('message', (raw) => {
     if (JSON.parse(raw).type === 'state') {

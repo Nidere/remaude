@@ -1,4 +1,4 @@
-// Read-only взгляд на живой UI: скриншот + консольные ошибки. Ничего не мутирует.
+// A read-only look at the live UI: screenshot + console errors. Mutates nothing.
 import { chromium } from 'playwright-core';
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -16,7 +16,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 await page.goto('http://localhost:7699');
 await page.waitForSelector('.project-head', { timeout: 8000 });
-await page.waitForTimeout(1200); // история/лимиты
+await page.waitForTimeout(1200); // history/limits
 await page.screenshot({ path: join(SHOTS, '4-look.png') });
 console.log('errors:', errors.length ? errors : 'none');
 await browser.close();

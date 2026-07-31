@@ -1,5 +1,5 @@
-// Сквозной тест возобновления: list_sessions видит сессию с диска,
-// open_session поднимает её, history отдаёт старые сообщения из транскрипта.
+// End-to-end resumption test: list_sessions sees the session on disk,
+// open_session brings it up, history returns the old messages from the transcript.
 import WebSocket from 'ws';
 
 const projectDir = process.argv[2];

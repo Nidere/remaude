@@ -65,8 +65,25 @@ type **Web application**:
 - Authorized JavaScript origins: `https://<domain>`
 - Authorized redirect URIs: `https://<domain>/auth/google/callback`
 
+Every deployment needs **its own** OAuth client — nothing is shared between
+installations. The relay never hardcodes any of this: the id and secret come
+from the environment, and the redirect URI is derived from `BASE_URL`.
+
 Keep the client ID and secret. ⚠ Never commit the secret: it belongs in AWS
 Secrets Manager (below) or in environment variables on the server.
+
+⚠ Two traps that account for most "OAuth suddenly broke" reports:
+
+- **The redirect URI must match `BASE_URL` character for character.** A stray
+  `www`, `http` instead of `https`, or a trailing slash gets you
+  `redirect_uri_mismatch` and nothing else explains why.
+- **While the consent screen is in "Testing" status**, only accounts listed as
+  test users in the console can sign in, and everyone sees an "unverified app"
+  warning. For a handful of private users that is fine — publishing and
+  verification are not needed — but forgetting to add yourself as a test user
+  locks you out. The seven-day refresh token limit of Testing mode does not
+  apply here: the code is exchanged once for an `id_token` to read the verified
+  email, after which sessions ride on the relay's own signed cookie.
 
 ### 3. VPS and DNS
 
