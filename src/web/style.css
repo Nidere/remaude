@@ -942,7 +942,7 @@ body.editing .agent-item { display: none; } /* agents are not editable */
 .add-host {
   display: block;
   width: 100%;
-  margin: 10px;
+  margin: 0;
   padding: 7px;
   background: none;
   border: 1px dashed var(--border);

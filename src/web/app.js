@@ -318,7 +318,7 @@ const handlers = {
 
   agents({ chatId, agents }) {
     getChat(chatId).agents = agents;
-    renderSidebar(cachedProjects);
+    renderSidebar();
   },
 
   root_listing({ root, dirs, added, error, _host }) {
@@ -784,13 +784,8 @@ function renderHostProjects(root, hostId, hostState) {
       const btnOld = el('button', '', '⏳');
       btnOld.title = 'past chats';
       btnOld.onclick = () => sendTo(hostId, { type: 'list_sessions', projectPath: p.path });
-      const btnClose = el('button', 'project-close', '✕');
-      btnClose.title = 'remove project from the sidebar (files and sessions stay)';
-      btnClose.onclick = () => {
-        if (confirm(`Remove “${shortPath(p.path)}” from the sidebar? Open chats will close; nothing is deleted on disk.`))
-          sendTo(hostId, { type: 'close_project', path: p.path });
-      };
-      actions.append(btnNew, btnOld, btnClose);
+      // no delete outside edit mode: removing things is what edit mode is for
+      actions.append(btnNew, btnOld);
       head.append(name, actions);
     } else {
       head.append(name);
@@ -935,7 +930,7 @@ function setEditMode(on) {
   editMode = on;
   document.body.classList.toggle('editing', on);
   $('edit-btn').classList.toggle('active', on);
-  renderSidebar(cachedProjects);
+  renderSidebar();
 }
 
 /**
@@ -948,29 +943,29 @@ function makeDraggable(row, group, onDrop) {
   row.addEventListener('pointerdown', (e) => {
     if (!editMode || e.button > 0 || e.target.closest('button')) return;
     e.preventDefault();
-    const siblings = () => [...row.parentElement.querySelectorAll(`[data-sort-group="${group}"]`)];
-    row.setPointerCapture(e.pointerId);
+    const parent = row.parentElement;
+    const siblings = () => [...parent.querySelectorAll(`[data-sort-group="${group}"]`)];
     row.classList.add('dragging');
 
+    // Listeners live on the window, not on the row: moving a node in the DOM
+    // drops its pointer capture, and the drag would freeze after the first swap.
     const onMove = (ev) => {
-      const target = document
-        .elementFromPoint(ev.clientX, ev.clientY)
-        ?.closest(`[data-sort-group="${group}"]`);
-      if (!target || target === row) return;
+      const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(`[data-sort-group="${group}"]`);
+      if (!target || target === row || target.parentElement !== parent) return;
       const rect = target.getBoundingClientRect();
       const after = ev.clientY > rect.top + rect.height / 2;
-      target.parentElement.insertBefore(row, after ? target.nextSibling : target);
+      parent.insertBefore(row, after ? target.nextSibling : target);
     };
     const onUp = () => {
       row.classList.remove('dragging');
-      row.removeEventListener('pointermove', onMove);
-      row.removeEventListener('pointerup', onUp);
-      row.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       onDrop(siblings().map((n) => n.dataset.sortId));
     };
-    row.addEventListener('pointermove', onMove);
-    row.addEventListener('pointerup', onUp);
-    row.addEventListener('pointercancel', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   });
 }
 
@@ -1036,6 +1031,7 @@ function renderAddHost(root) {
 
 function showInvite(url, minutes) {
   $('picker-title').textContent = 'Connect a new host';
+  $('picker-form').hidden = true; // the modal is shared: drop the previous screen's input row
   const list = $('picker-list');
   list.innerHTML = '';
   list.append(
