@@ -599,7 +599,9 @@ function attachHost(ws, info, ip) {
     }
     if (msg.t === 'msg') {
       const client = link.clients.get(msg.id);
-      if (client?.readyState === client?.OPEN) client.send(tagged(msg.data, link.hostId));
+      // no optional chaining on both sides: undefined === undefined is true,
+      // and that exact self-own crashed the relay on messages to dead clients
+      if (client && client.readyState === client.OPEN) client.send(tagged(msg.data, link.hostId));
     } else if (msg.t === 'cast') {
       const data = tagged(msg.data, link.hostId);
       for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(data);

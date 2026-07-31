@@ -74,15 +74,45 @@ export function listSessions(cwd) {
   return sessions.sort((a, b) => b.mtime - a.mtime);
 }
 
+/** Full path to a session's transcript, or null if it does not exist. */
+export function sessionFile(cwd, sessionId) {
+  const dir = sessionDir(cwd);
+  if (!dir) return null;
+  const file = join(dir, `${sessionId}.jsonl`);
+  return existsSync(file) ? file : null;
+}
+
+/**
+ * One raw transcript entry → a feed message the web client can render
+ * (type/message/parent_tool_use_id), or null for entries the feed skips.
+ */
+export function mapEntry(entry, { defaultAuthor = null } = {}) {
+  if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message || entry.isMeta) return null;
+  // the harness's system injections (task notifications and the like) are written as
+  // user messages, but carry origin.kind — real user input has no origin
+  if (entry.type === 'user' && entry.origin?.kind) return null;
+  const isPlainUserText =
+    entry.type === 'user' &&
+    !entry.isSidechain &&
+    !(Array.isArray(entry.message.content) && entry.message.content.some((b) => b.type === 'tool_result'));
+  return {
+    type: entry.type,
+    message: entry.message,
+    parent_tool_use_id: entry.isSidechain ? (entry.parentToolUseId ?? 'past-sidechain') : null,
+    timestamp: entry.timestamp ?? null,
+    // the transcript has no author — we sign historical messages with the host owner
+    author: isPlainUserText ? defaultAuthor : undefined,
+    uuid: entry.uuid ?? null,
+  };
+}
+
 /**
  * Session history as pseudo-SDK messages — exactly what the web client knows how
- * to render (type/message/parent_tool_use_id).
+ * to render.
  */
 export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
-  const dir = sessionDir(cwd);
-  if (!dir) return [];
-  const file = join(dir, `${sessionId}.jsonl`);
-  if (!existsSync(file)) return [];
+  const file = sessionFile(cwd, sessionId);
+  if (!file) return [];
   const messages = [];
   for (const line of readFileSync(file, 'utf-8').split('\n')) {
     if (!line.trim()) continue;
@@ -92,22 +122,8 @@ export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
     } catch {
       continue;
     }
-    if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message || entry.isMeta) continue;
-    // the harness's system injections (task notifications and the like) are written as
-    // user messages, but carry origin.kind — real user input has no origin
-    if (entry.type === 'user' && entry.origin?.kind) continue;
-    const isPlainUserText =
-      entry.type === 'user' &&
-      !entry.isSidechain &&
-      !(Array.isArray(entry.message.content) && entry.message.content.some((b) => b.type === 'tool_result'));
-    messages.push({
-      type: entry.type,
-      message: entry.message,
-      parent_tool_use_id: entry.isSidechain ? (entry.parentToolUseId ?? 'past-sidechain') : null,
-      timestamp: entry.timestamp ?? null,
-      // the transcript has no author — we sign historical messages with the host owner
-      author: isPlainUserText ? defaultAuthor : undefined,
-    });
+    const msg = mapEntry(entry, { defaultAuthor });
+    if (msg) messages.push(msg);
   }
   return messages;
 }

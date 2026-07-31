@@ -2,7 +2,18 @@
 // It only listens on 127.0.0.1 — we reach the outside world through the relay (see README).
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { readFileSync, existsSync, statSync, readdirSync, openSync, mkdirSync } from 'node:fs';
+import {
+  readFileSync,
+  existsSync,
+  statSync,
+  readdirSync,
+  openSync,
+  readSync,
+  closeSync,
+  mkdirSync,
+  watchFile,
+  unwatchFile,
+} from 'node:fs';
 import { homedir, userInfo, hostname } from 'node:os';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { HostAgent } from './agent.js';
-import { listSessions, loadHistory } from './transcripts.js';
+import { listSessions, loadHistory, sessionFile, mapEntry } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
 
 const PORT = 7699;
@@ -117,6 +128,7 @@ function openSavedSession(projectPath, sessionId, { permissionMode, title } = {}
   chat.resumeId = sessionId;
   chat.title = title ?? null;
   chatHistories.set(chat.id, loadHistory(abs, sessionId, { defaultAuthor: userName }));
+  startTail(chat);
   return chat;
 }
 
@@ -138,6 +150,11 @@ agent.on('chat_message', ({ chatId, msg }) => {
   if (msg.type === 'system' && msg.subtype === 'init') {
     sendChatMeta(chatId);
     saveOpenChats(); // the sessionId is now known — record it so we can reopen the chat
+    try {
+      startTail(findChat(chatId)); // follow foreign writes to the shared transcript
+    } catch {
+      /* the chat may already be gone */
+    }
   }
   // remember what was actually said last: that, not the chat name, is what makes
   // a completion notification worth reading
@@ -221,6 +238,109 @@ function hasToolResult(msg) {
 function pushHistory(chatId, msg) {
   if (!chatHistories.has(chatId)) chatHistories.set(chatId, []);
   chatHistories.get(chatId).push(msg);
+  if (msg.uuid) tails.get(chatId)?.seen.add(msg.uuid);
+}
+
+// ---------- transcript sync: two frontends, one shared log ----------
+// The SDK does not replay foreign writes into our stream, so while a chat is
+// open here, another process (VS Code) may keep appending to the same session
+// file. We tail that file: entries we did not produce are mapped and pushed
+// into the feed live. Ours are skipped by uuid; typed input, which has no uuid
+// on our side, is matched by its text.
+
+const tails = new Map(); // chatId -> {file, offset, restBuf, seen, ownTexts, listener}
+
+function startTail(chat) {
+  if (tails.has(chat.id)) return;
+  const sid = chat.sessionId ?? chat.resumeId;
+  if (!sid) return;
+  const file = sessionFile(chat.cwd, sid);
+  if (!file) return;
+  const tail = {
+    file,
+    offset: statSync(file).size,
+    restBuf: Buffer.alloc(0),
+    seen: new Set((chatHistories.get(chat.id) ?? []).map((m) => m.uuid).filter(Boolean)),
+    ownTexts: [],
+    listener: () => {
+      try {
+        drainTail(chat.id, tail);
+      } catch (e) {
+        console.error('tail error:', e.message);
+      }
+    },
+  };
+  watchFile(file, { interval: 1500 }, tail.listener);
+  tails.set(chat.id, tail);
+}
+
+function stopTail(chatId) {
+  const tail = tails.get(chatId);
+  if (!tail) return;
+  unwatchFile(tail.file, tail.listener);
+  tails.delete(chatId);
+}
+
+function drainTail(chatId, tail) {
+  let size;
+  try {
+    size = statSync(tail.file).size;
+  } catch {
+    return; // the file may briefly vanish on rotation
+  }
+  if (size < tail.offset) {
+    tail.offset = size; // truncated — start following from the new end
+    tail.restBuf = Buffer.alloc(0);
+    return;
+  }
+  if (size === tail.offset) return;
+
+  const chunk = Buffer.alloc(Math.min(size - tail.offset, 8 * 1024 * 1024));
+  const fd = openSync(tail.file, 'r');
+  let read;
+  try {
+    read = readSync(fd, chunk, 0, chunk.length, tail.offset);
+  } finally {
+    closeSync(fd);
+  }
+  tail.offset += read;
+
+  // split on the last newline so multi-byte characters never get cut mid-sequence
+  const data = Buffer.concat([tail.restBuf, chunk.subarray(0, read)]);
+  const lastNl = data.lastIndexOf(0x0a);
+  if (lastNl === -1) {
+    tail.restBuf = data;
+    return;
+  }
+  tail.restBuf = Buffer.from(data.subarray(lastNl + 1));
+
+  for (const line of data.subarray(0, lastNl).toString('utf-8').split('\n')) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.uuid && tail.seen.has(entry.uuid)) continue;
+    const msg = mapEntry(entry, { defaultAuthor: userName });
+    if (entry.uuid) tail.seen.add(entry.uuid);
+    if (!msg) continue;
+    // our own typed input reaches the transcript under a uuid we never saw — match by text
+    if (msg.type === 'user' && !msg.parent_tool_use_id) {
+      const text =
+        typeof msg.message.content === 'string'
+          ? msg.message.content
+          : msg.message.content?.find?.((b) => b.type === 'text')?.text;
+      const i = tail.ownTexts.indexOf(text);
+      if (i !== -1) {
+        tail.ownTexts.splice(i, 1);
+        continue;
+      }
+    }
+    pushHistory(chatId, msg);
+    broadcast({ type: 'chat_message', chatId, msg });
+  }
 }
 
 // ---------- limits (widget) ----------
@@ -432,6 +552,7 @@ const handlers = {
       for (const chat of project.chats.values()) {
         chat.close();
         chatHistories.delete(chat.id);
+        stopTail(chat.id);
       }
       agent.projects.delete(abs);
     }
@@ -471,6 +592,13 @@ const handlers = {
     };
     pushHistory(chatId, userMsg);
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
+    // the transcript will echo this input under a fresh uuid — let the tail skip it
+    const tail = tails.get(chatId);
+    if (tail) {
+      const ownText = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;
+      tail.ownTexts.push(ownText);
+      if (tail.ownTexts.length > 20) tail.ownTexts.shift();
+    }
   },
 
   /** The project's sessions saved on disk (including ones created in VS Code/the CLI). */
@@ -560,6 +688,7 @@ const handlers = {
     chat.close();
     for (const p of agent.projects.values()) p.chats.delete(chatId);
     chatHistories.delete(chatId);
+    stopTail(chatId);
     saveOpenChats();
     broadcast(stateSnapshot());
   },
