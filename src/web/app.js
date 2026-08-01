@@ -867,7 +867,7 @@ function openModal(title, items, input = null) {
   const list = $('picker-list');
   list.innerHTML = '';
   for (const it of items) {
-    const item = el('div', `picker-item${it.muted ? ' added' : ''}${it.check ? ' added' : ''}`, '');
+    const item = el('div', `picker-item${it.muted ? ' muted' : ''}${it.check ? ' added' : ''}`, '');
     item.append(el('div', '', it.label));
     if (it.sub) item.append(el('div', 'picker-sub', it.sub));
     if (it.onclick)

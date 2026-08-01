@@ -1060,6 +1060,9 @@ body.guest .chat-actions { display: none !important; }
 .picker-item:hover { background: var(--bg-3); }
 .picker-item.added { color: var(--dim); }
 .picker-item.added::after { content: " ✓"; color: var(--green); }
+/* muted rows are just informational — no checkmark, no hover invitation */
+.picker-item.muted { color: var(--dim); cursor: default; }
+.picker-item.muted:hover { background: none; }
 .picker-sub { font-size: 11px; color: var(--dim); }
 .picker-item > div:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
