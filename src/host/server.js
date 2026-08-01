@@ -136,6 +136,9 @@ function saveOpenChats() {
     .map((c) => ({
       projectPath: c.cwd,
       sessionId: c.sessionId ?? c.resumeId,
+      // every resume (a host restart included) mints a fresh session id; the old
+      // ones are remembered so an old transcript never opens as a second chat
+      pastIds: [...(c.pastIds ?? [])].slice(-20),
       title: c.title ?? null,
       permissionMode: c.permissionMode,
     }));
@@ -143,14 +146,15 @@ function saveOpenChats() {
 }
 
 /** The shared path for opening a saved session (open_session and the auto-restore at startup). */
-function openSavedSession(projectPath, sessionId, { permissionMode, title } = {}) {
+function openSavedSession(projectPath, sessionId, { permissionMode, title, pastIds } = {}) {
   if (!isSessionId(sessionId)) throw new Error('bad session id');
   for (const chat of agent.allChats()) {
-    if (chat.sessionId === sessionId || chat.resumeId === sessionId) return chat;
+    if (chat.sessionId === sessionId || chat.resumeId === sessionId || chat.pastIds?.has(sessionId)) return chat;
   }
   const abs = resolve(projectPath);
   const chat = agent.createChat(abs, { resume: sessionId, permissionMode });
   chat.resumeId = sessionId;
+  chat.pastIds = new Set(pastIds ?? []);
   chat.title = title ?? null;
   chatHistories.set(chat.id, loadHistory(abs, sessionId, { defaultAuthor: userName }));
   startTail(chat);
@@ -180,6 +184,13 @@ agent.on('chat_message', ({ chatId, msg }) => {
   if (msg.type === 'assistant' || msg.type === 'user') trackAgents(chatId, msg);
   broadcast({ type: 'chat_message', chatId, msg });
   if (msg.type === 'system' && msg.subtype === 'init') {
+    // the id this chat was resumed from joins its chain of past identities
+    const inited = findChatSafe(chatId);
+    if (inited) {
+      inited.pastIds ??= new Set();
+      if (inited.resumeId) inited.pastIds.add(inited.resumeId);
+      inited.pastIds.delete(inited.sessionId);
+    }
     sendChatMeta(chatId);
     saveOpenChats(); // the sessionId is now known — record it so we can reopen the chat
     try {
@@ -1126,6 +1137,7 @@ const handlers = {
     for (const chat of agent.projects.get(abs)?.chats.values() ?? []) {
       if (chat.sessionId) live[chat.sessionId] = chat.id;
       if (chat.resumeId) live[chat.resumeId] = chat.id;
+      for (const id of chat.pastIds ?? []) live[id] = chat.id; // old links in the chain are this same chat
     }
     send(ws, { type: 'sessions', projectPath, sessions: listSessions(resolve(projectPath)), live });
   },
