@@ -1170,7 +1170,14 @@ const handlers = {
   },
 
   history(ws, { chatId }) {
-    send(ws, { type: 'history', chatId, messages: chatHistories.get(chatId) ?? [] });
+    // The full log with inline screenshots is tens of megabytes through the
+    // relay tunnel — that was the ~10s cold open. The feed gets the recent
+    // tail; in all but the freshest messages images collapse to placeholders
+    // (the gallery still serves the real ones) and huge payloads are clipped.
+    const all = chatHistories.get(chatId) ?? [];
+    const tail = all.slice(-300);
+    const keepRich = tail.length - 30;
+    send(ws, { type: 'history', chatId, messages: tail.map((m, i) => (i < keepRich ? slimHistoryMessage(m) : m)) });
   },
 
   get_limits() {
@@ -1673,6 +1680,40 @@ const handlers = {
 };
 
 let searchCursor = null; // {needle, files, idx} — lets "load more" resume the scan
+
+/** Old history messages travel light: base64 images and huge payloads stay behind. */
+function slimHistoryMessage(msg) {
+  const content = msg.message?.content;
+  if (!Array.isArray(content)) return msg;
+  let changed = false;
+  const clip = (s) => {
+    if (typeof s !== 'string' || s.length <= 2000) return s;
+    changed = true;
+    return s.slice(0, 2000) + '…';
+  };
+  const mapped = content.map((b) => {
+    if (b.type === 'image') {
+      changed = true;
+      return { type: 'text', text: '🖼 (в галерее 📎)' };
+    }
+    if (b.type !== 'tool_result') return b;
+    if (typeof b.content === 'string') {
+      const clipped = clip(b.content);
+      return clipped === b.content ? b : { ...b, content: clipped };
+    }
+    if (!Array.isArray(b.content)) return b;
+    const inner = b.content.map((c) => {
+      if (c.type === 'image') {
+        changed = true;
+        return { type: 'text', text: '🖼' };
+      }
+      const clipped = clip(c.text);
+      return clipped === c.text ? c : { ...c, text: clipped };
+    });
+    return inner.some((c, i) => c !== b.content[i]) ? { ...b, content: inner } : b;
+  });
+  return changed ? { ...msg, message: { ...msg.message, content: mapped } } : msg;
+}
 
 function findChatSafe(chatId) {
   for (const chat of agent.allChats()) if (chat.id === chatId) return chat;

@@ -230,10 +230,15 @@ const handlers = {
       }
       if (target) selectChat(target);
     }
-    // a rename (manual or suggested) must reach the header, not only the sidebar
+    // a rename (manual or suggested) must reach the header, not only the sidebar —
+    // and a snapshot is also the truth about status, so the stop button and the
+    // activity strip follow it too (a missed live event otherwise sticks forever)
     const active = chats.get(activeChatId);
-    if (active && liveChats.has(activeChatId))
+    if (active && liveChats.has(activeChatId)) {
       $('chat-title').textContent = `${shortPath(active.projectPath)} · ${active.title ?? activeChatId.slice(0, 8)}`;
+      updateComposerButtons(active.status);
+      renderActivity(active);
+    }
   },
 
   chat_created({ chatId }) {

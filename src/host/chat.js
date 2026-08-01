@@ -121,6 +121,9 @@ export class Chat extends EventEmitter {
 
   async interrupt() {
     await this.#query.interrupt();
+    // an aborted turn does not always send a result — without this the chat
+    // (and its stop button) would stay "thinking" until something else moves
+    this.#setStatus('idle');
   }
 
   async setPermissionMode(mode) {
