@@ -939,6 +939,7 @@ const GUEST_TYPES = new Set([
   'open_session',
   'attachments',
   'image',
+  'tool_result',
   ...DOC_TYPES, // documents and their comment threads — gated per document in dispatch()
 ]);
 
@@ -1177,7 +1178,21 @@ const handlers = {
     const all = chatHistories.get(chatId) ?? [];
     const tail = all.slice(-300);
     const keepRich = tail.length - 30;
-    send(ws, { type: 'history', chatId, messages: tail.map((m, i) => (i < keepRich ? slimHistoryMessage(m) : m)) });
+    send(ws, { type: 'history', chatId, messages: tail.map((m, i) => lazyHistoryMessage(m, i < keepRich)) });
+  },
+
+  /** One tool result on demand — the history only carried its stub. */
+  tool_result(ws, { chatId, toolUseId }) {
+    for (const msg of chatHistories.get(chatId) ?? []) {
+      const content = msg.message?.content;
+      if (!Array.isArray(content)) continue;
+      const block = content.find((b) => b.type === 'tool_result' && b.tool_use_id === toolUseId);
+      if (block) {
+        send(ws, { type: 'tool_result_data', chatId, toolUseId, block });
+        return;
+      }
+    }
+    throw new Error('no such tool result');
   },
 
   get_limits() {
@@ -1681,36 +1696,26 @@ const handlers = {
 
 let searchCursor = null; // {needle, files, idx} — lets "load more" resume the scan
 
-/** Old history messages travel light: base64 images and huge payloads stay behind. */
-function slimHistoryMessage(msg) {
+/**
+ * History travels light: every tool result becomes an empty lazy stub that the
+ * client fetches on demand (see the tool_result command), and outside the
+ * freshest messages inline images collapse to placeholders too (the gallery
+ * still serves the real ones).
+ */
+function lazyHistoryMessage(msg, slimImages) {
   const content = msg.message?.content;
   if (!Array.isArray(content)) return msg;
   let changed = false;
-  const clip = (s) => {
-    if (typeof s !== 'string' || s.length <= 2000) return s;
-    changed = true;
-    return s.slice(0, 2000) + '…';
-  };
   const mapped = content.map((b) => {
-    if (b.type === 'image') {
+    if (b.type === 'tool_result') {
+      changed = true;
+      return { type: 'tool_result', tool_use_id: b.tool_use_id, is_error: b.is_error ?? false, content: '', lazy: true };
+    }
+    if (slimImages && b.type === 'image') {
       changed = true;
       return { type: 'text', text: '🖼 (в галерее 📎)' };
     }
-    if (b.type !== 'tool_result') return b;
-    if (typeof b.content === 'string') {
-      const clipped = clip(b.content);
-      return clipped === b.content ? b : { ...b, content: clipped };
-    }
-    if (!Array.isArray(b.content)) return b;
-    const inner = b.content.map((c) => {
-      if (c.type === 'image') {
-        changed = true;
-        return { type: 'text', text: '🖼' };
-      }
-      const clipped = clip(c.text);
-      return clipped === c.text ? c : { ...c, text: clipped };
-    });
-    return inner.some((c, i) => c !== b.content[i]) ? { ...b, content: inner } : b;
+    return b;
   });
   return changed ? { ...msg, message: { ...msg.message, content: mapped } } : msg;
 }

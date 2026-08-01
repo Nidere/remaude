@@ -345,6 +345,16 @@ const handlers = {
     renderAttachments2();
   },
 
+  tool_result_data({ chatId, toolUseId, block }) {
+    const chat = chats.get(chatId);
+    const chip = chat?.chips.get(toolUseId);
+    if (!chip) return;
+    chip.querySelector('.result-loading')?.remove();
+    delete chip.dataset.lazy;
+    delete chip.dataset.loading;
+    attachToolResult(chat, block);
+  },
+
   async image_data({ sessionId, index, mediaType, data }) {
     const key = `${sessionId}:${index}`;
     const url = `data:${mediaType};base64,${data}`;
@@ -799,6 +809,12 @@ function makeChip(title, body) {
 function attachToolResult(chat, block) {
   const chip = chat.chips.get(block.tool_use_id);
   const target = chip ?? chat.feedEl.appendChild(makeChip('result', ''));
+  if (!chip) chat.chips.set(block.tool_use_id, target);
+  // history carries stubs only — the real payload is fetched when the chip opens
+  if (block.lazy) {
+    target.dataset.lazy = block.tool_use_id;
+    return;
+  }
   const wrap = el('div', 'result-block', '');
   const content = block.content;
   if (typeof content === 'string') wrap.append(el('pre', '', content.slice(0, 4000)));
@@ -1686,6 +1702,21 @@ $('permission-mode').addEventListener('change', function () {
   setModeSelect(this.value);
   if (activeChatId) sendTo(chatHostId(activeChatId), { type: 'set_permission_mode', chatId: activeChatId, mode: this.value });
 });
+
+// a lazy tool chip fetches its payload the first time it is opened
+// (toggle does not bubble — capture phase is the only way to hear it here)
+document.addEventListener(
+  'toggle',
+  (e) => {
+    const chip = e.target;
+    if (!(chip instanceof HTMLDetailsElement) || !chip.open) return;
+    if (!chip.dataset.lazy || chip.dataset.loading) return;
+    chip.dataset.loading = '1';
+    chip.append(el('pre', 'result-loading', 'loading…'));
+    sendTo(chatHostId(activeChatId), { type: 'tool_result', chatId: activeChatId, toolUseId: chip.dataset.lazy });
+  },
+  true
+);
 
 // lightbox: clicking any image in the feed opens a full-screen view
 feedHost.addEventListener('click', (e) => {
