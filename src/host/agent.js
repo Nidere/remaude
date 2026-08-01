@@ -25,8 +25,21 @@ export class HostAgent extends EventEmitter {
   addProject(path) {
     const abs = resolve(path);
     if (!statSync(abs).isDirectory()) throw new Error(`not a directory: ${abs}`);
-    if (!this.projects.has(abs)) this.projects.set(abs, { path: abs, chats: new Map() });
+    // Windows paths are case-insensitive, Map keys are not: a transcript may
+    // record the same folder as c:\... while the sidebar has C:\... — that must
+    // not become a second project (it did: opening a session from search).
+    const existing = this.findProject(abs);
+    if (existing) return existing;
+    this.projects.set(abs, { path: abs, chats: new Map() });
     return this.projects.get(abs);
+  }
+
+  findProject(path) {
+    const direct = this.projects.get(path);
+    if (direct || process.platform !== 'win32') return direct ?? null;
+    const key = path.toLowerCase();
+    for (const p of this.projects.values()) if (p.path.toLowerCase() === key) return p;
+    return null;
   }
 
   /** @param opts {resume?, permissionMode?, model?} */
