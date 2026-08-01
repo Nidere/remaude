@@ -33,6 +33,17 @@ import {
   isSessionId,
 } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
+import {
+  sidecarPath,
+  isSidecarPath,
+  docPathOfSidecar,
+  loadThreads,
+  saveThreads,
+  makeReply,
+  seenFor,
+  markThreadSeen,
+  unseenThreadIds,
+} from './comments.js';
 
 // Port and config are overridable so a second instance can be started safely
 // (tests, or a throwaway host) without touching the real one's state.
@@ -156,6 +167,9 @@ for (const oc of config.openChats ?? []) {
 }
 
 agent.on('chat_message', ({ chatId, msg }) => {
+  // a service turn (comment thread, chat naming): tag everything it says so the feed can hide it
+  const serviceTurn = serviceTurns.get(chatId);
+  if (serviceTurn && !serviceTurn.contested) msg.threadRef = serviceTurn.threadId ?? '@service';
   // We broadcast user input ourselves in handleSend (otherwise it duplicates with the SDK's
   // replay), so plain text user messages of the main dialogue are skipped here.
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
@@ -185,6 +199,8 @@ agent.on('chat_message', ({ chatId, msg }) => {
     if (text) lastReplies.set(chatId, text);
   }
   if (msg.type === 'result') {
+    // the service turn's text has to be captured while lastReplies still holds it
+    finishServiceTurn(chatId);
     // The turn is over: a foreground agent that never reported back is gone.
     // Background ones outlive the turn by design — they keep their row.
     let aborted = false;
@@ -318,6 +334,11 @@ function rememberArtifact(path, chatId) {
 /** A Write/Edit landed: index it when the file marks itself as the user's. */
 function trackArtifact(chatId, filePath) {
   const abs = resolve(filePath);
+  // a comments sidecar was (re)written — that is a comments change, not a new document
+  if (isSidecarPath(abs)) {
+    broadcastComments(docPathOfSidecar(abs));
+    return;
+  }
   if (!existsSync(abs) || !statSync(abs).isFile()) return;
   if (!isInboxPath(abs)) {
     try {
@@ -327,6 +348,161 @@ function trackArtifact(chatId, filePath) {
     }
   }
   rememberArtifact(abs, chatId);
+}
+
+// ---------- inline comments on documents ----------
+// Threads live in a sidecar next to the .md (see comments.js). The server is a
+// thin gate: it checks access, stamps authorship, keeps per-person read marks
+// and tells every open client when something changed. Payloads are personal
+// (each person has their own read marks), so updates are per-client sends, not
+// one shared broadcast.
+
+function identityOf(ws) {
+  return ws.guest ? ws.guest.email : '@owner';
+}
+
+function authorNameOf(ws) {
+  return ws.guest ? ws.guest.email.split('@')[0] : userName;
+}
+
+function artifactByPath(path) {
+  const abs = resolve(String(path ?? ''));
+  return artifacts.find((a) => a.path.toLowerCase() === abs.toLowerCase()) ?? null;
+}
+
+/** Comments hang off inbox documents only — and only markdown opens in the viewer. */
+function requireDoc(path) {
+  const a = artifactByPath(path);
+  if (!a) throw new Error('not in the inbox');
+  if (!a.path.toLowerCase().endsWith('.md')) throw new Error('comments only work on markdown documents');
+  return a;
+}
+
+/** May this guest see this document at all? Mirrors the share grants. */
+function guestCanSeeDoc(guest, a) {
+  const email = guest.email;
+  if (hasHostAccess(email)) return true;
+  if (a.projectPath && projectSharedWith(a.projectPath, email)) return true;
+  if (a.sessionId && (config.shares?.[a.sessionId] ?? []).includes(email)) return true;
+  if (a.chatId && guestChatIds(guest).has(a.chatId)) return true;
+  return false;
+}
+
+function commentsPayload(ws, docPath) {
+  const identity = identityOf(ws);
+  return {
+    type: 'comments',
+    path: resolve(docPath),
+    threads: loadThreads(docPath),
+    seen: seenFor(identity, docPath),
+    me: identity,
+  };
+}
+
+/** Unread counts per document — what lights the red dots in the inbox. */
+function badgePayload(ws) {
+  const identity = identityOf(ws);
+  const perDoc = {};
+  let total = 0;
+  for (const a of artifacts) {
+    if (!a.path.toLowerCase().endsWith('.md')) continue;
+    if (ws.guest && !guestCanSeeDoc(ws.guest, a)) continue;
+    const n = unseenThreadIds(identity, a.path, loadThreads(a.path)).length;
+    if (n) {
+      perDoc[a.path] = n;
+      total += n;
+    }
+  }
+  return { type: 'comments_badge', total, perDoc };
+}
+
+/** A document's comments changed: refresh threads and badges for everyone allowed to look. */
+function broadcastComments(docPath) {
+  const a = artifactByPath(docPath);
+  for (const ws of clients) {
+    if (ws.readyState !== ws.OPEN) continue;
+    if (ws.guest && (!a || !guestCanSeeDoc(ws.guest, a))) continue;
+    send(ws, commentsPayload(ws, docPath));
+    send(ws, badgePayload(ws));
+  }
+}
+
+// A service turn: the chat is currently answering something that is not part
+// of the conversation — a comment thread, or a request to name the chat. Its
+// messages are tagged so the web feed keeps them out of view, and its final
+// text is consumed by finishServiceTurn. 'contested' flips when a human
+// message interleaves — from then on the turn is a normal visible one.
+const serviceTurns = new Map(); // chatId -> {kind: 'thread'|'title', threadId?, path?, askAt, contested}
+
+/** The chat a document belongs to — reopened from its session if it was closed. */
+function chatForArtifact(a) {
+  let chat = a.chatId ? findChatSafe(a.chatId) : null;
+  if (!chat && a.sessionId)
+    for (const c of agent.allChats())
+      if (c.sessionId === a.sessionId || c.resumeId === a.sessionId) {
+        chat = c;
+        break;
+      }
+  if (!chat && a.sessionId && a.projectPath) {
+    chat = openSavedSession(a.projectPath, a.sessionId, {});
+    saveOpenChats();
+    broadcast(stateSnapshot());
+  }
+  if (!chat) throw new Error('the document has no chat to ask in');
+  return chat;
+}
+
+function threadPrompt(a, thread, question) {
+  const replies = (thread.replies ?? []).map((r) => `${r.author}: ${r.text}`).join('\n\n');
+  return [
+    '[remaude: a question from an inline-comment thread — hidden from the chat feed]',
+    `The document ${a.path} has a comment thread on this fragment:`,
+    '"""',
+    thread.anchor?.quote || '(the fragment could not be quoted)',
+    '"""',
+    'The thread so far:',
+    replies || '(no replies yet)',
+    '',
+    question ? `The new question: ${question}` : 'Reply to the thread above.',
+    '',
+    'Answer in ONE message, in the language of the thread. Your final text is added to the thread automatically — do not edit the comments sidecar file yourself. Start your reply with the exact line `[remaude: thread reply]` (it is stripped before posting), then the reply itself. Read the document or the code first if that makes the answer better.',
+  ].join('\n');
+}
+
+/** The service turn is over: its final text becomes a thread reply or the chat's name. */
+function finishServiceTurn(chatId) {
+  const turn = serviceTurns.get(chatId);
+  if (!turn) return;
+  serviceTurns.delete(chatId);
+  const finalText = (lastReplies.get(chatId) ?? '').replace(/^\s*\[remaude[^\]]*\]\s*/, '').trim();
+  try {
+    if (turn.kind === 'title') {
+      // a contested turn answered the human, not the naming request — drop it
+      if (turn.contested || !finalText) return;
+      const title = finalText.split('\n')[0].replace(/^["'«»„“”]+|["'«»„“”]+$/g, '').trim().slice(0, 60);
+      const chat = findChatSafe(chatId);
+      if (!chat || !title) return;
+      chat.title = title;
+      saveOpenChats();
+      broadcast(stateSnapshot());
+      return;
+    }
+    const threads = loadThreads(turn.path);
+    const thread = threads.find((t) => t.id === turn.threadId);
+    if (thread && finalText && !thread.replies.some((r) => r.role === 'assistant' && r.createdAt >= turn.askAt)) {
+      thread.replies.push(makeReply({ author: 'Claude', authorId: '@llm', role: 'assistant', text: finalText }));
+      saveThreads(turn.path, threads);
+    }
+    const a = artifactByPath(turn.path);
+    for (const ws of clients) {
+      if (ws.readyState !== ws.OPEN) continue;
+      if (ws.guest && (!a || !guestCanSeeDoc(ws.guest, a))) continue;
+      send(ws, { type: 'llm_thread_done', path: turn.path, threadId: turn.threadId });
+    }
+    broadcastComments(turn.path);
+  } catch (e) {
+    console.error('service turn failed:', e.message);
+  }
 }
 
 // ---------- subagent tracking ----------
@@ -729,6 +905,19 @@ function guestCanSee(guest, obj) {
   return false; // state is handled separately; permissions/limits/relay — owner only
 }
 
+/** Commands that address a document by path — each checked against the share grants. */
+const DOC_TYPES = new Set([
+  'read_artifact',
+  'list_comments',
+  'add_comment',
+  'reply_comment',
+  'edit_comment',
+  'delete_comment',
+  'resolve_comment',
+  'mark_thread_seen',
+  'ask_llm_comment',
+]);
+
 /** The commands allowed to guests (and only on their own chats). */
 const GUEST_TYPES = new Set([
   'send',
@@ -739,6 +928,7 @@ const GUEST_TYPES = new Set([
   'open_session',
   'attachments',
   'image',
+  ...DOC_TYPES, // documents and their comment threads — gated per document in dispatch()
 ]);
 
 function startRelay() {
@@ -896,6 +1086,10 @@ const handlers = {
   send(ws, { chatId, content, localId }) {
     const chat = findChat(chatId);
     ws.watching = chatId; // whoever is typing here is plainly watching it
+    // a human message lands mid-service-turn: the turn is a shared one now, so
+    // stop hiding it (a thread answer still gets copied; a title is dropped)
+    const serviceTurn = serviceTurns.get(chatId);
+    if (serviceTurn) serviceTurn.contested = true;
     chat.send(content);
     if (!chat.title) {
       const text = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;
@@ -1087,10 +1281,20 @@ const handlers = {
     images.sort((a, b) => new Date(b.ts ?? 0) - new Date(a.ts ?? 0));
     const page = images.slice(offset, offset + limit);
 
+    // A resumed session gets a fresh id, so a document written before a host
+    // restart no longer matches by sessionId alone — the chain goes through
+    // resumeId. A match through the old id also heals the entry in place, so
+    // it survives the next restart too.
+    const inThisChat = (a) => {
+      if (a.chatId === chatId || (a.sessionId && a.sessionId === chat.sessionId)) return true;
+      if (!a.sessionId || a.sessionId !== chat.resumeId) return false;
+      a.chatId = chatId;
+      if (chat.sessionId) a.sessionId = chat.sessionId;
+      saveArtifacts();
+      return true;
+    };
     const docs = artifacts
-      .filter((a) =>
-        scope === 'project' ? resolve(a.projectPath ?? '') === project : a.chatId === chatId || a.sessionId === chat.sessionId
-      )
+      .filter((a) => (scope === 'project' ? resolve(a.projectPath ?? '') === project : inThisChat(a)))
       .map((a) => {
         let size = null;
         let missing = true;
@@ -1155,6 +1359,129 @@ const handlers = {
     broadcast({ type: 'artifact_removed', path: abs });
   },
 
+  // ---------- inline comments ----------
+
+  list_comments(ws, { path }) {
+    const a = requireDoc(path);
+    send(ws, commentsPayload(ws, a.path));
+    send(ws, badgePayload(ws));
+  },
+
+  /** A new thread: the selection anchor plus its first reply. */
+  add_comment(ws, { path, anchor, text }) {
+    const a = requireDoc(path);
+    const body = String(text ?? '').trim();
+    if (!body) throw new Error('empty comment');
+    const threads = loadThreads(a.path);
+    const thread = {
+      id: randomUUID(),
+      anchor: {
+        quote: String(anchor?.quote ?? '').slice(0, 2000),
+        prefix: String(anchor?.prefix ?? '').slice(0, 200),
+        suffix: String(anchor?.suffix ?? '').slice(0, 200),
+      },
+      resolved: false,
+      createdAt: Date.now(),
+      replies: [makeReply({ author: authorNameOf(ws), authorId: identityOf(ws), text: body })],
+    };
+    threads.push(thread);
+    saveThreads(a.path, threads);
+    markThreadSeen(identityOf(ws), a.path, thread.id); // your own comment is not news to you
+    broadcastComments(a.path);
+  },
+
+  reply_comment(ws, { path, threadId, text }) {
+    const a = requireDoc(path);
+    const body = String(text ?? '').trim();
+    if (!body) throw new Error('empty reply');
+    const threads = loadThreads(a.path);
+    const thread = threads.find((t) => t.id === threadId);
+    if (!thread) throw new Error('no such thread');
+    thread.replies.push(makeReply({ author: authorNameOf(ws), authorId: identityOf(ws), text: body }));
+    saveThreads(a.path, threads);
+    markThreadSeen(identityOf(ws), a.path, threadId);
+    broadcastComments(a.path);
+  },
+
+  /** Only the author edits their reply — the owner included (own replies only). */
+  edit_comment(ws, { path, threadId, replyId, text }) {
+    const a = requireDoc(path);
+    const body = String(text ?? '').trim();
+    if (!body) throw new Error('empty reply');
+    const threads = loadThreads(a.path);
+    const reply = threads.find((t) => t.id === threadId)?.replies.find((r) => r.id === replyId);
+    if (!reply) throw new Error('no such reply');
+    if (reply.authorId !== identityOf(ws)) throw new Error('only the author can edit a reply');
+    reply.text = String(body).slice(0, 20000);
+    reply.editedAt = Date.now();
+    saveThreads(a.path, threads);
+    broadcastComments(a.path);
+  },
+
+  /** The author or the host owner. Deleting the first reply deletes the thread. */
+  delete_comment(ws, { path, threadId, replyId }) {
+    const a = requireDoc(path);
+    const threads = loadThreads(a.path);
+    const thread = threads.find((t) => t.id === threadId);
+    const reply = thread?.replies.find((r) => r.id === replyId);
+    if (!reply) throw new Error('no such reply');
+    if (reply.authorId !== identityOf(ws) && ws.guest) throw new Error('only the author or the owner can delete this');
+    if (thread.replies[0].id === replyId) threads.splice(threads.indexOf(thread), 1);
+    else thread.replies = thread.replies.filter((r) => r.id !== replyId);
+    saveThreads(a.path, threads);
+    broadcastComments(a.path);
+  },
+
+  /** Anyone with access may resolve or reopen — that is the point of a comment. */
+  resolve_comment(ws, { path, threadId, resolved }) {
+    const a = requireDoc(path);
+    const threads = loadThreads(a.path);
+    const thread = threads.find((t) => t.id === threadId);
+    if (!thread) throw new Error('no such thread');
+    thread.resolved = Boolean(resolved);
+    saveThreads(a.path, threads);
+    broadcastComments(a.path);
+  },
+
+  /** Read marks are per thread, set when its branch is actually opened. */
+  mark_thread_seen(ws, { path, threadId }) {
+    const a = requireDoc(path);
+    markThreadSeen(identityOf(ws), a.path, threadId);
+    // every device of the same person drops its red dot at once
+    for (const c of clients) {
+      if (c.readyState !== c.OPEN || identityOf(c) !== identityOf(ws)) continue;
+      send(c, commentsPayload(c, a.path));
+      send(c, badgePayload(c));
+    }
+  },
+
+  /**
+   * Ask the LLM in the thread. The question goes into the document's own chat
+   * (full context), the turn is hidden from the feed, and the model's final
+   * text comes back as a thread reply — see finishLlmThread.
+   */
+  ask_llm_comment(ws, { path, threadId, text }) {
+    const a = requireDoc(path);
+    const threads = loadThreads(a.path);
+    const thread = threads.find((t) => t.id === threadId);
+    if (!thread) throw new Error('no such thread');
+    const chat = chatForArtifact(a);
+    if (ws.guest && !guestChatIds(ws.guest).has(chat.id)) throw new Error('no access to this chat');
+    if (chat.status === 'thinking' || chat.status === 'waiting_permission')
+      throw new Error('the document’s chat is busy — wait for its turn to finish and ask again');
+    const question = String(text ?? '').trim();
+    if (question) {
+      thread.replies.push(makeReply({ author: authorNameOf(ws), authorId: identityOf(ws), text: question }));
+      saveThreads(a.path, threads);
+      markThreadSeen(identityOf(ws), a.path, threadId);
+    }
+    serviceTurns.set(chat.id, { kind: 'thread', threadId, path: a.path, askAt: Date.now(), contested: false });
+    const prompt = threadPrompt(a, thread, question);
+    tails.get(chat.id)?.ownTexts.push(prompt); // the transcript echo must not reappear via the tail
+    chat.send(prompt);
+    broadcastComments(a.path);
+  },
+
   /** Sidebar order of projects: the config array itself is the order. */
   reorder_projects(ws, { paths }) {
     const wanted = paths.map((p) => resolve(p));
@@ -1195,6 +1522,26 @@ const handlers = {
     findChat(chatId).title = String(title).slice(0, 80);
     saveOpenChats();
     broadcast(stateSnapshot());
+  },
+
+  /**
+   * Name the chat by asking the chat itself — the session already holds the
+   * whole conversation in context, so no separate model or digest is needed.
+   * The turn is a hidden service one; finishServiceTurn applies the result.
+   */
+  suggest_title(ws, { chatId }) {
+    const chat = findChat(chatId);
+    if (chat.status === 'thinking' || chat.status === 'waiting_permission')
+      throw new Error('the chat is busy — wait for its turn to finish');
+    serviceTurns.set(chat.id, { kind: 'title', askAt: Date.now(), contested: false });
+    const prompt = [
+      '[remaude: a service request — hidden from the chat feed]',
+      'Come up with a name for this chat: short and specific, 40 characters at most,',
+      'in the language the user writes in, no surrounding quotes, no trailing period.',
+      'Reply with the exact line `[remaude: title]`, then the name on the next line, and nothing else.',
+    ].join('\n');
+    tails.get(chat.id)?.ownTexts.push(prompt); // the transcript echo must not reappear via the tail
+    chat.send(prompt);
   },
 
   /** Close a chat and remove it from the sidebar; the transcript stays, we resume it via open_session. */
@@ -1444,9 +1791,11 @@ function initClient(ws) {
   clients.add(ws);
   if (ws.guest) {
     send(ws, guestState(ws.guest)); // guests get only their chats, without limits or permissions
+    send(ws, badgePayload(ws)); // unread comment dots work for collaborators too
     return;
   }
   send(ws, stateSnapshot());
+  send(ws, badgePayload(ws));
   if (lastLimits) send(ws, { type: 'limits', limits: lastLimits });
   refreshLimits();
   // still-open permission requests go to the new client as well
@@ -1476,6 +1825,11 @@ function dispatch(ws, raw) {
       // a guest may start chats in a shared project, but never reach another one
       if (msg.projectPath && !guestProjectPaths(ws.guest).includes(resolve(msg.projectPath)))
         throw new Error('no access to this project');
+      // documents are gated one by one: only what the share grants cover
+      if (DOC_TYPES.has(msg.type)) {
+        const doc = artifactByPath(msg.path);
+        if (!doc || !guestCanSeeDoc(ws.guest, doc)) throw new Error('no access to this document');
+      }
       // Arguments other than the two ids above decide privileges too. A guest
       // asking for bypassPermissions would get a session that never prompts the
       // owner — that is code execution on this machine, so pin the safe values.

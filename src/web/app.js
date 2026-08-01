@@ -1,5 +1,6 @@
 // remaude web UI: a thin client on top of the host agent's WS protocol.
 import { mdToHtml } from './md.js';
+import * as docComments from './comments.js';
 
 const $ = (id) => document.getElementById(id);
 const feedHost = $('feed');
@@ -229,6 +230,10 @@ const handlers = {
       }
       if (target) selectChat(target);
     }
+    // a rename (manual or suggested) must reach the header, not only the sidebar
+    const active = chats.get(activeChatId);
+    if (active && liveChats.has(activeChatId))
+      $('chat-title').textContent = `${shortPath(active.projectPath)} · ${active.title ?? activeChatId.slice(0, 8)}`;
   },
 
   chat_created({ chatId }) {
@@ -357,9 +362,11 @@ const handlers = {
   artifact({ path, name, text, base64 }) {
     if (text != null) {
       $('doc-title').textContent = name;
-      $('doc-body').innerHTML = mdToHtml(text);
+      const html = mdToHtml(text);
+      $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;
+      docComments.docOpened(path, html);
       return;
     }
     // not markdown: hand it to the browser as a download. A blob URL survives an
@@ -375,6 +382,18 @@ const handlers = {
 
   artifact_added({ artifact }) {
     if (!$('attachments-panel').hidden) requestAttachments(0);
+  },
+
+  comments(msg) {
+    docComments.onComments(msg);
+  },
+
+  comments_badge(msg) {
+    docComments.onBadge(msg);
+  },
+
+  llm_thread_done(msg) {
+    docComments.onLlmDone(msg);
   },
 
   agents({ chatId, agents }) {
@@ -464,7 +483,14 @@ const handlers = {
     if (node) node.textContent = 'device approved ✓ — reload the page on it';
   },
 
-  error({ message }) {
+  error({ message, inResponseTo }) {
+    // an error for something done inside the document viewer must show up there,
+    // not as a banner in a chat feed nobody is looking at — and never as a
+    // modal alert(), which reads as the whole app freezing
+    if (inResponseTo?.includes('comment') || inResponseTo === 'read_artifact') {
+      docComments.showError(message);
+      return;
+    }
     if (activeChatId) appendTo(activeChatId, el('div', 'error-banner', `error: ${message}`));
     else alert(message);
   },
@@ -558,6 +584,14 @@ function syncHeaderSelects(chat) {
 
 function renderSdkMessage(chatId, msg, fromCache = false) {
   const chat = getChat(chatId);
+  // turns that answer a comment thread stay out of the feed — that conversation
+  // lives in the document. A dim one-liner marks the spot for transcript replays.
+  if (isThreadTurn(msg)) {
+    if (msg.type === 'user' && !hasToolResultBlock(msg)) {
+      chat.feedEl.append(el('div', 'thread-note', '💬 a service request — its reply lives outside the feed'));
+    }
+    return;
+  }
   if (!fromCache && msg.type !== 'stream_event') {
     (chat.msgs ??= []).push(msg);
     if (chat.msgs.length > TRANSCRIPT_KEEP * 2) chat.msgs.splice(0, chat.msgs.length - TRANSCRIPT_KEEP);
@@ -679,6 +713,32 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
     chat.feedEl.append(meta);
     scrollToBottom();
   }
+}
+
+/**
+ * Does this message belong to a comment-thread turn? Live messages carry the
+ * host's threadRef tag; ones replayed from a transcript are recognised by the
+ * `[remaude:` marker that thread prompts and replies start with.
+ */
+function isThreadTurn(msg) {
+  if (msg.threadRef) return true;
+  if (msg.type !== 'user' && msg.type !== 'assistant') return false;
+  const content = msg.message?.content;
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((b) => b.type === 'text')
+            .map((b) => b.text)
+            .join('')
+        : '';
+  return text.trimStart().startsWith('[remaude:');
+}
+
+function hasToolResultBlock(msg) {
+  const content = msg.message?.content;
+  return Array.isArray(content) && content.some((b) => b.type === 'tool_result');
 }
 
 /** A short "what is happening right now" line for the activity strip. */
@@ -1109,6 +1169,7 @@ function renderAttachments2() {
   for (const doc of attState.docs) {
     const ext = (doc.name.split('.').pop() ?? '').toLowerCase();
     const row = el('div', `att-doc${doc.missing ? ' missing' : ''}`, '');
+    row.dataset.path = doc.path; // lets the comment badges find this row
     row.append(el('div', `att-ext ext-${ext}`, ext.slice(0, 4)));
     const info = el('div', 'att-doc-info', '');
     info.append(el('div', 'att-doc-name', doc.title ?? doc.name));
@@ -1137,6 +1198,7 @@ function renderAttachments2() {
         sendTo(chatHostId(activeChatId), { type: 'read_artifact', path: doc.path, asText: ext === 'md' });
     body.append(row);
   }
+  docComments.refreshBadges(); // red dots on the rows just rendered
 }
 
 function formatSize(bytes) {
@@ -1551,6 +1613,11 @@ function setModeSelect(mode) {
   sel.classList.toggle('bypass', mode === 'bypassPermissions');
 }
 
+$('title-btn').onclick = () => {
+  if (!activeChatId || activeIsGuest()) return;
+  sendTo(chatHostId(activeChatId), { type: 'suggest_title', chatId: activeChatId });
+};
+
 $('send-btn').onclick = sendMessage;
 $('stop-btn').onclick = () => activeChatId && sendTo(chatHostId(activeChatId), { type: 'interrupt', chatId: activeChatId });
 
@@ -1952,6 +2019,9 @@ $('hide-tools').addEventListener('change', function () {
   localStorage.setItem('hideTools', this.checked ? '1' : '0');
   feedHost.classList.toggle('hide-tools', this.checked);
 });
+
+// inline comments in the document viewer; requests go to the host that owns the active chat
+docComments.initDocComments({ request: (obj) => sendTo(chatHostId(activeChatId), obj) });
 
 bootFromCache();
 connect();

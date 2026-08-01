@@ -7,8 +7,8 @@
 // fallback for offline; only static assets stay cache-first. Chat data is never
 // cached — it always comes live over the WebSocket.
 
-const SHELL = 'remaude-shell-v2';
-const CODE_FILES = ['/', '/app.js', '/md.js', '/style.css'];
+const SHELL = 'remaude-shell-v3';
+const CODE_FILES = ['/', '/app.js', '/md.js', '/comments.js', '/style.css'];
 const ASSET_FILES = ['/manifest.webmanifest', '/icons/icon-192.png'];
 const SHELL_FILES = [...CODE_FILES, ...ASSET_FILES];
 

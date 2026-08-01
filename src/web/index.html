@@ -32,6 +32,7 @@
     <header id="header">
       <button id="menu-btn" title="Menu">☰</button>
       <div id="chat-title">pick or start a chat</div>
+      <button id="title-btn" title="Let the chat name itself">🏷</button>
       <div id="header-right">
         <select id="model-select" title="Chat model">
           <option value="">model</option>
@@ -118,7 +119,13 @@
 
   <div id="doc-viewer" hidden>
     <div id="doc-box">
-      <div id="doc-head"><span id="doc-title"></span><button id="doc-close">✕</button></div>
+      <div id="doc-head">
+        <span id="doc-title"></span>
+        <span id="doc-head-actions">
+          <button id="doc-threads" title="Comment threads in this document" hidden>💬</button>
+          <button id="doc-close">✕</button>
+        </span>
+      </div>
       <div id="doc-body" class="md-body"></div>
     </div>
   </div>
