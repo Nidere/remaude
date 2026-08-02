@@ -15,7 +15,7 @@ import {
   unwatchFile,
 } from 'node:fs';
 import { homedir, userInfo, hostname } from 'node:os';
-import { join, dirname, extname, resolve } from 'node:path';
+import { join, dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -43,6 +43,7 @@ import {
   seenFor,
   markThreadSeen,
   unseenThreadIds,
+  commentedPaths,
 } from './comments.js';
 
 // Port and config are overridable so a second instance can be started safely
@@ -295,6 +296,9 @@ agent.on('chat_error', ({ chatId, error }) =>
 const ARTIFACTS_PATH = join(homedir(), '.remaude', 'artifacts.json');
 const INBOX_MARKER = '<!-- remaude -->';
 
+// Folders the explorer never shows: thousands of files nobody browses to.
+const SKIP_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', '.next', '.cache', 'dist-cache']);
+
 function loadArtifacts() {
   try {
     return JSON.parse(readFileSync(ARTIFACTS_PATH, 'utf-8'));
@@ -385,12 +389,39 @@ function artifactByPath(path) {
   return artifacts.find((a) => a.path.toLowerCase() === abs.toLowerCase()) ?? null;
 }
 
-/** Comments hang off inbox documents only — and only markdown opens in the viewer. */
-function requireDoc(path) {
-  const a = artifactByPath(path);
-  if (!a) throw new Error('not in the inbox');
-  if (!a.path.toLowerCase().endsWith('.md')) throw new Error('comments only work on markdown documents');
-  return a;
+/** The project a path belongs to (the deepest one, if projects nest), or null. */
+function projectOf(absPath) {
+  const p = resolve(absPath).toLowerCase();
+  let best = null;
+  for (const root of agent.projects.keys()) {
+    const r = root.toLowerCase();
+    if (p !== r && !p.startsWith(r + '\\') && !p.startsWith(r + '/')) continue;
+    if (!best || root.length > best.length) best = root;
+  }
+  return best;
+}
+
+/**
+ * Documents are readable from two places: the inbox index, and anywhere inside
+ * an added project — many projects keep their docs as the work itself, next to
+ * the code. Collaborators only ever reach the projects shared with them.
+ */
+function canReadDoc(ws, path) {
+  const abs = resolve(String(path ?? ''));
+  const a = artifactByPath(abs);
+  if (a && (!ws.guest || guestCanSeeDoc(ws.guest, a))) return true;
+  const project = projectOf(abs);
+  if (!project) return false;
+  if (!ws.guest) return true;
+  return hasHostAccess(ws.guest.email) || projectSharedWith(project, ws.guest.email);
+}
+
+/** Only markdown opens in the viewer, and only what this client may read. */
+function requireDoc(ws, path) {
+  const abs = resolve(String(path ?? ''));
+  if (!abs.toLowerCase().endsWith('.md')) throw new Error('comments only work on markdown documents');
+  if (!canReadDoc(ws, abs)) throw new Error('no access to this document');
+  return abs;
 }
 
 /** May this guest see this document at all? Mirrors the share grants. */
@@ -414,17 +445,19 @@ function commentsPayload(ws, docPath) {
   };
 }
 
-/** Unread counts per document — what lights the red dots in the inbox. */
+/** Unread counts per document — what lights the red dots in the inbox and the explorer. */
 function badgePayload(ws) {
   const identity = identityOf(ws);
   const perDoc = {};
   let total = 0;
-  for (const a of artifacts) {
-    if (!a.path.toLowerCase().endsWith('.md')) continue;
-    if (ws.guest && !guestCanSeeDoc(ws.guest, a)) continue;
-    const n = unseenThreadIds(identity, a.path, loadThreads(a.path)).length;
+  const paths = new Map(); // lowercased -> as written, so one file is counted once
+  for (const p of [...artifacts.map((a) => a.path), ...commentedPaths()])
+    if (p.toLowerCase().endsWith('.md')) paths.set(p.toLowerCase(), p);
+  for (const path of paths.values()) {
+    if (!canReadDoc(ws, path)) continue;
+    const n = unseenThreadIds(identity, path, loadThreads(path)).length;
     if (n) {
-      perDoc[a.path] = n;
+      perDoc[path] = n;
       total += n;
     }
   }
@@ -433,10 +466,8 @@ function badgePayload(ws) {
 
 /** A document's comments changed: refresh threads and badges for everyone allowed to look. */
 function broadcastComments(docPath) {
-  const a = artifactByPath(docPath);
   for (const ws of clients) {
-    if (ws.readyState !== ws.OPEN) continue;
-    if (ws.guest && (!a || !guestCanSeeDoc(ws.guest, a))) continue;
+    if (ws.readyState !== ws.OPEN || !canReadDoc(ws, docPath)) continue;
     send(ws, commentsPayload(ws, docPath));
     send(ws, badgePayload(ws));
   }
@@ -449,29 +480,42 @@ function broadcastComments(docPath) {
 // message interleaves — from then on the turn is a normal visible one.
 const serviceTurns = new Map(); // chatId -> {kind: 'thread'|'title', threadId?, path?, askAt, contested}
 
-/** The chat a document belongs to — reopened from its session if it was closed. */
-function chatForArtifact(a) {
-  let chat = a.chatId ? findChatSafe(a.chatId) : null;
-  if (!chat && a.sessionId)
+/**
+ * The chat to ask in: the one that wrote the document (reopened from its
+ * session if it was closed), or — for a file that simply lives in a project —
+ * any live chat of that project.
+ */
+function chatForDoc(docPath) {
+  const a = artifactByPath(docPath);
+  let chat = a?.chatId ? findChatSafe(a.chatId) : null;
+  if (!chat && a?.sessionId)
     for (const c of agent.allChats())
       if (c.sessionId === a.sessionId || c.resumeId === a.sessionId) {
         chat = c;
         break;
       }
-  if (!chat && a.sessionId && a.projectPath) {
+  if (!chat && a?.sessionId && a.projectPath) {
     chat = openSavedSession(a.projectPath, a.sessionId, {});
     saveOpenChats();
     broadcast(stateSnapshot());
   }
-  if (!chat) throw new Error('the document has no chat to ask in');
+  if (!chat) {
+    const project = projectOf(docPath);
+    for (const c of agent.projects.get(project)?.chats.values() ?? []) {
+      if (c.status === 'closed') continue;
+      chat = c;
+      break;
+    }
+  }
+  if (!chat) throw new Error('no chat to ask in — open one in this project first');
   return chat;
 }
 
-function threadPrompt(a, thread, question) {
+function threadPrompt(docPath, thread, question) {
   const replies = (thread.replies ?? []).map((r) => `${r.author}: ${r.text}`).join('\n\n');
   return [
     '[remaude: a question from an inline-comment thread — hidden from the chat feed]',
-    `The document ${a.path} has a comment thread on this fragment:`,
+    `The document ${docPath} has a comment thread on this fragment:`,
     '"""',
     thread.anchor?.quote || '(the fragment could not be quoted)',
     '"""',
@@ -944,6 +988,8 @@ const GUEST_TYPES = new Set([
   'attachments',
   'image',
   'tool_result',
+  'list_dir', // only inside projects shared with them — dispatch() checks projectPath
+  'add_artifact',
   ...DOC_TYPES, // documents and their comment threads — gated per document in dispatch()
 ]);
 
@@ -1371,7 +1417,7 @@ const handlers = {
   /** Read a document for the in-app viewer (markdown) or for downloading. */
   read_artifact(ws, { path, asText = true }) {
     const abs = resolve(path);
-    if (!artifacts.some((a) => a.path.toLowerCase() === abs.toLowerCase())) throw new Error('not in the inbox');
+    if (!canReadDoc(ws, abs)) throw new Error('no access to this file');
     const buf = readFileSync(abs);
     if (buf.length > 12 * 1024 * 1024) throw new Error('file too large to send');
     send(ws, {
@@ -1383,10 +1429,53 @@ const handlers = {
     });
   },
 
+  /**
+   * A folder of a project, for the file explorer. Many projects keep their docs
+   * as the work itself, next to the code — those never reach the inbox, so the
+   * sidebar can walk the tree instead. Never outside the project: a path that
+   * climbs out is how a listing becomes "read any file on this machine".
+   */
+  list_dir(ws, { projectPath, path }) {
+    const project = agent.findProject(resolve(projectPath))?.path;
+    if (!project) throw new Error('no such project');
+    const dir = path ? resolve(path) : project;
+    const inside = dir.toLowerCase() === project.toLowerCase() || dir.toLowerCase().startsWith(project.toLowerCase() + sep);
+    if (!inside) throw new Error('outside the project');
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error('no such folder');
+
+    const entries = [];
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory() && SKIP_DIRS.has(e.name.toLowerCase())) continue;
+      if (isSidecarPath(e.name)) continue; // threads belong to the viewer, not the listing
+      const full = join(dir, e.name);
+      let size = null;
+      let mtime = 0;
+      try {
+        const st = statSync(full);
+        size = st.isFile() ? st.size : null;
+        mtime = st.mtimeMs;
+      } catch {
+        continue; // vanished between listing and stat
+      }
+      entries.push({ name: e.name, path: full, dir: e.isDirectory(), size, mtime });
+    }
+    entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
+
+    send(ws, {
+      type: 'dir_listing',
+      projectPath: project,
+      path: dir,
+      parent: dir.toLowerCase() === project.toLowerCase() ? null : dirname(dir),
+      entries,
+    });
+  },
+
   /** Manual "add to inbox" for a file that was written without a marker. */
   add_artifact(ws, { path, chatId }) {
     const abs = resolve(path);
     if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error('no such file');
+    // the owner may index anything on their own machine; a guest only what they were given
+    if (ws.guest && !canReadDoc(ws, abs)) throw new Error('no access to this file');
     rememberArtifact(abs, chatId);
   },
 
@@ -1400,17 +1489,17 @@ const handlers = {
   // ---------- inline comments ----------
 
   list_comments(ws, { path }) {
-    const a = requireDoc(path);
-    send(ws, commentsPayload(ws, a.path));
+    const doc = requireDoc(ws, path);
+    send(ws, commentsPayload(ws, doc));
     send(ws, badgePayload(ws));
   },
 
   /** A new thread: the selection anchor plus its first reply. */
   add_comment(ws, { path, anchor, text }) {
-    const a = requireDoc(path);
+    const doc = requireDoc(ws, path);
     const body = String(text ?? '').trim();
     if (!body) throw new Error('empty comment');
-    const threads = loadThreads(a.path);
+    const threads = loadThreads(doc);
     const thread = {
       id: randomUUID(),
       anchor: {
@@ -1423,72 +1512,72 @@ const handlers = {
       replies: [makeReply({ author: authorNameOf(ws), authorId: identityOf(ws), text: body })],
     };
     threads.push(thread);
-    saveThreads(a.path, threads);
-    markThreadSeen(identityOf(ws), a.path, thread.id); // your own comment is not news to you
-    broadcastComments(a.path);
+    saveThreads(doc, threads);
+    markThreadSeen(identityOf(ws), doc, thread.id); // your own comment is not news to you
+    broadcastComments(doc);
   },
 
   reply_comment(ws, { path, threadId, text }) {
-    const a = requireDoc(path);
+    const doc = requireDoc(ws, path);
     const body = String(text ?? '').trim();
     if (!body) throw new Error('empty reply');
-    const threads = loadThreads(a.path);
+    const threads = loadThreads(doc);
     const thread = threads.find((t) => t.id === threadId);
     if (!thread) throw new Error('no such thread');
     thread.replies.push(makeReply({ author: authorNameOf(ws), authorId: identityOf(ws), text: body }));
-    saveThreads(a.path, threads);
-    markThreadSeen(identityOf(ws), a.path, threadId);
-    broadcastComments(a.path);
+    saveThreads(doc, threads);
+    markThreadSeen(identityOf(ws), doc, threadId);
+    broadcastComments(doc);
   },
 
   /** Only the author edits their reply — the owner included (own replies only). */
   edit_comment(ws, { path, threadId, replyId, text }) {
-    const a = requireDoc(path);
+    const doc = requireDoc(ws, path);
     const body = String(text ?? '').trim();
     if (!body) throw new Error('empty reply');
-    const threads = loadThreads(a.path);
+    const threads = loadThreads(doc);
     const reply = threads.find((t) => t.id === threadId)?.replies.find((r) => r.id === replyId);
     if (!reply) throw new Error('no such reply');
     if (reply.authorId !== identityOf(ws)) throw new Error('only the author can edit a reply');
     reply.text = String(body).slice(0, 20000);
     reply.editedAt = Date.now();
-    saveThreads(a.path, threads);
-    broadcastComments(a.path);
+    saveThreads(doc, threads);
+    broadcastComments(doc);
   },
 
   /** The author or the host owner. Deleting the first reply deletes the thread. */
   delete_comment(ws, { path, threadId, replyId }) {
-    const a = requireDoc(path);
-    const threads = loadThreads(a.path);
+    const doc = requireDoc(ws, path);
+    const threads = loadThreads(doc);
     const thread = threads.find((t) => t.id === threadId);
     const reply = thread?.replies.find((r) => r.id === replyId);
     if (!reply) throw new Error('no such reply');
     if (reply.authorId !== identityOf(ws) && ws.guest) throw new Error('only the author or the owner can delete this');
     if (thread.replies[0].id === replyId) threads.splice(threads.indexOf(thread), 1);
     else thread.replies = thread.replies.filter((r) => r.id !== replyId);
-    saveThreads(a.path, threads);
-    broadcastComments(a.path);
+    saveThreads(doc, threads);
+    broadcastComments(doc);
   },
 
   /** Anyone with access may resolve or reopen — that is the point of a comment. */
   resolve_comment(ws, { path, threadId, resolved }) {
-    const a = requireDoc(path);
-    const threads = loadThreads(a.path);
+    const doc = requireDoc(ws, path);
+    const threads = loadThreads(doc);
     const thread = threads.find((t) => t.id === threadId);
     if (!thread) throw new Error('no such thread');
     thread.resolved = Boolean(resolved);
-    saveThreads(a.path, threads);
-    broadcastComments(a.path);
+    saveThreads(doc, threads);
+    broadcastComments(doc);
   },
 
   /** Read marks are per thread, set when its branch is actually opened. */
   mark_thread_seen(ws, { path, threadId }) {
-    const a = requireDoc(path);
-    markThreadSeen(identityOf(ws), a.path, threadId);
+    const doc = requireDoc(ws, path);
+    markThreadSeen(identityOf(ws), doc, threadId);
     // every device of the same person drops its red dot at once
     for (const c of clients) {
       if (c.readyState !== c.OPEN || identityOf(c) !== identityOf(ws)) continue;
-      send(c, commentsPayload(c, a.path));
+      send(c, commentsPayload(c, doc));
       send(c, badgePayload(c));
     }
   },
@@ -1499,25 +1588,25 @@ const handlers = {
    * text comes back as a thread reply — see finishLlmThread.
    */
   ask_llm_comment(ws, { path, threadId, text }) {
-    const a = requireDoc(path);
-    const threads = loadThreads(a.path);
+    const doc = requireDoc(ws, path);
+    const threads = loadThreads(doc);
     const thread = threads.find((t) => t.id === threadId);
     if (!thread) throw new Error('no such thread');
-    const chat = chatForArtifact(a);
+    const chat = chatForDoc(doc);
     if (ws.guest && !guestChatIds(ws.guest).has(chat.id)) throw new Error('no access to this chat');
     if (chat.status === 'thinking' || chat.status === 'waiting_permission')
       throw new Error('the document’s chat is busy — wait for its turn to finish and ask again');
     const question = String(text ?? '').trim();
     if (question) {
       thread.replies.push(makeReply({ author: authorNameOf(ws), authorId: identityOf(ws), text: question }));
-      saveThreads(a.path, threads);
-      markThreadSeen(identityOf(ws), a.path, threadId);
+      saveThreads(doc, threads);
+      markThreadSeen(identityOf(ws), doc, threadId);
     }
-    serviceTurns.set(chat.id, { kind: 'thread', threadId, path: a.path, askAt: Date.now(), contested: false });
-    const prompt = threadPrompt(a, thread, question);
+    serviceTurns.set(chat.id, { kind: 'thread', threadId, path: doc, askAt: Date.now(), contested: false });
+    const prompt = threadPrompt(doc, thread, question);
     tails.get(chat.id)?.ownTexts.push(prompt); // the transcript echo must not reappear via the tail
     chat.send(prompt);
-    broadcastComments(a.path);
+    broadcastComments(doc);
   },
 
   /** Sidebar order of projects: the config array itself is the order. */
@@ -1888,10 +1977,8 @@ function dispatch(ws, raw) {
       if (msg.projectPath && !guestProjectPaths(ws.guest).includes(resolve(msg.projectPath)))
         throw new Error('no access to this project');
       // documents are gated one by one: only what the share grants cover
-      if (DOC_TYPES.has(msg.type)) {
-        const doc = artifactByPath(msg.path);
-        if (!doc || !guestCanSeeDoc(ws.guest, doc)) throw new Error('no access to this document');
-      }
+      if ((DOC_TYPES.has(msg.type) || msg.type === 'add_artifact') && !canReadDoc(ws, msg.path))
+        throw new Error('no access to this document');
       // Arguments other than the two ids above decide privileges too. A guest
       // asking for bypassPermissions would get a session that never prompts the
       // owner — that is code execution on this machine, so pin the safe values.

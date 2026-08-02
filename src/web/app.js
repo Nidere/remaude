@@ -374,14 +374,14 @@ const handlers = {
     }
   },
 
-  artifact({ path, name, text, base64 }) {
+  artifact({ path, name, text, base64, _host }) {
     if (text != null) {
       $('doc-title').textContent = name;
       const html = mdToHtml(text);
       $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;
-      docComments.docOpened(path, html);
+      docComments.docOpened(path, html, hostKey(_host));
       return;
     }
     // not markdown: hand it to the browser as a download. A blob URL survives an
@@ -397,6 +397,10 @@ const handlers = {
 
   artifact_added({ artifact }) {
     if (!$('attachments-panel').hidden) requestAttachments(0);
+  },
+
+  dir_listing(msg) {
+    renderExplorer(msg);
   },
 
   comments(msg) {
@@ -974,6 +978,12 @@ function renderHostProjects(root, hostId, hostState) {
       const btnOld = el('button', '', '⏳');
       btnOld.title = 'past chats';
       btnOld.onclick = () => sendTo(hostId, { type: 'list_sessions', projectPath: p.path });
+      const btnFiles = el('button', '', '📁');
+      btnFiles.title = 'project files';
+      btnFiles.onclick = (e) => {
+        e.stopPropagation();
+        openExplorer(hostId, p.path, null);
+      };
       const btnShare = el('button', '', '🔗');
       btnShare.title = 'share the whole project';
       btnShare.onclick = (e) => {
@@ -985,7 +995,7 @@ function renderHostProjects(root, hostId, hostState) {
         );
       };
       // no delete outside edit mode: removing things is what edit mode is for
-      actions.append(btnNew, btnOld, btnShare);
+      actions.append(btnNew, btnOld, btnFiles, btnShare);
       head.append(name, actions);
     } else {
       head.append(name);
@@ -1059,6 +1069,74 @@ function renderHostProjects(root, hostId, hostState) {
     if (filter && !visibleChats && !p.path.toLowerCase().includes(filter)) continue;
     root.append(proj);
   }
+}
+
+// ---------- project file explorer ----------
+// Docs that are the work itself live in the project, not in the inbox. This
+// walks the folder in place: markdown opens in the same viewer (comments and
+// all), anything else downloads.
+
+let explorer = { hostId: null, projectPath: null, path: null };
+
+function openExplorer(hostId, projectPath, path) {
+  explorer = { hostId, projectPath, path };
+  $('picker-title').textContent = 'loading…';
+  $('picker-list').innerHTML = '';
+  $('picker-form').hidden = true;
+  $('picker').hidden = false;
+  sendTo(hostId, { type: 'list_dir', projectPath, path });
+}
+
+function renderExplorer({ projectPath, path, parent, entries }) {
+  explorer = { ...explorer, projectPath, path };
+  const rel = path.slice(projectPath.length).replace(/^[\\/]/, '');
+  $('picker-title').textContent = `📁 ${shortPath(projectPath)}${rel ? ' / ' + rel.replace(/\\/g, '/') : ''}`;
+  $('picker-form').hidden = true;
+  const list = $('picker-list');
+  list.innerHTML = '';
+
+  if (parent) {
+    const up = el('div', 'picker-item exp-row', '');
+    up.append(el('span', 'exp-icon', '↩'), el('span', 'exp-name', '..'));
+    up.onclick = () => openExplorer(explorer.hostId, projectPath, parent);
+    list.append(up);
+  }
+
+  if (!entries.length) list.append(el('div', 'picker-item muted', 'empty folder'));
+
+  for (const entry of entries) {
+    const isMd = !entry.dir && entry.name.toLowerCase().endsWith('.md');
+    const row = el('div', 'picker-item exp-row', '');
+    row.append(el('span', 'exp-icon', entry.dir ? '📁' : isMd ? '📄' : '⬇'));
+    const name = el('span', 'exp-name', entry.name);
+    if (docComments.unseenForDoc(entry.path)) name.append(el('span', 'exp-dot', ''));
+    row.append(name);
+    if (!entry.dir) row.append(el('span', 'exp-size', formatSize(entry.size) ?? ''));
+
+    if (!entry.dir) {
+      const star = el('button', 'exp-star', '☆');
+      star.title = 'add to the inbox';
+      star.onclick = (e) => {
+        e.stopPropagation();
+        sendTo(explorer.hostId, {
+          type: 'add_artifact',
+          path: entry.path,
+          chatId: chatHostId(activeChatId) === explorer.hostId ? activeChatId : null,
+        });
+        star.textContent = '★';
+        star.disabled = true;
+      };
+      row.append(star);
+    }
+
+    row.onclick = () => {
+      if (entry.dir) return openExplorer(explorer.hostId, projectPath, entry.path);
+      // markdown opens in the viewer; everything else is handed over as a download
+      sendTo(explorer.hostId, { type: 'read_artifact', path: entry.path, asText: isMd });
+    };
+    list.append(row);
+  }
+  $('picker').hidden = false;
 }
 
 // ---------- attachments: gallery and document inbox ----------
@@ -2100,7 +2178,7 @@ $('hide-tools').addEventListener('change', function () {
 });
 
 // inline comments in the document viewer; requests go to the host that owns the active chat
-docComments.initDocComments({ request: (obj) => sendTo(chatHostId(activeChatId), obj) });
+docComments.initDocComments({ request: (obj, hostId) => sendTo(hostId ?? chatHostId(activeChatId), obj) });
 
 bootFromCache();
 connect();

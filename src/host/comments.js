@@ -31,9 +31,39 @@ export function saveThreads(docPath, threads) {
     } catch {
       /* already gone */
     }
+    rememberCommented(docPath, false);
     return;
   }
   writeFileSync(sidecarPath(docPath), JSON.stringify({ version: 1, threads }, null, 2) + '\n');
+  rememberCommented(docPath, true);
+}
+
+// ---------- which documents have threads at all ----------
+// Inbox documents are indexed elsewhere, but a commented file may live anywhere
+// in a project. Unread badges would have to scan whole trees to find those, so
+// every document that gains a sidecar is remembered here instead.
+
+const INDEX_PATH = join(homedir(), '.remaude', 'comments-index.json');
+
+let commented = (() => {
+  try {
+    const list = JSON.parse(readFileSync(INDEX_PATH, 'utf-8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+})();
+
+export function commentedPaths() {
+  return commented;
+}
+
+function rememberCommented(docPath, has) {
+  const known = commented.some((p) => p.toLowerCase() === docPath.toLowerCase());
+  if (has === known) return;
+  commented = has ? [...commented, docPath] : commented.filter((p) => p.toLowerCase() !== docPath.toLowerCase());
+  mkdirSync(dirname(INDEX_PATH), { recursive: true });
+  writeFile(INDEX_PATH, JSON.stringify(commented, null, 2)).catch(() => {});
 }
 
 export function makeReply({ author, authorId, role = 'user', text }) {

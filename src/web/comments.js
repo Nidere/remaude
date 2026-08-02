@@ -14,12 +14,16 @@ function el(tag, className, text) {
   return node;
 }
 
-let request = () => {}; // wired to the active host by app.js
+let request = () => {}; // wired to the hosts by app.js
+
+/** Every command goes to the host the open document came from. */
+const ask = (obj) => request(obj, doc.hostId);
 
 // ---------- state ----------
 
 const doc = {
   path: null,
+  hostId: null, // documents may come from any connected host, not just the active chat's
   html: '', // the rendered markdown, kept so highlights can be re-applied from scratch
   threads: [],
   seen: {}, // threadId -> my last-seen ts (server truth, optimistically bumped)
@@ -46,8 +50,9 @@ export function initDocComments(ctx) {
 }
 
 /** The viewer just rendered a document — fetch its threads. */
-export function docOpened(path, html) {
+export function docOpened(path, html, hostId) {
   doc.path = path;
+  doc.hostId = hostId ?? null;
   doc.html = html;
   doc.threads = [];
   doc.seen = {};
@@ -57,7 +62,7 @@ export function docOpened(path, html) {
   hideAddBtn();
   hideList();
   updateThreadsBtn();
-  request({ type: 'list_comments', path });
+  ask({ type: 'list_comments', path });
 }
 
 export function onComments({ path, threads, seen, me }) {
@@ -81,7 +86,7 @@ export function onComments({ path, threads, seen, me }) {
         // a reply landing in a thread the person is looking at is read on arrival
         if (!$('cmt-pop').hidden && threadUnseen(open)) {
           doc.seen[open.id] = Date.now();
-          request({ type: 'mark_thread_seen', path: doc.path, threadId: open.id });
+          ask({ type: 'mark_thread_seen', path: doc.path, threadId: open.id });
           refreshMarkClasses();
           updateThreadsBtn();
         }
@@ -275,7 +280,7 @@ function openThread(threadId, anchorEl) {
   renderPop();
   if (threadUnseen(t)) {
     doc.seen[threadId] = Date.now(); // optimistic — the dot dies right away
-    request({ type: 'mark_thread_seen', path: doc.path, threadId });
+    ask({ type: 'mark_thread_seen', path: doc.path, threadId });
     refreshMarkClasses();
     renderThreadList();
   }
@@ -333,7 +338,7 @@ function replyRow(t, r) {
     del.onclick = () => {
       const whole = t.replies[0].id === r.id;
       if (!confirm(whole ? 'Delete this thread with all its replies?' : 'Delete this reply?')) return;
-      request({ type: 'delete_comment', path: doc.path, threadId: t.id, replyId: r.id });
+      ask({ type: 'delete_comment', path: doc.path, threadId: t.id, replyId: r.id });
       if (whole) closePop();
     };
     actions.append(del);
@@ -353,7 +358,7 @@ function startEdit(t, r, row) {
   const save = el('button', 'cmt-primary', 'Save');
   save.onclick = () => {
     const text = area.value.trim();
-    if (text && text !== r.text) request({ type: 'edit_comment', path: doc.path, threadId: t.id, replyId: r.id, text });
+    if (text && text !== r.text) ask({ type: 'edit_comment', path: doc.path, threadId: t.id, replyId: r.id, text });
     else renderPop();
   };
   const cancel = el('button', '', 'Cancel');
@@ -375,7 +380,7 @@ function renderPop(rectOverride) {
   if (t) {
     const resolve = el('button', t.resolved ? 'resolved' : '', t.resolved ? '↺ Reopen' : '✓ Resolve');
     resolve.title = t.resolved ? 'reopen this thread' : 'mark as resolved';
-    resolve.onclick = () => request({ type: 'resolve_comment', path: doc.path, threadId: t.id, resolved: !t.resolved });
+    resolve.onclick = () => ask({ type: 'resolve_comment', path: doc.path, threadId: t.id, resolved: !t.resolved });
     headActions.append(resolve);
   }
   const close = el('button', '', '✕');
@@ -408,11 +413,11 @@ function renderPop(rectOverride) {
   submit.onclick = () => {
     const text = area.value.trim();
     if (!text) return;
-    if (t) request({ type: 'reply_comment', path: doc.path, threadId: t.id, text });
+    if (t) ask({ type: 'reply_comment', path: doc.path, threadId: t.id, text });
     else {
       if (!draftAnchor) return closePop(); // the draft's anchor is gone — nothing to attach to
       const { quote: q, prefix, suffix } = draftAnchor;
-      request({ type: 'add_comment', path: doc.path, anchor: { quote: q, prefix, suffix }, text });
+      ask({ type: 'add_comment', path: doc.path, anchor: { quote: q, prefix, suffix }, text });
       getSelection()?.removeAllRanges();
       closePop();
       return;
@@ -421,15 +426,15 @@ function renderPop(rectOverride) {
   };
   row.append(submit);
   if (t) {
-    const ask = el('button', 'cmt-llm', '🤖 Ask Claude');
-    ask.title = 'send the thread (and your question, if typed) to the document’s chat';
-    ask.onclick = () => {
-      request({ type: 'ask_llm_comment', path: doc.path, threadId: t.id, text: area.value.trim() });
+    const askBtn = el('button', 'cmt-llm', '🤖 Ask Claude');
+    askBtn.title = 'send the thread (and your question, if typed) to the document’s chat';
+    askBtn.onclick = () => {
+      ask({ type: 'ask_llm_comment', path: doc.path, threadId: t.id, text: area.value.trim() });
       doc.pendingLlm.add(t.id);
       area.value = '';
       renderPop();
     };
-    row.append(ask);
+    row.append(askBtn);
   }
   area.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
