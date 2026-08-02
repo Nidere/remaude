@@ -1769,3 +1769,22 @@ body > .cmt-error {
   #thread-box { border-left: none; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
   .reply-btn { opacity: 1; }
 }
+
+/* ---------- markdown tables ---------- */
+/* A wide table must scroll inside its own box: on a phone it would otherwise
+   stretch the whole feed and take every message with it. */
+.md-table-wrap { overflow-x: auto; overscroll-behavior-x: contain; margin: 8px 0; }
+.md-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 100%;
+}
+.md-table th, .md-table td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th { background: var(--bg-3); font-weight: 600; white-space: nowrap; }
+.md-table tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.02); }
+.md-table code { white-space: nowrap; }
