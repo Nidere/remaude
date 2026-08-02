@@ -15,7 +15,7 @@ import {
   unwatchFile,
 } from 'node:fs';
 import { homedir, userInfo, hostname } from 'node:os';
-import { join, dirname, extname, resolve, sep } from 'node:path';
+import { join, dirname, extname, resolve, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -350,6 +350,46 @@ function rememberArtifact(path, chatId) {
   broadcast({ type: 'artifact_added', artifact: entry });
 }
 
+// ---------- which chat last worked on a file ----------
+// Asking Claude about a document is only worth anything in the session that
+// wrote it — that one has the reasoning behind it in context. Every successful
+// Write/Edit is recorded here, for any file, not just inbox ones.
+
+const FILE_CHATS_PATH = join(homedir(), '.remaude', 'file-chats.json');
+const FILE_CHATS_MAX = 2000;
+
+let fileChats = (() => {
+  try {
+    const data = JSON.parse(readFileSync(FILE_CHATS_PATH, 'utf-8'));
+    return data && typeof data === 'object' ? data : {};
+  } catch {
+    return {};
+  }
+})();
+
+function saveFileChats() {
+  mkdirSync(dirname(FILE_CHATS_PATH), { recursive: true });
+  writeFile(FILE_CHATS_PATH, JSON.stringify(fileChats, null, 2)).catch(() => {});
+}
+
+function rememberFileChat(path, chatId) {
+  const chat = findChatSafe(chatId);
+  if (!chat) return;
+  fileChats[resolve(path).toLowerCase()] = {
+    chatId,
+    sessionId: chat.sessionId ?? chat.resumeId ?? null,
+    projectPath: chat.cwd,
+    at: Date.now(),
+  };
+  const keys = Object.keys(fileChats);
+  if (keys.length > FILE_CHATS_MAX) {
+    // drop the oldest — this is a convenience index, not a record to keep forever
+    const oldest = keys.sort((a, b) => (fileChats[a].at ?? 0) - (fileChats[b].at ?? 0)).slice(0, keys.length - FILE_CHATS_MAX);
+    for (const k of oldest) delete fileChats[k];
+  }
+  saveFileChats();
+}
+
 /** A Write/Edit landed: index it when the file marks itself as the user's. */
 function trackArtifact(chatId, filePath) {
   const abs = resolve(filePath);
@@ -481,40 +521,51 @@ function broadcastComments(docPath) {
 const serviceTurns = new Map(); // chatId -> {kind: 'thread'|'title', threadId?, path?, askAt, contested}
 
 /**
- * The chat to ask in: the one that wrote the document (reopened from its
- * session if it was closed), or — for a file that simply lives in a project —
- * any live chat of that project.
+ * The chat to ask in: the session that last wrote this file, resumed if it was
+ * closed — anywhere else the question lands without the reasoning behind the
+ * document. A file nobody here has touched gets a chat of its own, so the
+ * answer starts from the document instead of somebody else's conversation.
  */
-function chatForDoc(docPath) {
+function chatForDoc(docPath, { permissionMode } = {}) {
   const a = artifactByPath(docPath);
-  let chat = a?.chatId ? findChatSafe(a.chatId) : null;
-  if (!chat && a?.sessionId)
-    for (const c of agent.allChats())
-      if (c.sessionId === a.sessionId || c.resumeId === a.sessionId) {
-        chat = c;
-        break;
+  const known = fileChats[resolve(docPath).toLowerCase()] ?? (a ? { chatId: a.chatId, sessionId: a.sessionId, projectPath: a.projectPath } : null);
+
+  if (known) {
+    let chat = known.chatId ? findChatSafe(known.chatId) : null;
+    const sid = known.sessionId;
+    if (!chat && sid)
+      for (const c of agent.allChats())
+        if (c.sessionId === sid || c.resumeId === sid || c.pastIds?.has(sid)) {
+          chat = c;
+          break;
+        }
+    if (!chat && sid && known.projectPath && existsSync(known.projectPath)) {
+      try {
+        chat = openSavedSession(known.projectPath, sid, { permissionMode });
+        saveOpenChats();
+        broadcast(stateSnapshot());
+      } catch {
+        chat = null; // the transcript may be gone — fall through to a fresh chat
       }
-  if (!chat && a?.sessionId && a.projectPath) {
-    chat = openSavedSession(a.projectPath, a.sessionId, {});
-    saveOpenChats();
-    broadcast(stateSnapshot());
-  }
-  if (!chat) {
-    const project = projectOf(docPath);
-    for (const c of agent.projects.get(project)?.chats.values() ?? []) {
-      if (c.status === 'closed') continue;
-      chat = c;
-      break;
     }
+    if (chat && chat.status !== 'closed') return { chat, fresh: false };
   }
-  if (!chat) throw new Error('no chat to ask in — open one in this project first');
-  return chat;
+
+  const project = projectOf(docPath) ?? (a?.projectPath ? resolve(a.projectPath) : null);
+  if (!project) throw new Error('this file is not inside any project');
+  const chat = agent.createChat(project, { model: defaultModel(), permissionMode });
+  chat.title = `📄 ${basename(docPath)}`;
+  rememberFileChat(docPath, chat.id); // the next question about this file lands here too
+  broadcast(stateSnapshot());
+  return { chat, fresh: true };
 }
 
-function threadPrompt(docPath, thread, question) {
+function threadPrompt(docPath, thread, question, fresh = false) {
   const replies = (thread.replies ?? []).map((r) => `${r.author}: ${r.text}`).join('\n\n');
   return [
+    // the marker stays the very first line: the feed hides a turn by it
     '[remaude: a question from an inline-comment thread — hidden from the chat feed]',
+    fresh ? 'This chat has not seen this document before — read it first, and whatever it refers to.' : null,
     `The document ${docPath} has a comment thread on this fragment:`,
     '"""',
     thread.anchor?.quote || '(the fragment could not be quoted)',
@@ -525,7 +576,9 @@ function threadPrompt(docPath, thread, question) {
     question ? `The new question: ${question}` : 'Reply to the thread above.',
     '',
     'Answer in ONE message, in the language of the thread. Your final text is added to the thread automatically — do not edit the comments sidecar file yourself. Start your reply with the exact line `[remaude: thread reply]` (it is stripped before posting), then the reply itself. Read the document or the code first if that makes the answer better.',
-  ].join('\n');
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
 }
 
 /** The service turn is over: its final text becomes a thread reply or the chat's name. */
@@ -659,7 +712,10 @@ function trackAgents(chatId, msg) {
       const written = pendingWrites.get(block.tool_use_id);
       if (written) {
         pendingWrites.delete(block.tool_use_id);
-        if (!block.is_error) trackArtifact(chatId, written);
+        if (!block.is_error) {
+          rememberFileChat(written, chatId); // this chat is now the one that knows this file
+          trackArtifact(chatId, written);
+        }
       }
       const agent = agentsOf(chatId).get(block.tool_use_id);
       if (!agent) continue;
@@ -1587,12 +1643,12 @@ const handlers = {
    * (full context), the turn is hidden from the feed, and the model's final
    * text comes back as a thread reply — see finishLlmThread.
    */
-  ask_llm_comment(ws, { path, threadId, text }) {
+  ask_llm_comment(ws, { path, threadId, text, permissionMode }) {
     const doc = requireDoc(ws, path);
     const threads = loadThreads(doc);
     const thread = threads.find((t) => t.id === threadId);
     if (!thread) throw new Error('no such thread');
-    const chat = chatForDoc(doc);
+    const { chat, fresh } = chatForDoc(doc, { permissionMode });
     if (ws.guest && !guestChatIds(ws.guest).has(chat.id)) throw new Error('no access to this chat');
     if (chat.status === 'thinking' || chat.status === 'waiting_permission')
       throw new Error('the document’s chat is busy — wait for its turn to finish and ask again');
@@ -1603,7 +1659,7 @@ const handlers = {
       markThreadSeen(identityOf(ws), doc, threadId);
     }
     serviceTurns.set(chat.id, { kind: 'thread', threadId, path: doc, askAt: Date.now(), contested: false });
-    const prompt = threadPrompt(doc, thread, question);
+    const prompt = threadPrompt(doc, thread, question, fresh);
     tails.get(chat.id)?.ownTexts.push(prompt); // the transcript echo must not reappear via the tail
     chat.send(prompt);
     broadcastComments(doc);

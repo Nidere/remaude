@@ -2178,7 +2178,15 @@ $('hide-tools').addEventListener('change', function () {
 });
 
 // inline comments in the document viewer; requests go to the host that owns the active chat
-docComments.initDocComments({ request: (obj, hostId) => sendTo(hostId ?? chatHostId(activeChatId), obj) });
+docComments.initDocComments({
+  request: (obj, hostId) =>
+    sendTo(hostId ?? chatHostId(activeChatId), {
+      ...obj,
+      // a question may have to open (or start) the document's own chat — it
+      // should come up in the mode the header is set to, like any new chat here
+      ...(obj.type === 'ask_llm_comment' ? { permissionMode: $('permission-mode').value } : {}),
+    }),
+});
 
 bootFromCache();
 connect();
