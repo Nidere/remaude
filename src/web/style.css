@@ -1654,3 +1654,118 @@ body > .cmt-error {
 }
 .exp-star:hover { color: var(--yellow); }
 .exp-star:disabled { color: var(--yellow); cursor: default; }
+
+/* ---------- threads inside a chat ---------- */
+
+.reply-btn, .thread-chip {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 7px;
+  margin-left: 6px;
+}
+.reply-btn { opacity: 0; transition: opacity 0.15s; }
+.msg:hover .reply-btn { opacity: 1; }
+.reply-btn:hover, .thread-chip:hover { border-color: var(--accent); color: var(--text); }
+.thread-chip { color: var(--accent); border-color: var(--accent); }
+
+#thread-panel[hidden] { display: none; }
+#thread-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(400px, 92vw);
+  z-index: 19;
+  display: flex;
+}
+#thread-box {
+  background: var(--bg-2);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+#thread-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+#thread-title { font-weight: 600; }
+#thread-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--dim);
+  width: 28px;
+  height: 26px;
+  cursor: pointer;
+  padding: 0;
+}
+#thread-close:hover { border-color: var(--red); color: var(--red); }
+#thread-anchor {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.thread-anchor-text {
+  font-size: 12px;
+  color: var(--dim);
+  font-style: italic;
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+#thread-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 10px 14px; }
+.thread-msg { margin-bottom: 10px; font-size: 13px; line-height: 1.5; overflow-wrap: break-word; }
+.thread-mine {
+  background: var(--bg-3);
+  border-radius: 8px;
+  padding: 7px 10px;
+  white-space: pre-wrap;
+}
+.thread-theirs { padding: 0 2px; }
+.thread-tool { font-size: 11px; color: var(--dim); margin-bottom: 6px; }
+.thread-empty { color: var(--dim); font-size: 12px; text-align: center; padding: 16px; }
+#thread-composer { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; gap: 8px; align-items: flex-end; }
+#thread-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  resize: none;
+}
+#thread-input:focus { outline: none; border-color: var(--accent); }
+#thread-send {
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: #10141f;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* phones: the thread is a bottom sheet, like every other panel here */
+@media (max-width: 768px) {
+  #thread-panel {
+    top: auto;
+    left: 0;
+    width: 100%;
+    height: min(70dvh, 620px);
+  }
+  #thread-box { border-left: none; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
+  .reply-btn { opacity: 1; }
+}

@@ -1,6 +1,7 @@
 // remaude web UI: a thin client on top of the host agent's WS protocol.
 import { mdToHtml } from './md.js';
 import * as docComments from './comments.js';
+import * as chatThreads from './threads.js';
 
 const $ = (id) => document.getElementById(id);
 const feedHost = $('feed');
@@ -317,6 +318,14 @@ const handlers = {
     renderLimits(limits);
   },
 
+  chat_threads(msg) {
+    chatThreads.onThreads(msg);
+  },
+
+  thread_opened(msg) {
+    chatThreads.onOpened(msg);
+  },
+
   history({ chatId, messages }) {
     const chat = getChat(chatId);
     chat.feedEl.innerHTML = '';
@@ -324,6 +333,7 @@ const handlers = {
     chat.subagents.clear();
     chat.msgs = [];
     chat.fromCache = false;
+    chatThreads.resetChat(chatId); // threads refill from the same messages
     for (const m of messages) renderSdkMessage(chatId, m);
     if (chatId === activeChatId) {
       scrollToBottomSettled();
@@ -583,6 +593,7 @@ function selectChat(chatId) {
   // host controls stay hidden while we are looking at someone else's chat
   document.body.classList.toggle('guest', activeIsGuest());
   reportFocus();
+  chatThreads.chatSwitched(chatId);
   cur.unread = 0;
   updateChatItem(chatId);
   updateTabState();
@@ -603,6 +614,12 @@ function syncHeaderSelects(chat) {
 
 function renderSdkMessage(chatId, msg, fromCache = false) {
   const chat = getChat(chatId);
+  // a message tagged with a chat thread belongs there, not in the feed
+  if (msg.chatThread) {
+    if (!fromCache && msg.type !== 'stream_event') (chat.msgs ??= []).push(msg);
+    chatThreads.absorb(chatId, msg);
+    return;
+  }
   // turns that answer a comment thread stay out of the feed — that conversation
   // lives in the document. A dim one-liner marks the spot for transcript replays.
   if (isThreadTurn(msg)) {
@@ -661,6 +678,11 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
           setTimeout(() => (copyBtn.textContent = '⧉'), 1200);
         };
         node.append(copyBtn);
+        // an answer can be replied to in a thread; the anchor is its transcript uuid
+        if (msg.uuid) {
+          chatThreads.registerAnchor(chatId, msg.uuid, block.text);
+          chatThreads.decorate(chatId, node, msg.uuid);
+        }
         chat.feedEl.append(node);
       } else if (block.type === 'tool_use') {
         // even with tools hidden, something has to say the work is moving
@@ -2016,7 +2038,7 @@ $('doc-close').onclick = () => ($('doc-viewer').hidden = true);
 // On a phone the backdrop around a full-screen panel is a few pixels wide, and
 // the system back gesture would otherwise close the whole app. Every open panel
 // takes a history entry, so "back" closes it instead.
-const PANELS = ['attachments-panel', 'doc-viewer', 'share-panel', 'picker', 'settings', 'lightbox'];
+const PANELS = ['attachments-panel', 'doc-viewer', 'share-panel', 'picker', 'settings', 'lightbox', 'thread-panel'];
 for (const id of PANELS) {
   const node = $(id);
   if (!node) continue;
@@ -2178,6 +2200,9 @@ $('hide-tools').addEventListener('change', function () {
 });
 
 // inline comments in the document viewer; requests go to the host that owns the active chat
+// threads inside a chat: replies hang off a message and answers land there
+chatThreads.initThreads({ request: (obj, chatId) => sendTo(chatHostId(chatId), obj) });
+
 docComments.initDocComments({
   request: (obj, hostId) =>
     sendTo(hostId ?? chatHostId(activeChatId), {

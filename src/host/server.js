@@ -33,6 +33,7 @@ import {
   isSessionId,
 } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
+import { TurnTags } from './turn-tags.js';
 import {
   sidecarPath,
   isSidecarPath,
@@ -179,6 +180,12 @@ agent.on('chat_message', ({ chatId, msg }) => {
   // a service turn (comment thread, chat naming): tag everything it says so the feed can hide it
   const serviceTurn = serviceTurns.get(chatId);
   if (serviceTurn && !serviceTurn.contested) msg.threadRef = serviceTurn.threadId ?? '@service';
+  // a turn answering inside a chat thread: tagged so it lands there instead of the feed
+  const threadTag = turnTags.active(chatId);
+  if (threadTag && msg.type !== 'stream_event') {
+    msg.chatThread = threadTag;
+    rememberThreadMessage(threadTag, msg.uuid);
+  }
   // We broadcast user input ourselves in handleSend (otherwise it duplicates with the SDK's
   // replay), so plain text user messages of the main dialogue are skipped here.
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
@@ -217,6 +224,8 @@ agent.on('chat_message', ({ chatId, msg }) => {
   if (msg.type === 'result') {
     // the service turn's text has to be captured while lastReplies still holds it
     finishServiceTurn(chatId);
+    // this turn is over: whatever was queued behind it now owns the next one
+    turnTags.onTurnEnd(chatId);
     // The turn is over: a foreground agent that never reported back is gone.
     // Background ones outlive the turn by design — they keep their row.
     let aborted = false;
@@ -617,6 +626,108 @@ function finishServiceTurn(chatId) {
   }
 }
 
+// ---------- threads inside a chat ----------
+// A thread is not a separate session — it is a subset of this chat's messages
+// wearing the same tag. What you write there goes into the session as usual;
+// the reply is tagged, kept out of the feed and shown inside the thread.
+//
+// Two ways a message is known to belong to a thread, because neither alone
+// survives everything: replies are remembered by uuid, and your own messages
+// carry the tag in their first line — the uuid of a message we typed ourselves
+// only appears in the transcript, which we deliberately never read back.
+
+const CHAT_THREADS_PATH = join(homedir(), '.remaude', 'chat-threads.json');
+
+let chatThreads = (() => {
+  try {
+    const list = JSON.parse(readFileSync(CHAT_THREADS_PATH, 'utf-8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+})();
+
+function saveChatThreads() {
+  mkdirSync(dirname(CHAT_THREADS_PATH), { recursive: true });
+  writeFile(CHAT_THREADS_PATH, JSON.stringify(chatThreads, null, 2)).catch(() => {});
+}
+
+const threadMark = (id) =>
+  `[remaude: thread ${id} — a side thread of this chat. Answer in one message; it is filed into the thread, not the main feed.]`;
+const threadIdInText = (text) => /^\[remaude: thread ([0-9a-f-]{8,})/i.exec(String(text ?? '').trimStart())?.[1] ?? null;
+
+/** Every session id this chat has ever answered to — threads outlive resumes. */
+function sessionIdsOf(chat) {
+  return new Set([chat.sessionId, chat.resumeId, ...(chat.pastIds ?? [])].filter(Boolean));
+}
+
+function threadsOfChat(chat) {
+  const ids = sessionIdsOf(chat);
+  return chatThreads.filter((t) => ids.has(t.sessionId));
+}
+
+function threadById(chat, threadId) {
+  return threadsOfChat(chat).find((t) => t.id === threadId) ?? null;
+}
+
+function rememberThreadMessage(threadId, uuid) {
+  const thread = chatThreads.find((t) => t.id === threadId);
+  if (!thread || !uuid || thread.messageIds.includes(uuid)) return;
+  thread.messageIds.push(uuid);
+  saveChatThreads();
+}
+
+/** Mark the messages that belong to threads, for a client rebuilding a chat. */
+function annotateThreads(chatId, messages) {
+  const chat = findChatSafe(chatId);
+  if (!chat) return messages;
+  const mine = threadsOfChat(chat);
+  if (!mine.length) return messages;
+  const byUuid = new Map();
+  for (const t of mine) for (const uuid of t.messageIds) byUuid.set(uuid, t.id);
+  return messages.map((m) => {
+    if (m.chatThread) return m;
+    const id = byUuid.get(m.uuid) ?? (m.type === 'user' ? threadIdInText(plainTextOf(m)) : null);
+    return id ? { ...m, chatThread: id } : m;
+  });
+}
+
+/** Put the thread tag in front of what the user typed, whatever shape it came in. */
+function withThreadMark(content, threadId) {
+  const mark = threadMark(threadId);
+  if (typeof content === 'string') return `${mark}\n${content}`;
+  if (!Array.isArray(content)) return content;
+  const i = content.findIndex((b) => b.type === 'text');
+  if (i === -1) return [{ type: 'text', text: mark }, ...content];
+  return content.map((b, k) => (k === i ? { ...b, text: `${mark}\n${b.text}` } : b));
+}
+
+function plainTextOf(msg) {
+  const content = msg.message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('');
+}
+
+function threadsPayload(chatId) {
+  const chat = findChatSafe(chatId);
+  return {
+    type: 'chat_threads',
+    chatId,
+    threads: threadsOfChat(chat ?? { pastIds: new Set() }).map((t) => ({
+      id: t.id,
+      anchorUuid: t.anchorUuid,
+      createdAt: t.createdAt,
+    })),
+  };
+}
+
+// Which thread the next turn belongs to — the rules live in turn-tags.js.
+const turnTags = new TurnTags();
+
 // ---------- subagent tracking ----------
 // An Agent tool_use starts one; the matching tool_result ends it; anything still
 // running when the turn ends was aborted. The sidebar shows these live, so the
@@ -1015,7 +1126,13 @@ function guestState(guest) {
 
 /** Which of the broadcasts a guest gets to see. */
 function guestCanSee(guest, obj) {
-  if (obj.type === 'chat_message' || obj.type === 'chat_status' || obj.type === 'chat_meta' || obj.type === 'chat_error')
+  if (
+    obj.type === 'chat_message' ||
+    obj.type === 'chat_status' ||
+    obj.type === 'chat_meta' ||
+    obj.type === 'chat_error' ||
+    obj.type === 'chat_threads'
+  )
     return guestChatIds(guest).has(obj.chatId);
   return false; // state is handled separately; permissions/limits/relay — owner only
 }
@@ -1044,6 +1161,7 @@ const GUEST_TYPES = new Set([
   'attachments',
   'image',
   'tool_result',
+  'create_thread',
   'list_dir', // only inside projects shared with them — dispatch() checks projectPath
   'add_artifact',
   ...DOC_TYPES, // documents and their comment threads — gated per document in dispatch()
@@ -1201,15 +1319,28 @@ const handlers = {
     send(ws, { type: 'chat_created', chatId: chat.id, projectPath: chat.cwd });
   },
 
-  send(ws, { chatId, content, localId }) {
+  send(ws, { chatId, content, localId, threadId }) {
     const chat = findChat(chatId);
     ws.watching = chatId; // whoever is typing here is plainly watching it
     // a human message lands mid-service-turn: the turn is a shared one now, so
     // stop hiding it (a thread answer still gets copied; a title is dropped)
     const serviceTurn = serviceTurns.get(chatId);
     if (serviceTurn) serviceTurn.contested = true;
+
+    // A message written into a thread carries its tag in the first line: that is
+    // what still identifies it after a restart, when history is re-read.
+    const thread = threadId ? threadById(chat, threadId) : null;
+    if (threadId && !thread) throw new Error('no such thread');
+    if (thread) content = withThreadMark(content, thread.id);
+
+    // the tag belongs to the turn this message will start — which is not the
+    // running one if the model is still busy
+    const wasBusy = chat.status === 'thinking' || chat.status === 'waiting_permission';
+    turnTags.onSend(chatId, { busy: wasBusy, threadId: thread?.id ?? null });
+
     chat.send(content);
-    if (!chat.title) {
+    // a thread message must never become the chat's name — it is a side remark
+    if (!chat.title && !thread) {
       const text = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;
       if (text) {
         chat.title = text.slice(0, 60);
@@ -1223,6 +1354,7 @@ const handlers = {
       timestamp: new Date().toISOString(),
       author: ws.guest ? ws.guest.email.split('@')[0] : userName,
       localId, // lets the sender skip the echo of the bubble it already drew
+      ...(thread ? { chatThread: thread.id } : {}),
     };
     pushHistory(chatId, userMsg);
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
@@ -1284,7 +1416,29 @@ const handlers = {
     const all = chatHistories.get(chatId) ?? [];
     const tail = all.slice(-300);
     const keepRich = tail.length - 30;
-    send(ws, { type: 'history', chatId, messages: tail.map((m, i) => lazyHistoryMessage(m, i < keepRich)) });
+    const messages = annotateThreads(chatId, tail.map((m, i) => lazyHistoryMessage(m, i < keepRich)));
+    send(ws, { type: 'history', chatId, messages });
+    send(ws, threadsPayload(chatId)); // the feed needs to know which tags are threads
+  },
+
+  /** Open (or reuse) the thread hanging off one message of this chat. */
+  create_thread(ws, { chatId, anchorUuid }) {
+    const chat = findChat(chatId);
+    if (!anchorUuid) throw new Error('a thread needs a message to hang off');
+    let thread = threadsOfChat(chat).find((t) => t.anchorUuid === anchorUuid);
+    if (!thread) {
+      thread = {
+        id: randomUUID(),
+        sessionId: chat.sessionId ?? chat.resumeId,
+        anchorUuid,
+        createdAt: Date.now(),
+        messageIds: [],
+      };
+      chatThreads.push(thread);
+      saveChatThreads();
+    }
+    broadcast(threadsPayload(chatId));
+    send(ws, { type: 'thread_opened', chatId, threadId: thread.id });
   },
 
   /** One tool result on demand — the history only carried its stub. */
@@ -1733,6 +1887,7 @@ const handlers = {
     chat.close();
     for (const p of agent.projects.values()) p.chats.delete(chatId);
     chatHistories.delete(chatId);
+    turnTags.forget(chatId);
     stopTail(chatId);
     saveOpenChats();
     broadcast(stateSnapshot());
