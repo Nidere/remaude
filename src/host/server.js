@@ -180,11 +180,13 @@ agent.on('chat_message', ({ chatId, msg }) => {
   // a service turn (comment thread, chat naming): tag everything it says so the feed can hide it
   const serviceTurn = serviceTurns.get(chatId);
   if (serviceTurn && !serviceTurn.contested) msg.threadRef = serviceTurn.threadId ?? '@service';
-  // a turn answering inside a chat thread: tagged so it lands there instead of the feed
+  // A turn answering inside a chat thread: tagged so it lands there instead of
+  // the feed — the live token stream included, or the feed paints a bubble of
+  // an answer that belongs to the thread and never takes it back.
   const threadTag = turnTags.active(chatId);
-  if (threadTag && msg.type !== 'stream_event') {
+  if (threadTag) {
     msg.chatThread = threadTag;
-    rememberThreadMessage(threadTag, msg.uuid);
+    if (msg.type !== 'stream_event') rememberThreadMessage(threadTag, msg.uuid);
   }
   // We broadcast user input ourselves in handleSend (otherwise it duplicates with the SDK's
   // replay), so plain text user messages of the main dialogue are skipped here.

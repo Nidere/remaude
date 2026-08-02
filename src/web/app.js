@@ -616,7 +616,11 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
   const chat = getChat(chatId);
   // a message tagged with a chat thread belongs there, not in the feed
   if (msg.chatThread) {
-    if (!fromCache && msg.type !== 'stream_event') (chat.msgs ??= []).push(msg);
+    // a bubble may already be growing here from tokens that arrived before the
+    // tag did — it is the thread's answer, so it must not stay in the feed
+    dropStream(chat);
+    if (msg.type === 'stream_event') return; // the thread shows a spinner, not tokens
+    if (!fromCache) (chat.msgs ??= []).push(msg);
     chatThreads.absorb(chatId, msg);
     return;
   }
