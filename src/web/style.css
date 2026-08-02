@@ -1788,3 +1788,16 @@ body > .cmt-error {
 .md-table th { background: var(--bg-3); font-weight: 600; white-space: nowrap; }
 .md-table tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.02); }
 .md-table code { white-space: nowrap; }
+
+/* links inside a document: to a section here, or to another document */
+.md-body a.md-anchor, .md-body a.md-doclink {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+.md-body a.md-doclink { text-decoration-style: solid; }
+.md-body a.md-anchor:hover, .md-body a.md-doclink:hover { text-decoration-style: solid; color: var(--text); }
+/* a moment of highlight, so the eye finds where the link landed */
+.md-anchor-hit { background: rgba(122, 162, 247, 0.18); border-radius: 4px; transition: background 0.8s; }

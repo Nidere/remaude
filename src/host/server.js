@@ -1164,6 +1164,7 @@ const GUEST_TYPES = new Set([
   'image',
   'tool_result',
   'create_thread',
+  'open_doc_link', // both ends checked against the share grants inside the handler
   'list_dir', // only inside projects shared with them — dispatch() checks projectPath
   'add_artifact',
   ...DOC_TYPES, // documents and their comment threads — gated per document in dispatch()
@@ -1679,6 +1680,41 @@ const handlers = {
       path: dir,
       parent: dir.toLowerCase() === project.toLowerCase() ? null : dirname(dir),
       entries,
+    });
+  },
+
+  /**
+   * A link from one document to another, resolved here rather than in the
+   * browser: only this side knows where a project ends, and a link that walks
+   * out of it must not open anything.
+   */
+  open_doc_link(ws, { from, href }) {
+    const base = resolve(String(from ?? ''));
+    if (!canReadDoc(ws, base)) throw new Error('no access to this document');
+    const [rawPath, anchor] = String(href ?? '').split('#');
+    if (!rawPath) throw new Error('nothing to open');
+    let target = decodeURI(rawPath).replace(/\//g, sep);
+    // a link starting at the root means the project's root, not the disk's
+    if (target.startsWith(sep)) {
+      const project = projectOf(base);
+      if (!project) throw new Error('this document is not inside a project');
+      target = join(project, target);
+    } else {
+      target = join(dirname(base), target);
+    }
+    target = resolve(target);
+    if (!canReadDoc(ws, target)) throw new Error('that link leads outside this project');
+    if (!existsSync(target) || !statSync(target).isFile()) throw new Error('no such file');
+    const buf = readFileSync(target);
+    if (buf.length > 12 * 1024 * 1024) throw new Error('file too large to send');
+    const asText = target.toLowerCase().endsWith('.md');
+    send(ws, {
+      type: 'artifact',
+      path: target,
+      name: target.split(/[\\/]/).pop(),
+      text: asText ? buf.toString('utf-8') : null,
+      base64: asText ? null : buf.toString('base64'),
+      anchor: anchor ? decodeURIComponent(anchor) : null,
     });
   },
 

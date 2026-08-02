@@ -384,14 +384,16 @@ const handlers = {
     }
   },
 
-  artifact({ path, name, text, base64, _host }) {
+  artifact({ path, name, text, base64, anchor, _host }) {
     if (text != null) {
       $('doc-title').textContent = name;
       const html = mdToHtml(text);
       $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;
+      openDoc = { path, hostId: hostKey(_host) };
       docComments.docOpened(path, html, hostKey(_host));
+      if (anchor) scrollToAnchor(anchor); // the link pointed at a section, not the top
       return;
     }
     // not markdown: hand it to the browser as a download. A blob URL survives an
@@ -516,7 +518,7 @@ const handlers = {
     // an error for something done inside the document viewer must show up there,
     // not as a banner in a chat feed nobody is looking at — and never as a
     // modal alert(), which reads as the whole app freezing
-    if (inResponseTo?.includes('comment') || inResponseTo === 'read_artifact') {
+    if (inResponseTo?.includes('comment') || inResponseTo === 'read_artifact' || inResponseTo === 'open_doc_link') {
       docComments.showError(message);
       return;
     }
@@ -1096,6 +1098,45 @@ function renderHostProjects(root, hostId, hostState) {
     root.append(proj);
   }
 }
+
+// ---------- links inside documents ----------
+// (#section) scrolls this document; a relative path opens another one. Where a
+// relative path actually leads is the host's business — only it knows where the
+// project ends.
+
+let openDoc = { path: null, hostId: null };
+
+function scrollToAnchor(anchor) {
+  const body = $('doc-body');
+  const wanted = String(anchor).toLowerCase();
+  const target =
+    body.querySelector(`[id="${CSS.escape(wanted)}"]`) ??
+    [...body.querySelectorAll('h3, h4, h5')].find((h) => h.id?.toLowerCase() === wanted);
+  if (!target) return false;
+  // scrollIntoView would scroll the page behind the modal as well
+  body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 12;
+  target.classList.add('md-anchor-hit');
+  setTimeout(() => target.classList.remove('md-anchor-hit'), 1200);
+  return true;
+}
+
+$('doc-body').addEventListener(
+  'click',
+  (e) => {
+    const anchor = e.target.closest('a.md-anchor');
+    const docLink = e.target.closest('a.md-doclink');
+    if (!anchor && !docLink) return;
+    e.preventDefault();
+    e.stopImmediatePropagation(); // a link inside a highlight must not also open its thread
+    if (anchor) {
+      if (!scrollToAnchor(anchor.dataset.anchor)) docComments.showError('no such section in this document');
+      return;
+    }
+    if (!openDoc.path) return;
+    sendTo(openDoc.hostId, { type: 'open_doc_link', from: openDoc.path, href: docLink.dataset.href });
+  },
+  true
+);
 
 // ---------- project file explorer ----------
 // Docs that are the work itself live in the project, not in the inbox. This

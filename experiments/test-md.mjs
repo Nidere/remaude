@@ -3,7 +3,7 @@ import { mdToHtml } from '../src/web/md.js';
 
 const cases = [
   ['**жирный** и *курсив* и `код`', ['<b>жирный</b>', '<i>курсив</i>', '<code>код</code>']],
-  ['# Заголовок\nтекст', ['<h3>Заголовок</h3>']],
+  ['# Заголовок\nтекст', ['<h3 id="заголовок">Заголовок</h3>']],
   ['- один\n- два\n\n1. раз\n2. два', ['<ul><li>один</li><li>два</li></ul>', '<ol><li>раз</li><li>два</li></ol>']],
   ['[линк](https://example.com)', ['<a href="https://example.com" target="_blank" rel="noopener">линк</a>']],
   ['[зло](javascript:alert(1))', []], // must not become a link
@@ -37,6 +37,20 @@ const cases = [
   ['| a | b |\n|---|---|\n| x \\| y | z |', ['<td>x | y</td>']],
   // html inside a cell is still escaped
   ['| a | b |\n|---|---|\n| <img src=x onerror=alert(1)> | z |', ['&lt;img']],
+
+  // headings carry anchors, links inside a document find them
+  ['## Действия героя\nтекст', ['<h4 id="действия-героя">Действия героя</h4>']],
+  ['## Ход матча / порядок!\n', ['id="ход-матча-порядок"']],
+  ['см. [Действия героя](#действия-героя)', ['<a class="md-anchor" data-anchor="действия-героя">Действия героя</a>']],
+  // two headings with the same name get distinct anchors
+  ['# Раз\n# Раз', ['id="раз"', 'id="раз-1"']],
+  // a link to another document of the project
+  ['[герои](./heroes.md)', ['<a class="md-doclink" data-href="./heroes.md">герои</a>']],
+  ['[глава](../design/combat.md#формация)', ['data-href="../design/combat.md#формация"']],
+  // external links keep opening in a new tab
+  ['[сайт](https://example.com)', ['<a href="https://example.com" target="_blank"']],
+  // and unknown schemes are still not links at all
+  ['[зло](data:text/html,<script>alert(1)</script>)', []],
 ];
 
 let failed = 0;
@@ -62,6 +76,10 @@ for (const [src, expects] of cases) {
   }
   if (src.startsWith('| один') && html.includes('<table')) {
     console.error(`FAIL: a single-column block became a table: ${html}`);
+    failed++;
+  }
+  if (src.includes('data:text/html') && html.includes('<a ')) {
+    console.error(`FAIL: a data: link got through: ${html}`);
     failed++;
   }
 }
