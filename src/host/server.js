@@ -83,6 +83,10 @@ const config = loadConfig();
 // defaulting to the OS user name.
 let userName = config.userName ?? userInfo().username;
 
+// The model chats start with (the header select still switches any chat):
+// defaultModel in host.json, opus out of the box.
+const defaultModel = () => config.defaultModel ?? 'opus';
+
 // The projects root: configured in ~/.remaude/host.json (projectsRoot),
 // defaulting to Documents\Projects if it exists, otherwise the home folder.
 let projectsRoot =
@@ -152,7 +156,7 @@ function openSavedSession(projectPath, sessionId, { permissionMode, title, pastI
     if (chat.sessionId === sessionId || chat.resumeId === sessionId || chat.pastIds?.has(sessionId)) return chat;
   }
   const abs = resolve(projectPath);
-  const chat = agent.createChat(abs, { resume: sessionId, permissionMode });
+  const chat = agent.createChat(abs, { resume: sessionId, permissionMode, model: defaultModel() });
   chat.resumeId = sessionId;
   chat.pastIds = new Set(pastIds ?? []);
   chat.title = title ?? null;
@@ -1090,7 +1094,7 @@ const handlers = {
   },
 
   create_chat(ws, { projectPath, model, permissionMode }) {
-    const chat = agent.createChat(projectPath, { model, permissionMode });
+    const chat = agent.createChat(projectPath, { model: model || defaultModel(), permissionMode });
     broadcast(stateSnapshot());
     send(ws, { type: 'chat_created', chatId: chat.id, projectPath: chat.cwd });
   },
