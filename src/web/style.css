@@ -1608,3 +1608,16 @@ body > .cmt-error {
 
 /* the hidden attribute loses to any author display rule — restate it explicitly */
 #cmt-pop[hidden], #cmt-list[hidden], #cmt-add[hidden] { display: none; }
+
+/* "keep the screen awake": a checkbox row, not a full-width settings field */
+#wake-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  margin: 12px 0 10px;
+}
+#wake-label input { display: inline-block; width: auto; margin: 0; }
+/* the id beats the plain [hidden] rule — restate it, or hiding does nothing */
+#wake-label[hidden] { display: none; }

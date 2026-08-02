@@ -2001,6 +2001,49 @@ document.addEventListener('visibilitychange', reportFocus);
 // we sit and read the chat. Say it again as soon as the socket is back.
 window.addEventListener('focus', reportFocus);
 
+// ---------- keeping the screen awake ----------
+// A wake lock dies whenever the app leaves the screen (iOS revokes it on every
+// trip to the background), so wanting it is kept in storage and the lock itself
+// is re-taken on every return — otherwise the switch would work exactly once.
+
+let wakeLock = null;
+const wakeWanted = () => localStorage.getItem('wakeLock') === '1';
+
+async function applyWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  const want = wakeWanted() && document.visibilityState === 'visible';
+  if (want && !wakeLock) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      // the system may drop it on its own (low battery) — forget it, so the
+      // next return to the app asks again instead of trusting a dead handle
+      wakeLock.addEventListener('release', () => (wakeLock = null));
+    } catch {
+      wakeLock = null; // refused: low power mode, or no permission — the switch stays on and retries later
+    }
+  } else if (!want && wakeLock) {
+    const lock = wakeLock;
+    wakeLock = null;
+    try {
+      await lock.release();
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+if ('wakeLock' in navigator) {
+  $('wake-lock').checked = wakeWanted();
+  $('wake-lock').addEventListener('change', function () {
+    localStorage.setItem('wakeLock', this.checked ? '1' : '0');
+    applyWakeLock();
+  });
+  document.addEventListener('visibilitychange', applyWakeLock);
+  applyWakeLock();
+} else {
+  $('wake-label').hidden = true; // no such API here — better no switch than a dead one
+}
+
 // push notifications — relay only (localhost has no subscription backend)
 function notifyStatus(text, ok = false) {
   const node = $('notify-status');
