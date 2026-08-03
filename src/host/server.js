@@ -34,6 +34,7 @@ import {
 } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
 import { TurnTags } from './turn-tags.js';
+import { AgentRows } from './agent-rows.js';
 import {
   sidecarPath,
   isSidecarPath,
@@ -230,10 +231,11 @@ agent.on('chat_message', ({ chatId, msg }) => {
     turnTags.onTurnEnd(chatId);
     // The turn is over: a foreground agent that never reported back is gone.
     // Background ones outlive the turn by design — they keep their row.
-    let aborted = false;
-    for (const agent of agentsOf(chatId).values())
-      if (!agent.async && finishAgent(chatId, agent.id, 'aborted')) aborted = true;
-    if (aborted) broadcastAgents(chatId);
+    const aborted = agentsOf(chatId).abortForeground();
+    if (aborted.length) {
+      for (const id of aborted) retireAgent(chatId, id);
+      broadcastAgents(chatId);
+    }
     refreshLimits(true);
     sendChatMeta(chatId);
     // nobody has this chat on screen — worth buzzing the phone. Merely having a
@@ -755,36 +757,24 @@ function cachedImages(file) {
 }
 
 const pendingWrites = new Map(); // toolUseId -> file path, until the write reports back
-const chatAgents = new Map(); // chatId -> Map(toolUseId -> {id, label, type, status, startedAt, endedAt})
+const chatAgents = new Map(); // chatId -> AgentRows
 const AGENT_LINGER_MS = 30_000; // how long a finished agent stays visible
 
 function agentsOf(chatId) {
-  if (!chatAgents.has(chatId)) chatAgents.set(chatId, new Map());
+  if (!chatAgents.has(chatId)) chatAgents.set(chatId, new AgentRows());
   return chatAgents.get(chatId);
 }
 
 function broadcastAgents(chatId) {
-  const list = [...agentsOf(chatId).values()].map((a) => ({
-    id: a.id,
-    label: a.label,
-    type: a.type,
-    status: a.status,
-    startedAt: a.startedAt,
-    endedAt: a.endedAt ?? null,
-  }));
-  broadcast({ type: 'agents', chatId, agents: list });
+  broadcast({ type: 'agents', chatId, agents: agentsOf(chatId).list() });
 }
 
-function finishAgent(chatId, id, status) {
-  const agent = agentsOf(chatId).get(id);
-  if (!agent || agent.status !== 'running') return false;
-  agent.status = status;
-  agent.endedAt = Date.now();
+/** A finished row stays on screen for a moment, then goes. */
+function retireAgent(chatId, id) {
   setTimeout(() => {
-    agentsOf(chatId).delete(id);
+    agentsOf(chatId).drop(id);
     broadcastAgents(chatId);
   }, AGENT_LINGER_MS).unref?.();
-  return true;
 }
 
 function resultText(block) {
@@ -801,18 +791,19 @@ function trackAgents(chatId, msg) {
   let changed = false;
   const content = msg.message?.content;
   if (!Array.isArray(content)) return;
+  const rows = agentsOf(chatId);
+  // one message is one token: it tells the launch announcement of a background
+  // agent apart from the report that actually ends it
+  const token = msg.uuid ?? msg.timestamp ?? JSON.stringify(content).slice(0, 64);
 
   if (msg.type === 'assistant' && msg.parent_tool_use_id === null) {
     for (const block of content) {
       if (block.type === 'tool_use' && (block.name === 'Write' || block.name === 'Edit') && block.input?.file_path)
         pendingWrites.set(block.id, block.input.file_path);
       if (block.type !== 'tool_use' || block.name !== 'Agent') continue;
-      agentsOf(chatId).set(block.id, {
-        id: block.id,
+      rows.start(block.id, {
         label: block.input?.description ?? block.input?.prompt?.slice(0, 60) ?? 'agent',
         type: block.input?.subagent_type ?? null,
-        status: 'running',
-        startedAt: Date.now(),
       });
       changed = true;
     }
@@ -830,32 +821,15 @@ function trackAgents(chatId, msg) {
           trackArtifact(chatId, written);
         }
       }
-      const agent = agentsOf(chatId).get(block.tool_use_id);
-      if (!agent) continue;
-      // A background agent answers twice on the same tool_use_id: first
-      // "launched" with its id, then the real report minutes later. Only the
-      // second one means it is done — the first used to hide the row instantly.
-      const text = resultText(block);
-      if (text.slice(0, 200).toLowerCase().includes('async agent launched')) {
-        agent.async = true;
-        // remember the id the harness will name it by when it finishes
-        agent.agentId = /agentid:\s*([0-9a-z]+)/i.exec(text)?.[1] ?? null;
-        changed = true;
-        continue;
-      }
-      if (finishAgent(chatId, block.tool_use_id, block.is_error ? 'failed' : 'done')) changed = true;
+      const outcome = rows.onToolResult(block.tool_use_id, { text: resultText(block), isError: block.is_error, token });
+      if (!outcome) continue;
+      changed = true;
+      if (outcome === 'finished') retireAgent(chatId, block.tool_use_id);
     }
-  }
-
-  // A background agent's completion does not always come back as a tool_result
-  // on the original id — the harness may only announce it by agent id. Anything
-  // naming a running agent's id counts as its report, or the row runs forever.
-  if (msg.type === 'user') {
-    const blob = JSON.stringify(content);
-    for (const agent of agentsOf(chatId).values()) {
-      if (agent.status !== 'running' || !agent.agentId) continue;
-      if (blob.includes(agent.agentId) && finishAgent(chatId, agent.id, 'done')) changed = true;
-    }
+    // the harness may announce a background agent's completion by its id alone
+    const ended = rows.onMention(JSON.stringify(content), { token });
+    for (const id of ended) retireAgent(chatId, id);
+    if (ended.length) changed = true;
   }
 
   if (changed) broadcastAgents(chatId);
