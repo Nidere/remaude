@@ -796,11 +796,16 @@ function trackAgents(chatId, msg) {
   // agent apart from the report that actually ends it
   const token = msg.uuid ?? msg.timestamp ?? JSON.stringify(content).slice(0, 64);
 
-  if (msg.type === 'assistant' && msg.parent_tool_use_id === null) {
+  if (msg.type === 'assistant') {
     for (const block of content) {
+      // Writes count wherever they happen — a subagent writing a document for
+      // the user means exactly what the main thread doing it means, and its
+      // work used to reach neither the inbox nor the file→chat index.
       if (block.type === 'tool_use' && (block.name === 'Write' || block.name === 'Edit') && block.input?.file_path)
         pendingWrites.set(block.id, block.input.file_path);
-      if (block.type !== 'tool_use' || block.name !== 'Agent') continue;
+      // agent rows, on the other hand, belong to the main thread: a subagent
+      // spawning its own is not a row of this chat
+      if (msg.parent_tool_use_id !== null || block.type !== 'tool_use' || block.name !== 'Agent') continue;
       rows.start(block.id, {
         label: block.input?.description ?? block.input?.prompt?.slice(0, 60) ?? 'agent',
         type: block.input?.subagent_type ?? null,
