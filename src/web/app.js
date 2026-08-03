@@ -385,9 +385,10 @@ const handlers = {
     }
   },
 
-  artifact({ path, name, text, base64, anchor, _host }) {
+  artifact({ path, name, text, base64, anchor, inInbox, _host }) {
     if (text != null) {
       $('doc-title').textContent = name;
+      setInboxButton(inInbox);
       const html = mdToHtml(text);
       $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
@@ -1108,6 +1109,36 @@ function renderHostProjects(root, hostId, hostState) {
 
 let openDoc = { path: null, hostId: null };
 
+/** The 📥 button says whether this document is already kept in the inbox. */
+function setInboxButton(inInbox) {
+  const btn = $('doc-inbox');
+  btn.textContent = inInbox ? '📥✓' : '📥';
+  btn.title = inInbox ? 'already in the inbox' : 'keep this document in the inbox';
+  btn.classList.toggle('done', Boolean(inInbox));
+}
+
+$('doc-inbox').onclick = () => {
+  if (!openDoc.path || $('doc-inbox').classList.contains('done')) return;
+  sendTo(openDoc.hostId, {
+    type: 'add_artifact',
+    path: openDoc.path,
+    chatId: chatHostId(activeChatId) === openDoc.hostId ? activeChatId : null,
+  });
+  setInboxButton(true);
+};
+
+/** A file named in passing — resolved against the chat's project, not a document. */
+function openMentionedDoc(path) {
+  const chat = chats.get(activeChatId);
+  if (!chat) return;
+  sendTo(chatHostId(activeChatId), { type: 'open_doc_link', projectPath: chat.projectPath, href: path });
+}
+
+feedHost.addEventListener('click', (e) => {
+  const mention = e.target.closest?.('code.md-path');
+  if (mention) openMentionedDoc(mention.dataset.path);
+});
+
 function scrollToAnchor(anchor) {
   const body = $('doc-body');
   const wanted = String(anchor).toLowerCase();
@@ -1127,6 +1158,13 @@ $('doc-body').addEventListener(
   (e) => {
     const anchor = e.target.closest('a.md-anchor');
     const docLink = e.target.closest('a.md-doclink');
+    const mention = e.target.closest('code.md-path');
+    if (mention && openDoc.path) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      sendTo(openDoc.hostId, { type: 'open_doc_link', from: openDoc.path, href: mention.dataset.path });
+      return;
+    }
     if (!anchor && !docLink) return;
     e.preventDefault();
     e.stopImmediatePropagation(); // a link inside a highlight must not also open its thread

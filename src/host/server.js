@@ -1633,6 +1633,7 @@ const handlers = {
       name: abs.split(/[\\/]/).pop(),
       text: asText ? buf.toString('utf-8') : null,
       base64: asText ? null : buf.toString('base64'),
+      inInbox: Boolean(artifactByPath(abs)),
     });
   },
 
@@ -1682,19 +1683,30 @@ const handlers = {
    * browser: only this side knows where a project ends, and a link that walks
    * out of it must not open anything.
    */
-  open_doc_link(ws, { from, href }) {
-    const base = resolve(String(from ?? ''));
-    if (!canReadDoc(ws, base)) throw new Error('no access to this document');
+  open_doc_link(ws, { from, href, projectPath }) {
+    // a link inside a document counts from that document; a file named in a
+    // chat message counts from the project the chat lives in
+    let baseDir;
+    let project;
+    if (from) {
+      const base = resolve(String(from));
+      if (!canReadDoc(ws, base)) throw new Error('no access to this document');
+      baseDir = dirname(base);
+      project = projectOf(base);
+    } else {
+      project = agent.findProject(resolve(String(projectPath ?? '')))?.path;
+      if (!project) throw new Error('no such project');
+      baseDir = project;
+    }
     const [rawPath, anchor] = String(href ?? '').split('#');
     if (!rawPath) throw new Error('nothing to open');
     let target = decodeURI(rawPath).replace(/\//g, sep);
     // a link starting at the root means the project's root, not the disk's
     if (target.startsWith(sep)) {
-      const project = projectOf(base);
       if (!project) throw new Error('this document is not inside a project');
       target = join(project, target);
-    } else {
-      target = join(dirname(base), target);
+    } else if (!/^[a-z]:[\\/]/i.test(target)) {
+      target = join(baseDir, target);
     }
     target = resolve(target);
     if (!canReadDoc(ws, target)) throw new Error('that link leads outside this project');
@@ -1709,6 +1721,7 @@ const handlers = {
       text: asText ? buf.toString('utf-8') : null,
       base64: asText ? null : buf.toString('base64'),
       anchor: anchor ? decodeURIComponent(anchor) : null,
+      inInbox: Boolean(artifactByPath(target)),
     });
   },
 

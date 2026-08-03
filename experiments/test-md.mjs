@@ -51,6 +51,17 @@ const cases = [
   ['[сайт](https://example.com)', ['<a href="https://example.com" target="_blank"']],
   // and unknown schemes are still not links at all
   ['[зло](data:text/html,<script>alert(1)</script>)', []],
+
+  // a document named in passing becomes clickable by itself
+  ['Написал в `cloud/OWNER-SETUP-AWS-ACCOUNT.md` — целиком', ['<code class="md-path" data-path="cloud/OWNER-SETUP-AWS-ACCOUNT.md">']],
+  ['см. `docs/дизайн-боёвки.md`', ['data-path="docs/дизайн-боёвки.md"']],
+  ['`./README.md`', ['class="md-path"']],
+  ['`src\\host\\server.md`', ['class="md-path"']],
+  // …but ordinary code stays ordinary
+  ['`npm install`', ['<code>npm install</code>']],
+  ['`src/host/server.js`', ['<code>src/host/server.js</code>']],
+  ['`a/b`', ['<code>a/b</code>']],
+  ['`*.md`', ['<code>*.md</code>']],
 ];
 
 let failed = 0;

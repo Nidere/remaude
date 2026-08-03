@@ -1313,6 +1313,7 @@ body.guest .add-host { display: none; }
   #share-close,
   #title-btn,
   #doc-threads,
+  #doc-inbox,
   .exp-star,
   #menu-btn {
     min-width: 40px;
@@ -1801,3 +1802,22 @@ body > .cmt-error {
 .md-body a.md-anchor:hover, .md-body a.md-doclink:hover { text-decoration-style: solid; color: var(--text); }
 /* a moment of highlight, so the eye finds where the link landed */
 .md-anchor-hit { background: rgba(122, 162, 247, 0.18); border-radius: 4px; transition: background 0.8s; }
+
+/* a document named in passing: clickable, without looking like a link */
+code.md-path { cursor: pointer; border-bottom: 1px dotted var(--accent); }
+code.md-path:hover { color: var(--accent); border-bottom-style: solid; }
+
+/* keep this document in the inbox */
+#doc-inbox {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--dim);
+  height: 26px;
+  padding: 0 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+#doc-inbox:hover { border-color: var(--accent); color: var(--text); }
+#doc-inbox.done { border-color: var(--green); color: var(--green); cursor: default; }
