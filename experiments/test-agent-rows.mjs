@@ -73,5 +73,11 @@ rows.start('x', { label: 'работа', type: 'Explore', now: 111 });
 const [row] = rows.list();
 eq([row.id, row.label, row.type, row.status, row.startedAt, row.endedAt], ['x', 'работа', 'Explore', 'running', 111, null], 'the row carries what the sidebar draws');
 
+// the reconnect path asks `size` before re-broadcasting — a fresh client must
+// learn about agents that were already running (this being absent hid them)
+eq(rows.size, 1, 'size counts the rows for the reconnect broadcast');
+rows.drop('x');
+eq(rows.size, 0, 'and follows drops');
+
 console.log(failed ? `AGENT ROWS: ${failed} failed` : 'AGENT ROWS OK');
 process.exit(failed ? 1 : 0);

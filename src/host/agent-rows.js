@@ -69,6 +69,11 @@ export class AgentRows {
     return true;
   }
 
+  /** How many rows exist — the reconnect path asks before broadcasting. */
+  get size() {
+    return this.#rows.size;
+  }
+
   drop(id) {
     this.#rows.delete(id);
   }

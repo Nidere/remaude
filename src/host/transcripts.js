@@ -220,6 +220,18 @@ export function sessionFile(cwd, sessionId) {
   return existsSync(file) ? file : null;
 }
 
+/** The first text of a message, whatever shape the content came in. */
+function leadingText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.find((b) => b.type === 'text')?.text ?? '';
+}
+
+export function isCliCommandNoise(content) {
+  const text = leadingText(content).trimStart();
+  return text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>') || text.startsWith('<command-message>');
+}
+
 /**
  * One raw transcript entry → a feed message the web client can render
  * (type/message/parent_tool_use_id), or null for entries the feed skips.
@@ -229,6 +241,10 @@ export function mapEntry(entry, { defaultAuthor = null } = {}) {
   // the harness's system injections (task notifications and the like) are written as
   // user messages, but carry origin.kind — real user input has no origin
   if (entry.type === 'user' && entry.origin?.kind) return null;
+  // CLI slash commands leave their bookkeeping in the transcript as user
+  // messages (<command-name>/model</command-name>, <local-command-stdout>…) —
+  // that is the terminal talking to itself, not the conversation
+  if (entry.type === 'user' && isCliCommandNoise(entry.message.content)) return null;
   // ...and the assistant's replies to those injections are noise too: the harness
   // convention is the literal "No response requested." for turns with no answer
   if (entry.type === 'assistant' && Array.isArray(entry.message.content)) {
