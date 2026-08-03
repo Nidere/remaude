@@ -148,21 +148,27 @@ function saveOpenChats() {
       pastIds: [...(c.pastIds ?? [])].slice(-20),
       title: c.title ?? null,
       permissionMode: c.permissionMode,
+      // a reopened session says nothing about itself until it is spoken to, so
+      // the header would sit empty; what it ran as is remembered here instead
+      model: c.model ?? null,
+      effort: c.effort ?? null,
     }));
   saveConfig(config);
 }
 
 /** The shared path for opening a saved session (open_session and the auto-restore at startup). */
-function openSavedSession(projectPath, sessionId, { permissionMode, title, pastIds } = {}) {
+function openSavedSession(projectPath, sessionId, { permissionMode, title, pastIds, model, effort } = {}) {
   if (!isSessionId(sessionId)) throw new Error('bad session id');
   for (const chat of agent.allChats()) {
     if (chat.sessionId === sessionId || chat.resumeId === sessionId || chat.pastIds?.has(sessionId)) return chat;
   }
   const abs = resolve(projectPath);
-  const chat = agent.createChat(abs, { resume: sessionId, permissionMode, model: defaultModel() });
+  const chat = agent.createChat(abs, { resume: sessionId, permissionMode, model: model || defaultModel() });
   chat.resumeId = sessionId;
   chat.pastIds = new Set(pastIds ?? []);
   chat.title = title ?? null;
+  chat.model = model ?? defaultModel(); // what the header shows until the session speaks for itself
+  if (effort) chat.effort = effort;
   chatHistories.set(chat.id, loadHistory(abs, sessionId, { defaultAuthor: userName }));
   startTail(chat);
   return chat;
@@ -271,11 +277,16 @@ async function sendChatMeta(chatId) {
   }
   let context = null;
   try {
-    const u = await chat.contextUsage();
-    context = { percentage: Math.round(u.percentage), totalTokens: u.totalTokens, maxTokens: u.maxTokens };
-    if (u.model) chat.model = u.model;
+    // A session resumed but never spoken to answers nothing at all — the call
+    // does not fail, it simply never returns (verified against the SDK). Waiting
+    // on it swallowed the whole header: no model, no mode, no effort either.
+    const u = await Promise.race([chat.contextUsage(), new Promise((r) => setTimeout(() => r(null), 2500))]);
+    if (u) {
+      context = { percentage: Math.round(u.percentage), totalTokens: u.totalTokens, maxTokens: u.maxTokens };
+      if (u.model) chat.model = u.model;
+    }
   } catch {
-    /* the session may not have started up yet, or may already be dead */
+    /* the session may already be dead */
   }
   broadcast({
     type: 'chat_meta',
@@ -1241,6 +1252,7 @@ function stateSnapshot() {
         status: c.status,
         title: c.title ?? null,
         model: c.model,
+        effort: c.effort ?? hostEffort,
         permissionMode: c.permissionMode,
       })),
     })),
@@ -1444,6 +1456,9 @@ const handlers = {
   /** Which chat this client is looking at right now (null when hidden). */
   focus(ws, { chatId }) {
     ws.watching = chatId ?? null;
+    // opening a chat is the moment its header should fill in: a chat reopened
+    // after a restart has said nothing yet, so nothing has been broadcast for it
+    if (chatId) sendChatMeta(chatId);
   },
 
   /** Who this chat / project / host is shared with right now. */

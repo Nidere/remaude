@@ -239,6 +239,7 @@ const handlers = {
       $('chat-title').textContent = `${shortPath(active.projectPath)} · ${active.title ?? activeChatId.slice(0, 8)}`;
       updateComposerButtons(active.status);
       renderActivity(active);
+      syncHeaderSelects(active); // the snapshot knows the model and effort; a reload has nothing else
     }
   },
 
@@ -1037,6 +1038,7 @@ function renderHostProjects(root, hostId, hostState) {
       chat.title = c.title;
       chat.sessionId = c.sessionId;
       if (c.model) chat.model = c.model;
+      if (c.effort) chat.effort = c.effort; // a reload has only the snapshot to go on
       if (c.permissionMode) chat.mode = c.permissionMode;
       const labelText = c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'new');
       if (filter && !labelText.toLowerCase().includes(filter) && !p.path.toLowerCase().includes(filter)) continue;
