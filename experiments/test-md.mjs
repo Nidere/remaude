@@ -3,6 +3,13 @@ import { mdToHtml } from '../src/web/md.js';
 
 const cases = [
   ['**жирный** и *курсив* и `код`', ['<b>жирный</b>', '<i>курсив</i>', '<code>код</code>']],
+  // the same, written with underscores
+  ['_Версия 1 · принята: 1_', ['<i>Версия 1 · принята: 1</i>']],
+  ['__жирный__ и _курсив_', ['<b>жирный</b>', '<i>курсив</i>']],
+  // …but a name with underscores is a name, not emphasis
+  ['переменная snake_case_name в тексте', ['<div>переменная snake_case_name в тексте</div>']],
+  ['файл_с_подчёркиванием.txt', ['<div>файл_с_подчёркиванием.txt</div>']],
+  ['`a_b_c`', ['<code>a_b_c</code>']],
   ['# Заголовок\nтекст', ['<h3 id="заголовок">Заголовок</h3>']],
   ['- один\n- два\n\n1. раз\n2. два', ['<ul><li>один</li><li>два</li></ul>', '<ol><li>раз</li><li>два</li></ol>']],
   ['[линк](https://example.com)', ['<a href="https://example.com" target="_blank" rel="noopener">линк</a>']],
