@@ -700,13 +700,19 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
     if (!chat.streamEl || chat.streamKind !== kind) {
       // thinking → text transition (or the other way round): a new bubble
       if (chat.streamEl && chat.streamKind === 'think') chat.streamEl.remove();
-      chat.streamEl = el('div', `msg msg-assistant streaming${kind === 'think' ? ' thinking' : ''}`, '');
+      chat.streamEl = el(
+        'div',
+        `msg msg-assistant streaming${kind === 'think' ? ' thinking' : ' md-body'}`,
+        ''
+      );
       chat.streamText = '';
       chat.streamKind = kind;
       chat.feedEl.append(chat.streamEl);
     }
     chat.streamText += kind === 'text' ? ev.delta.text : ev.delta.thinking;
-    chat.streamEl.textContent = chat.streamText;
+    // thinking stays plain — it is a stream of consciousness, not a document
+    if (kind === 'think') chat.streamEl.textContent = chat.streamText;
+    else paintStream(chat);
     scrollToBottom();
     return;
   }
@@ -874,6 +880,34 @@ function renderActivity(chat) {
   if (!busy) return;
   $('activity-text').textContent =
     chat.status === 'waiting_permission' ? 'waiting for your permission' : (chat.activity ?? 'thinking…');
+}
+
+/**
+ * An answer being typed is markdown too — showing it raw until the last token
+ * lands makes half a reply look like a mistake. Re-rendering on every token
+ * would be silly, so this repaints on a frame and no faster than the eye
+ * follows; a long answer gets a longer leash.
+ */
+function paintStream(chat) {
+  if (chat.streamPending) return;
+  chat.streamPending = true;
+  requestAnimationFrame(() => {
+    chat.streamPending = false;
+    if (!chat.streamEl || chat.streamKind !== 'text') return;
+    const since = Date.now() - (chat.streamPaintedAt ?? 0);
+    const leash = chat.streamText.length > 20_000 ? 250 : 60;
+    if (since < leash) {
+      setTimeout(() => paintStream(chat), leash - since); // the tail must not be left unpainted
+      return;
+    }
+    chat.streamPaintedAt = Date.now();
+    chat.streamEl.innerHTML = mdToHtml(closeDanglingFence(chat.streamText));
+  });
+}
+
+/** Mid-stream a code fence is usually still open; closing it keeps the block a block. */
+function closeDanglingFence(text) {
+  return (text.match(/```/g) ?? []).length % 2 ? text + '\n```' : text;
 }
 
 function dropStream(chat) {

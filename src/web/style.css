@@ -867,6 +867,10 @@ body.guest .chat-actions { display: none !important; }
   color: var(--accent);
   animation: pulse 1s infinite;
 }
+/* the caret follows the last line instead of sitting on a line of its own */
+.msg-assistant.streaming.md-body::after { display: inline; margin-left: 1px; }
+.msg-assistant.streaming.md-body > div:last-child { display: inline; }
+.msg-assistant.streaming.md-body > .md-gap:last-child { display: block; }
 
 /* thinking stream — dimmed, italic */
 .msg-assistant.streaming.thinking {
