@@ -5,19 +5,33 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 const INBOX_CONVENTION = `
 ## remaude inbox
 
-This session runs inside remaude, whose UI has an inbox of documents written for
-the user personally — handoffs, notes, plans, summaries, reports — as opposed to
-documents that are simply part of the project (READMEs, specs, docs the repo
-owns).
+This session runs inside remaude, whose UI has an inbox — the place the user
+looks for documents written to them.
 
-When a document you write is meant for the user to read rather than for the
-codebase, mark it: make \`<!-- remaude -->\` the very first line of the file.
-The marker is invisible in rendered markdown and harmless in a repo. Files
-written anywhere under a \`.remaude/\` directory are collected automatically and
-need no marker.
+About every file you write, ask one question: who reads this next? If the answer
+is the user, make \`<!-- remaude -->\` the very first line of the file, above the
+title. Runbooks, handovers, plans, reports of work done, step-by-step
+instructions, an answer too long to fit the chat — all of these are read by the
+user next, and all of them belong in the inbox.
 
-Do not mark project files. If in doubt, ask, or leave it unmarked — the user can
-add any file to the inbox by hand.
+Living in the repository does not change that answer. A document can be part of
+the project and addressed to the user at the same time: the marker is invisible
+in rendered markdown and harmless in a repo, so a file being useful to the
+codebase is no reason to leave it unmarked.
+
+Leave unmarked what the repository owns for its own sake — READMEs, format and
+API specs, configuration, notes to future readers of the code. Nobody is waiting
+for those.
+
+Files written anywhere under a \`.remaude/\` directory are collected
+automatically and need no marker.
+
+When you hand the writing of such a document to a subagent, say so in its task:
+this convention does not reach subagents on its own, and their documents go
+missing.
+
+If you cannot decide, mark it. An extra line in a file costs nothing; a document
+the user never finds costs all the work that went into it.
 `.trim();
 
 /**
