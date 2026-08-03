@@ -713,7 +713,7 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
     // thinking stays plain — it is a stream of consciousness, not a document
     if (kind === 'think') chat.streamEl.textContent = chat.streamText;
     else paintStream(chat);
-    scrollToBottom();
+    followStream(chat);
     return;
   }
 
@@ -903,6 +903,19 @@ function paintStream(chat) {
     chat.streamPaintedAt = Date.now();
     chat.streamEl.innerHTML = mdToHtml(closeDanglingFence(chat.streamText));
   });
+}
+
+/**
+ * A short answer may pull the view along as it lands; a long one must not.
+ * Once it outgrows the screen you are reading it, not watching it arrive, and
+ * every new line dragging the text out from under you is the annoyance. From
+ * then on the view stays where you left it — the ↓ button is right there.
+ */
+function followStream(chat) {
+  const node = chat.streamEl;
+  if (!node) return;
+  if (node.getBoundingClientRect().height < feedHost.clientHeight * 0.75) scrollToBottom();
+  else updateScrollDown(); // it stopped following: say so, or there is no way back
 }
 
 /** Mid-stream a code fence is usually still open; closing it keeps the block a block. */
@@ -1910,6 +1923,12 @@ function scrollToBottomSettled() {
 function scrollToBottom(force = false) {
   const nearBottom = feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight < 120;
   if (force || nearBottom) feedHost.scrollTop = feedHost.scrollHeight;
+  updateScrollDown();
+}
+
+/** The ↓ button follows the content too, not only the finger. */
+function updateScrollDown() {
+  $('scroll-down').hidden = feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight < 200;
 }
 
 function closeSidebar() {
@@ -2170,10 +2189,7 @@ $('menu-btn').onclick = () => {
 $('sidebar-overlay').onclick = closeSidebar;
 
 // the “scroll down” button
-feedHost.addEventListener('scroll', () => {
-  const nearBottom = feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight < 200;
-  $('scroll-down').hidden = nearBottom;
-});
+feedHost.addEventListener('scroll', updateScrollDown);
 $('scroll-down').onclick = () => scrollToBottom(true);
 
 // model and effort of the active chat
