@@ -44,16 +44,47 @@ function draftKey(chatId) {
   return chat?.sessionId ?? chatId;
 }
 
+/**
+ * Drafts live in two places on purpose: here for speed and for offline, and on
+ * the host because this copy dies with a cleared cache, an evicted tab or a
+ * session id that changed under it.
+ */
 function saveDraft(chatId, text) {
-  if (!chatId) return;
+  if (!chatId) return null;
   const drafts = loadDrafts();
-  if (text.trim()) drafts[draftKey(chatId)] = text;
+  const at = Date.now();
+  if (text.trim()) drafts[draftKey(chatId)] = { text, at };
   else delete drafts[draftKey(chatId)];
   try {
     localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
   } catch {
-    /* quota — the draft simply stays in memory */
+    /* quota — the host's copy is the one that has to survive anyway */
   }
+  return at;
+}
+
+function localDraft(chatId) {
+  const saved = loadDrafts()[draftKey(chatId)];
+  if (!saved) return null;
+  return typeof saved === 'string' ? { text: saved, at: 0 } : saved; // drafts written before they carried a time
+}
+
+/** The newer of the two copies wins — no merging, nothing discarded silently. */
+function bestDraft(chatId) {
+  const local = localDraft(chatId);
+  const remote = chats.get(chatId)?.remoteDraft ?? null;
+  if (!local) return remote;
+  if (!remote) return local;
+  return remote.at > local.at ? remote : local;
+}
+
+let draftTimer = null;
+
+function pushDraft(chatId, text, { now = false } = {}) {
+  clearTimeout(draftTimer);
+  const send = () => sendTo(chatHostId(chatId), { type: 'save_draft', chatId, text, at: Date.now() });
+  if (now) send();
+  else draftTimer = setTimeout(send, 1000); // a keystroke is not worth a round trip
 }
 
 // The transcript of the chat you were last in is kept locally, so a relaunch
@@ -176,6 +207,7 @@ function connect() {
   };
   ws.onclose = () => {
     $('conn-dot').classList.remove('on');
+    for (const chatId of chats.keys()) recoverPendingSend(chatId);
     setTimeout(connect, 1500);
   };
   ws.onmessage = (e) => {
@@ -317,6 +349,20 @@ const handlers = {
 
   limits({ limits }) {
     renderLimits(limits);
+  },
+
+  /** The host's copy of what is being typed — from a restart, or another device. */
+  draft({ chatId, text, at }) {
+    const chat = getChat(chatId);
+    chat.remoteDraft = { text, at };
+    if (chatId !== activeChatId) return;
+    // never overwrite something newer that is being typed right now
+    if ((chat.draftAt ?? localDraft(chatId)?.at ?? 0) >= at) return;
+    if ($('input').value === text) return;
+    $('input').value = text;
+    autoGrowInput($('input'));
+    chat.draftAt = at;
+    saveDraft(chatId, text);
   },
 
   chat_threads(msg) {
@@ -579,8 +625,12 @@ function selectChat(chatId) {
   localStorage.setItem('lastChat', chatId);
   const chat = getChat(chatId);
   if (chat.sessionId) localStorage.setItem('lastSession', chat.sessionId);
-  $('input').value = chat.draftText ?? loadDrafts()[draftKey(chatId)] ?? '';
-  $('input').dispatchEvent(new Event('input')); // recompute the height
+  // an empty composer we remembered is not a reason to forget a saved draft:
+  // clearing the box clears both copies anyway, so falling back is safe
+  $('input').value = chat.draftText || bestDraft(chatId)?.text || '';
+  // resize the box directly: firing a synthetic input event here made opening a
+  // chat look like typing, which saved an empty draft over the real one
+  autoGrowInput($('input'));
   attachments.length = 0;
   attachments.push(...(chat.draftAtt ?? []));
   renderAttachments();
@@ -712,6 +762,8 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
       for (const block of content) if (block.type === 'tool_result') attachToolResult(chat, block);
       return;
     }
+    // the host has it — the copy we were holding on to is no longer needed
+    if (msg.localId && chat.pendingSend?.localId === msg.localId) chat.pendingSend = null;
     // an ordinary user message; already on screen if we drew it optimistically
     if (msg.localId && chat.feedEl.querySelector(`[data-local-id="${msg.localId}"]`)) return;
     // belt and braces: the same text may come back without our localId (host
@@ -1735,6 +1787,7 @@ function sendMessage() {
     localId,
   });
   sendTo(chatHostId(activeChatId), { type: 'send', chatId: activeChatId, content, localId });
+  const text = $('input').value;
   $('input').value = '';
   autoGrowInput($('input'));
   attachments.length = 0;
@@ -1743,8 +1796,25 @@ function sendMessage() {
   if (chat) {
     chat.draftText = '';
     chat.draftAtt = [];
+    // the text is not forgotten until the host confirms it arrived: a socket
+    // that dies between here and there would otherwise take it with it
+    chat.pendingSend = { localId, text };
     saveDraft(activeChatId, '');
+    pushDraft(activeChatId, '', { now: true });
   }
+}
+
+/** A message we never saw come back goes into the composer rather than nowhere. */
+function recoverPendingSend(chatId) {
+  const chat = chats.get(chatId);
+  if (!chat?.pendingSend || !chat.pendingSend.text.trim()) return;
+  const { text } = chat.pendingSend;
+  chat.pendingSend = null;
+  if (chatId !== activeChatId || $('input').value.trim()) return;
+  $('input').value = text;
+  autoGrowInput($('input'));
+  saveDraft(chatId, text);
+  appendTo(chatId, el('div', 'error-banner', 'the connection dropped before this was sent — the text is back in the box'));
 }
 
 function updateComposerButtons(status) {
@@ -1838,10 +1908,21 @@ function autoGrowInput(el) {
   el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   el.style.overflowY = el.scrollHeight > 200 ? 'auto' : 'hidden';
 }
-$('input').addEventListener('input', function () {
+$('input').addEventListener('input', function (e) {
   autoGrowInput(this);
-  saveDraft(activeChatId, this.value);
+  if (e && !e.isTrusted) return; // only a person typing counts as a draft
+  const at = saveDraft(activeChatId, this.value);
+  if (activeChatId) {
+    getChat(activeChatId).draftAt = at; // what we know is newest, so a stale copy cannot win
+    pushDraft(activeChatId, this.value);
+  }
 });
+
+// leaving the page is exactly when an unsaved second matters
+for (const ev of ['visibilitychange', 'pagehide'])
+  document.addEventListener(ev, () => {
+    if (activeChatId && document.visibilityState !== 'visible') pushDraft(activeChatId, $('input').value, { now: true });
+  });
 
 // Every pasted image is normalized to PNG (the Windows clipboard can hand over bmp
 // and other things the API rejects) and oversized screenshots are scaled down.

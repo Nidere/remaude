@@ -641,6 +641,43 @@ function finishServiceTurn(chatId) {
   }
 }
 
+// ---------- drafts ----------
+// A long message being written is work, and losing it to a restart, a closed
+// tab or a cleared cache is the cheapest kind of loss to prevent. The browser
+// keeps its own copy for speed and for offline; this one is the copy that
+// survives everything and reaches the person's other devices.
+
+const DRAFTS_PATH = join(homedir(), '.remaude', 'drafts.json');
+const DRAFT_MAX = 100_000; // characters — dozens of pages, and a ceiling on the file
+
+let drafts = (() => {
+  try {
+    const data = JSON.parse(readFileSync(DRAFTS_PATH, 'utf-8'));
+    return data && typeof data === 'object' ? data : {};
+  } catch {
+    return {};
+  }
+})();
+
+function saveDrafts() {
+  mkdirSync(dirname(DRAFTS_PATH), { recursive: true });
+  writeFile(DRAFTS_PATH, JSON.stringify(drafts, null, 2)).catch(() => {});
+}
+
+/**
+ * Drafts are filed under the chat's session id, and looked up under every id
+ * that chat has ever had — a resume mints a new one, and that is precisely the
+ * moment a draft used to disappear.
+ */
+function draftKeyOf(chat) {
+  return chat.sessionId ?? chat.resumeId ?? chat.id;
+}
+
+function draftFor(chat) {
+  for (const id of sessionIdsOf(chat)) if (drafts[id]) return drafts[id];
+  return drafts[chat.id] ?? null;
+}
+
 // ---------- threads inside a chat ----------
 // A thread is not a separate session — it is a subset of this chat's messages
 // wearing the same tag. What you write there goes into the session as usual;
@@ -1153,6 +1190,7 @@ const GUEST_TYPES = new Set([
   'attachments',
   'image',
   'tool_result',
+  'save_draft',
   'create_thread',
   'open_doc_link', // both ends checked against the share grants inside the handler
   'list_dir', // only inside projects shared with them — dispatch() checks projectPath
@@ -1350,6 +1388,10 @@ const handlers = {
       localId, // lets the sender skip the echo of the bubble it already drew
       ...(thread ? { chatThread: thread.id } : {}),
     };
+    // it has been said — the draft of it has served its purpose
+    for (const id of sessionIdsOf(chat)) delete drafts[id];
+    delete drafts[chat.id];
+    saveDrafts();
     pushHistory(chatId, userMsg);
     broadcast({ type: 'chat_message', chatId, msg: userMsg });
     // the transcript will echo this input under a fresh uuid — let the tail skip it
@@ -1413,6 +1455,28 @@ const handlers = {
     const messages = annotateThreads(chatId, tail.map((m, i) => lazyHistoryMessage(m, i < keepRich)));
     send(ws, { type: 'history', chatId, messages });
     send(ws, threadsPayload(chatId)); // the feed needs to know which tags are threads
+    const draft = draftFor(findChat(chatId));
+    if (draft) send(ws, { type: 'draft', chatId, ...draft });
+  },
+
+  /** What is being typed into this chat, kept where a browser cannot lose it. */
+  save_draft(ws, { chatId, text, at }) {
+    const chat = findChat(chatId);
+    const body = String(text ?? '');
+    if (body.length > DRAFT_MAX) throw new Error(`the draft is too long to keep (over ${DRAFT_MAX} characters)`);
+    const key = draftKeyOf(chat);
+    // an older copy must never overwrite a newer one — two devices may be typing
+    const known = draftFor(chat);
+    const stamp = Number(at) || Date.now();
+    if (known && known.at > stamp) return;
+    for (const id of sessionIdsOf(chat)) delete drafts[id]; // one draft per chat, under its current id
+    delete drafts[chat.id];
+    if (body.trim()) drafts[key] = { text: body, at: stamp };
+    saveDrafts();
+    // the person's other devices should see it appear
+    for (const c of clients)
+      if (c !== ws && c.readyState === c.OPEN && (!c.guest || guestChatIds(c.guest).has(chatId)))
+        send(c, { type: 'draft', chatId, ...(drafts[key] ?? { text: '', at: stamp }) });
   },
 
   /** Open (or reuse) the thread hanging off one message of this chat. */
