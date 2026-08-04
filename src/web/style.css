@@ -1912,3 +1912,10 @@ body.guest #export-btn { display: none; }
   font-size: 12px;
 }
 #doc-full:hover { border-color: var(--accent); color: var(--text); }
+
+/* a saved conversation, laid out like the chat it was */
+#doc-body.md-body { display: flex; flex-direction: column; gap: 10px; }
+#doc-body > .msg { max-width: min(760px, 88%); }
+#doc-body > .msg-user { align-self: flex-end; }
+#doc-body > .msg-assistant { align-self: flex-start; max-width: 100%; }
+#doc-body > .msg .msg-time { display: block; margin-top: 2px; }

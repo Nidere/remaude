@@ -34,7 +34,9 @@ function hasImages(msg) {
  * @returns the document, marked for the inbox
  */
 export function chatToMarkdown({ title, project, messages, exportedAt = Date.now(), owner = null }) {
-  const out = ['<!-- remaude -->', `# ${title || 'Чат'}`, ''];
+  // the second marker tells the viewer this is a conversation, so it can lay it
+  // out as one; every other markdown reader sees an ordinary document
+  const out = ['<!-- remaude -->', '<!-- remaude:chat -->', `# ${title || 'Чат'}`, ''];
   const said = [];
 
   for (const msg of messages) {

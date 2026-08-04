@@ -51,6 +51,7 @@ const md = chatToMarkdown({
 });
 
 check(md.startsWith('<!-- remaude -->\n'), 'the marker is the very first line, so it lands in the inbox');
+check(md.includes('<!-- remaude:chat -->'), 'and a second one says it is a conversation');
 check(md.includes('# Приёмка боёвки'), 'the chat is titled');
 check(md.includes('**Проект:** C:/proj/game'), 'the project is named');
 // the hour is whatever the machine's timezone says, so only the shape is checked

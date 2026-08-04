@@ -435,7 +435,8 @@ const handlers = {
     if (text != null) {
       $('doc-title').textContent = name;
       setInboxButton(inInbox);
-      const html = mdToHtml(text);
+      // an exported conversation is laid out as one, not as a wall of headings
+      const html = text.includes('<!-- remaude:chat -->') ? chatExportHtml(mdToHtml(text)) : mdToHtml(text);
       $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;
@@ -1209,6 +1210,34 @@ function renderHostProjects(root, hostId, hostState) {
     if (filter && !visibleChats && !p.path.toLowerCase().includes(filter)) continue;
     root.append(proj);
   }
+}
+
+/**
+ * A saved conversation reads as a conversation: each `## Кто · когда` heading
+ * and everything under it becomes the bubble it was in the chat, ours on the
+ * right. The transformation happens before the html reaches the viewer, so the
+ * comment highlights are re-applied over the same shape.
+ */
+function chatExportHtml(html) {
+  const source = document.createElement('div');
+  source.innerHTML = html;
+  const out = document.createElement('div');
+  let bubble = null;
+
+  for (const node of [...source.children]) {
+    const speaker = node.tagName === 'H4' && /^(.+?) · /.test(node.textContent) ? node.textContent : null;
+    if (!speaker) {
+      (bubble ?? out).append(node);
+      continue;
+    }
+    const [who, ...rest] = speaker.split(' · ');
+    const mine = who !== 'Claude'; // the chat feed treats every human the same way
+    bubble = el('div', `msg ${mine ? 'msg-user' : 'msg-assistant md-body'}`, '');
+    bubble.append(el('div', 'msg-author', who));
+    bubble.append(el('span', 'msg-time', rest.join(' · ')));
+    out.append(bubble);
+  }
+  return out.innerHTML;
 }
 
 // ---------- links inside documents ----------

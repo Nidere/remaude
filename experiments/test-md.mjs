@@ -17,6 +17,9 @@ const cases = [
   ['```js\nconst x = 1 < 2;\n```', ['<pre class="md-code"><code>const x = 1 &lt; 2;</code></pre>']],
   ['<script>alert(1)</script>', ['&lt;script&gt;']],
   ['> цитата', ['<blockquote>цитата</blockquote>']],
+  // html comments are invisible, as they are everywhere else
+  ['<!-- remaude -->\n# Заголовок', ['<h3 id="заголовок">Заголовок</h3>']],
+  ['текст <!-- заметка --> дальше', ['<div>текст дальше</div>']],
 
   // tables: the header, the rule under it, and the rows that follow
   [
