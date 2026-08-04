@@ -1915,7 +1915,8 @@ body.guest #export-btn { display: none; }
 
 /* a saved conversation, laid out like the chat it was */
 #doc-body.md-body { display: flex; flex-direction: column; gap: 10px; }
-#doc-body > .msg { max-width: min(760px, 88%); }
+/* as wide as it needs, like in the feed — the alignment is what tells them apart */
+#doc-body > .msg { max-width: 100%; }
 #doc-body > .msg-user { align-self: flex-end; }
 #doc-body > .msg-assistant { align-self: flex-start; max-width: 100%; }
 #doc-body > .msg .msg-time { display: block; margin-top: 2px; }
