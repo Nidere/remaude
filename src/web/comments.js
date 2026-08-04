@@ -234,6 +234,10 @@ function refreshMarkClasses() {
 // ---------- the "add comment" button over a selection ----------
 
 let selTimer = null;
+// The anchor is taken while the selection is still there, not when the button
+// is pressed: some browsers drop the selection on mousedown, and then pressing
+// "comment" did nothing at all, silently.
+let pendingAnchor = null;
 
 function maybeShowAddBtn() {
   const btn = $('cmt-add');
@@ -243,6 +247,8 @@ function maybeShowAddBtn() {
   if (!$('doc-body').contains(range.commonAncestorContainer)) return hideAddBtn();
   const rect = range.getBoundingClientRect();
   if (!rect.width && !rect.height) return hideAddBtn();
+  pendingAnchor = captureAnchor();
+  if (!pendingAnchor) return hideAddBtn(); // nothing we could attach a thread to
   btn.hidden = false;
   btn.style.left = Math.min(Math.max(rect.left + rect.width / 2 - 60, 8), innerWidth - 130) + 'px';
   btn.style.top = Math.min(rect.bottom + 8, innerHeight - 44) + 'px';
@@ -250,6 +256,7 @@ function maybeShowAddBtn() {
 
 function hideAddBtn() {
   $('cmt-add').hidden = true;
+  pendingAnchor = null;
 }
 
 function captureAnchor() {
@@ -515,9 +522,10 @@ function buildUi() {
   // mousedown would collapse the selection before click ever fires
   addBtn.addEventListener('pointerdown', (e) => e.preventDefault());
   addBtn.onclick = () => {
-    const anchor = captureAnchor();
+    const anchor = pendingAnchor ?? captureAnchor(); // whichever still exists
     hideAddBtn();
     if (anchor) openDraft(anchor);
+    else showError('could not tell which fragment that was — select it again');
   };
   const pop = el('div', '', '');
   pop.id = 'cmt-pop';
