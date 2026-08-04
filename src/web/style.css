@@ -1320,6 +1320,7 @@ body.guest .add-host { display: none; }
   #doc-threads,
   #doc-inbox,
   #doc-download,
+  #doc-full,
   .exp-star,
   #menu-btn {
     min-width: 40px;
@@ -1886,3 +1887,28 @@ body.guest #export-btn { display: none; }
   font-size: 12px;
 }
 #doc-download:hover { border-color: var(--accent); color: var(--text); }
+
+/* full width: the document takes the whole window, and a line wraps only when
+   it truly does not fit — or where the text itself breaks it */
+#doc-viewer.full #doc-box {
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
+  border: none;
+  border-radius: 0;
+}
+#doc-viewer.full #doc-body { padding: 18px 24px; }
+#doc-viewer.full { background: var(--bg); }
+#doc-full {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--dim);
+  height: 26px;
+  padding: 0 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+#doc-full:hover { border-color: var(--accent); color: var(--text); }

@@ -1243,6 +1243,18 @@ $('doc-inbox').onclick = () => {
   setInboxButton(!kept);
 };
 
+// Reading a long document in a column the width of a chat bubble is a chore;
+// full width lets the lines run to the edge and wrap only where they must.
+function setDocFull(full) {
+  $('doc-viewer').classList.toggle('full', full);
+  $('doc-full').textContent = full ? '⛶✓' : '⛶';
+  $('doc-full').title = full ? 'back to a narrow column' : 'full width';
+  localStorage.setItem('docFull', full ? '1' : '0');
+}
+
+$('doc-full').onclick = () => setDocFull(!$('doc-viewer').classList.contains('full'));
+setDocFull(localStorage.getItem('docFull') === '1');
+
 $('doc-download').onclick = () => {
   if (openDoc.path) sendTo(openDoc.hostId, { type: 'read_artifact', path: openDoc.path, asText: false });
 };
