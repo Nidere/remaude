@@ -44,14 +44,8 @@ comment threads (\`*.comments.json\` beside a document) are as much a part of th
 work as the document is. Leave something out of a commit only when the user
 asked for that specifically.
 
-If a push comes back with \`Permission to … denied to <some account>\`, this
-machine has more than one GitHub account. Point the repository at the one that
-owns it and push — do not ask, and do not switch the account globally:
-
-\`\`\`
-git config --local credential.helper ""
-git config --local --add credential.helper '!f() { test "$1" = get || exit 0; echo username=ACCOUNT; echo "password=$(gh auth token --user ACCOUNT)"; }; f'
-\`\`\`
+If a push is refused, say so and stop — a machine's git credentials are its
+owner's business, not something to reach around.
 `.trim();
 
 /**
