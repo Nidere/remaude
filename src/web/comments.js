@@ -247,8 +247,7 @@ function maybeShowAddBtn() {
   if (!$('doc-body').contains(range.commonAncestorContainer)) return hideAddBtn();
   const rect = range.getBoundingClientRect();
   if (!rect.width && !rect.height) return hideAddBtn();
-  pendingAnchor = captureAnchor();
-  if (!pendingAnchor) return hideAddBtn(); // nothing we could attach a thread to
+  pendingAnchor = captureAnchor(); // may be null; the button still offers itself
   btn.hidden = false;
   btn.style.left = Math.min(Math.max(rect.left + rect.width / 2 - 60, 8), innerWidth - 130) + 'px';
   btn.style.top = Math.min(rect.bottom + 8, innerHeight - 44) + 'px';
@@ -259,20 +258,40 @@ function hideAddBtn() {
   pendingAnchor = null;
 }
 
+/**
+ * What was selected, as a quote with a little context around it.
+ *
+ * The offsets are a convenience for finding that context — the anchor itself is
+ * the quote. So when a selection endpoint cannot be placed in the flattened
+ * text (it lands on an element rather than a text node, or on markup the walk
+ * does not reach), the selection's own text is used instead: an anchor with
+ * less context still beats a button that quietly does nothing.
+ */
 function captureAnchor() {
   const sel = getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
   const range = sel.getRangeAt(0);
-  const idx = textIndex($('doc-body'));
-  const start = pointToOffset(idx, range.startContainer, range.startOffset);
-  const end = pointToOffset(idx, range.endContainer, range.endOffset);
-  if (start == null || end == null || end - start < 1) return null;
+  const body = $('doc-body');
+  if (!body.contains(range.commonAncestorContainer)) return null;
+  const idx = textIndex(body);
+  const rect = range.getBoundingClientRect();
+
+  let start = pointToOffset(idx, range.startContainer, range.startOffset);
+  let end = pointToOffset(idx, range.endContainer, range.endOffset);
+  if (start == null || end == null || end - start < 1) {
+    const said = sel.toString();
+    if (!said.trim()) return null;
+    start = idx.text.indexOf(said);
+    if (start === -1) return { quote: said.slice(0, 1000), prefix: '', suffix: '', rect };
+    end = start + said.length;
+  }
+
   const quote = idx.text.slice(start, end).slice(0, 1000);
   return {
     quote,
     prefix: idx.text.slice(Math.max(0, start - 40), start),
     suffix: idx.text.slice(start + quote.length, start + quote.length + 40),
-    rect: range.getBoundingClientRect(),
+    rect,
   };
 }
 
