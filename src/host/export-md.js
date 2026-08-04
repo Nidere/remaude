@@ -1,7 +1,7 @@
 // A whole conversation as one markdown document — what the browser only ever
-// shows the tail of. It is written for a person to read later: what was said,
-// by whom, and what was done in between, without the tool traffic that makes a
-// transcript unreadable.
+// shows the tail of. It is written for a person to read later: the conversation
+// itself, nothing else. What the tools did is in the transcript for whoever
+// needs it; here it would only stand between the reader and the words.
 
 const TIME = (ts) => {
   if (!ts) return '';
@@ -24,32 +24,6 @@ function textOf(msg) {
 const isServiceTitle = (text) => /^\[remaude: a service request/i.test(text.trimStart());
 const stripMarker = (text) => text.replace(/^\[remaude:[^\]]*\]\n?/i, '').trimStart();
 
-/** What a tool call did, in one line — the arguments a reader would recognise. */
-function toolLine(block) {
-  const input = block.input ?? {};
-  const file = (p) => String(p).split(/[\\/]/).pop();
-  const say = (s, n = 70) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n);
-  switch (block.name) {
-    case 'Read':
-    case 'Write':
-    case 'Edit':
-      return `${block.name} · ${file(input.file_path ?? '')}`;
-    case 'Bash':
-    case 'PowerShell':
-      return `${block.name} · ${say(input.description ?? input.command)}`;
-    case 'Grep':
-    case 'Glob':
-      return `${block.name} · ${say(input.pattern, 40)}`;
-    case 'Agent':
-      return `Agent · ${say(input.description, 50)}`;
-    case 'WebFetch':
-    case 'WebSearch':
-      return `${block.name} · ${say(input.url ?? input.query, 50)}`;
-    default:
-      return block.name;
-  }
-}
-
 function hasImages(msg) {
   const content = msg.message?.content;
   return Array.isArray(content) && content.some((b) => b.type === 'image');
@@ -67,7 +41,9 @@ export function chatToMarkdown({ title, project, messages, exportedAt = Date.now
     if (msg.type !== 'user' && msg.type !== 'assistant') continue;
     if (msg.parent_tool_use_id) continue; // a subagent's own chatter is not this conversation
     const text = textOf(msg);
-    if (msg.type === 'user' && !text && !hasImages(msg)) continue; // a bare tool result
+    // a message with no words — a tool result coming back, a turn that only
+    // reached for tools — would leave a heading with nothing under it
+    if (!text && !hasImages(msg)) continue;
     if (isServiceTitle(text)) continue;
 
     const who = msg.type === 'user' ? msg.author || owner || 'Пользователь' : 'Claude';
@@ -78,11 +54,6 @@ export function chatToMarkdown({ title, project, messages, exportedAt = Date.now
     const body = stripMarker(text);
     if (body) said.push('', body);
     if (hasImages(msg)) said.push('', '*(изображение)*');
-
-    // what was done between the words, so the story is followable
-    const blocks = Array.isArray(msg.message?.content) ? msg.message.content : [];
-    const tools = blocks.filter((b) => b.type === 'tool_use').map((b) => `- 🔧 ${toolLine(b)}`);
-    if (tools.length) said.push('', ...tools);
     said.push('');
   }
 

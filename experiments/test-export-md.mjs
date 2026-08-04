@@ -37,6 +37,8 @@ const md = chatToMarkdown({
     ]),
     // a tool result comes back as a user message with no words of its own
     { type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } },
+    // …and a turn that only reached for tools says nothing either
+    { type: 'assistant', parent_tool_use_id: null, timestamp: '2026-08-04T09:02:00.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'x.md' } }] } },
     // a subagent's chatter is not this conversation
     assistant('я сабагент', [], { parent_tool_use_id: 'tool-1' }),
     // the machinery talking to itself
@@ -55,8 +57,8 @@ check(md.includes('**Проект:** C:/proj/game'), 'the project is named');
 check(/## Nidere · 04\.08\.2026, \d{2}:\d{2}/.test(md), 'a message says who and when');
 check(md.includes('посмотри дизайн боёвки'), 'what was said is there');
 check(md.includes('## Claude'), 'the answers are attributed');
-check(md.includes('- 🔧 Read · combat.md'), 'a file that was read is named');
-check(md.includes('- 🔧 Bash · запустить тесты'), 'a command is described, not dumped');
+check(!md.includes('🔧'), 'tool traffic stays out of the document');
+check(!md.includes('combat.md') && !md.includes('npm test'), 'and so do the files and commands it touched');
 check(!md.includes('я сабагент'), "a subagent's own chatter stays out");
 check(!md.includes('Come up with a name'), 'service turns stay out');
 check(md.includes('· в ветке'), 'a thread message is marked as one');
