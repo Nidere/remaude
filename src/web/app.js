@@ -1333,6 +1333,13 @@ function renderExplorer({ projectPath, path, parent, entries }) {
     if (!entry.dir) row.append(el('span', 'exp-size', formatSize(entry.size) ?? ''));
 
     if (!entry.dir) {
+      const down = el('button', 'exp-star', '⤓');
+      down.title = 'download';
+      down.onclick = (e) => {
+        e.stopPropagation();
+        sendTo(explorer.hostId, { type: 'read_artifact', path: entry.path, asText: false });
+      };
+      row.append(down);
       const star = el('button', 'exp-star', '☆');
       star.title = 'add to the inbox';
       star.onclick = (e) => {
@@ -1500,6 +1507,14 @@ function renderAttachments2() {
       .join(' · ');
     info.append(el('div', 'att-doc-meta', meta));
     row.append(info);
+
+    const down = el('button', 'att-doc-drop', '⤓');
+    down.title = 'download';
+    down.onclick = (e) => {
+      e.stopPropagation();
+      sendTo(chatHostId(activeChatId), { type: 'read_artifact', path: doc.path, asText: false });
+    };
+    row.append(down);
 
     const drop = el('button', 'att-doc-drop', '✕');
     drop.title = 'remove from the inbox (the file stays on disk)';

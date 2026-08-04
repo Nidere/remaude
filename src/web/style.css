@@ -1843,3 +1843,7 @@ code.md-path:hover { color: var(--accent); border-bottom-style: solid; }
 #export-btn:hover { border-color: var(--accent); color: var(--text); }
 #export-btn:disabled { opacity: 0.5; cursor: default; }
 body.guest #export-btn { display: none; }
+
+/* download, next to the other row actions */
+.att-doc-drop:hover { color: var(--accent); }
+.att-doc .att-doc-drop:last-child:hover { color: var(--red); }
