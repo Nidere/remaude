@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import {
   readFileSync,
+  writeFileSync,
   existsSync,
   statSync,
   readdirSync,
@@ -34,6 +35,7 @@ import {
 } from './transcripts.js';
 import { RelayLink } from './relay-link.js';
 import { TurnTags } from './turn-tags.js';
+import { chatToMarkdown, exportFileName } from './export-md.js';
 import { AgentRows } from './agent-rows.js';
 import {
   sidecarPath,
@@ -1477,6 +1479,40 @@ const handlers = {
     for (const c of clients)
       if (c !== ws && c.readyState === c.OPEN && (!c.guest || guestChatIds(c.guest).has(chatId)))
         send(c, { type: 'draft', chatId, ...(drafts[key] ?? { text: '', at: stamp }) });
+  },
+
+  /**
+   * The whole conversation as one document. The browser only ever holds the
+   * tail of it; the transcripts on disk hold all of it, across every session id
+   * this chat has answered to.
+   */
+  export_chat(ws, { chatId }) {
+    const chat = findChat(chatId);
+    const seen = new Set();
+    const messages = [];
+    for (const id of sessionIdsOf(chat)) {
+      for (const msg of loadHistory(chat.cwd, id, { defaultAuthor: userName })) {
+        if (msg.uuid && seen.has(msg.uuid)) continue;
+        if (msg.uuid) seen.add(msg.uuid);
+        messages.push(msg);
+      }
+    }
+    messages.sort((a, b) => new Date(a.timestamp ?? 0) - new Date(b.timestamp ?? 0));
+    if (!messages.length) throw new Error('nothing to export — this chat has no saved transcript yet');
+
+    const text = chatToMarkdown({
+      title: chat.title,
+      project: chat.cwd,
+      messages: annotateThreads(chatId, messages),
+      owner: userName,
+    });
+    // .remaude/ is where documents written for the user live, so it lands in the inbox
+    const dir = join(chat.cwd, '.remaude');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, exportFileName(chat.title));
+    writeFileSync(path, text);
+    rememberArtifact(path, chatId);
+    send(ws, { type: 'chat_exported', chatId, path, messages: messages.length });
   },
 
   /** Open (or reuse) the thread hanging off one message of this chat. */

@@ -1316,6 +1316,7 @@ body.guest .add-host { display: none; }
   #doc-close,
   #share-close,
   #title-btn,
+  #export-btn,
   #doc-threads,
   #doc-inbox,
   .exp-star,
@@ -1825,3 +1826,20 @@ code.md-path:hover { color: var(--accent); border-bottom-style: solid; }
 }
 #doc-inbox:hover { border-color: var(--accent); color: var(--text); }
 #doc-inbox.done { border-color: var(--green); color: var(--green); }
+
+/* save the whole chat as a document */
+#export-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--dim);
+  width: 26px;
+  height: 24px;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+#export-btn:hover { border-color: var(--accent); color: var(--text); }
+#export-btn:disabled { opacity: 0.5; cursor: default; }
+body.guest #export-btn { display: none; }

@@ -32,6 +32,26 @@ missing.
 
 If you cannot decide, mark it. An extra line in a file costs nothing; a document
 the user never finds costs all the work that went into it.
+
+## Committing
+
+Work that is not in git is not finished. When a meaningful piece of work is
+done, commit it and push — as part of doing it, without being asked and without
+leaving it for later.
+
+Everything the work produced goes in, the discussion around it included: inline
+comment threads (\`*.comments.json\` beside a document) are as much a part of the
+work as the document is. Leave something out of a commit only when the user
+asked for that specifically.
+
+If a push comes back with \`Permission to … denied to <some account>\`, this
+machine has more than one GitHub account. Point the repository at the one that
+owns it and push — do not ask, and do not switch the account globally:
+
+\`\`\`
+git config --local credential.helper ""
+git config --local --add credential.helper '!f() { test "$1" = get || exit 0; echo username=ACCOUNT; echo "password=$(gh auth token --user ACCOUNT)"; }; f'
+\`\`\`
 `.trim();
 
 /**

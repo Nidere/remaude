@@ -463,6 +463,12 @@ const handlers = {
     renderExplorer(msg);
   },
 
+  /** The whole chat was written out — show it, so it is plainly there. */
+  chat_exported({ path, messages, _host }) {
+    $('export-btn').disabled = false;
+    sendTo(hostKey(_host), { type: 'read_artifact', path, asText: true });
+  },
+
   comments(msg) {
     docComments.onComments(msg);
   },
@@ -1948,6 +1954,12 @@ function setModeSelect(mode) {
   sel.value = mode;
   sel.classList.toggle('bypass', mode === 'bypassPermissions');
 }
+
+$('export-btn').onclick = function () {
+  if (!activeChatId || activeIsGuest()) return;
+  this.disabled = true; // a long transcript takes a moment; one press is enough
+  sendTo(chatHostId(activeChatId), { type: 'export_chat', chatId: activeChatId });
+};
 
 $('title-btn').onclick = () => {
   if (!activeChatId || activeIsGuest()) return;
