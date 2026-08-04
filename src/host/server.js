@@ -209,6 +209,10 @@ agent.on('chat_message', ({ chatId, msg }) => {
     msg.chatThread = threadTag;
     if (msg.type !== 'stream_event') rememberThreadMessage(threadTag, msg.uuid);
   }
+  // Subagent bookkeeping goes first: a background agent's completion arrives as
+  // a harness notification — a plain user message the feed skips — and reading
+  // it after the skips below is how those rows came to run forever.
+  if (msg.type === 'assistant' || msg.type === 'user') trackAgents(chatId, msg);
   // We broadcast user input ourselves in handleSend (otherwise it duplicates with the SDK's
   // replay), so plain text user messages of the main dialogue are skipped here.
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
@@ -216,7 +220,6 @@ agent.on('chat_message', ({ chatId, msg }) => {
   // chat feed — filtered here as well as in the transcript reader
   if (msg.type === 'assistant' && msg.parent_tool_use_id === null && isHarnessNoise(msg)) return;
   if (msg.type !== 'stream_event') pushHistory(chatId, msg);
-  if (msg.type === 'assistant' || msg.type === 'user') trackAgents(chatId, msg);
   broadcast({ type: 'chat_message', chatId, msg });
   if (msg.type === 'system' && msg.subtype === 'init') {
     // the id this chat was resumed from joins its chain of past identities

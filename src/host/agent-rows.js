@@ -44,9 +44,12 @@ export class AgentRows {
   onMention(blob, { token = null, now = Date.now() } = {}) {
     const ended = [];
     for (const row of this.#rows.values()) {
-      if (row.status !== 'running' || !row.agentId) continue;
+      if (row.status !== 'running') continue;
       if (row.launchToken !== null && row.launchToken === token) continue;
-      if (blob.includes(row.agentId) && this.finish(row.id, 'done', now)) ended.push(row.id);
+      // the harness names a finished agent by its own id, and its notification
+      // carries the id of the call that started it — either one is the report
+      const named = (row.agentId && blob.includes(row.agentId)) || blob.includes(row.id);
+      if (named && this.finish(row.id, 'done', now)) ended.push(row.id);
     }
     return ended;
   }

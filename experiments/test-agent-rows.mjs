@@ -40,6 +40,24 @@ eq(statuses(rows), ['running'], 'a background agent outlives the turn');
 const done = rows.onMention(JSON.stringify([{ text: 'agent a7d25199b81d811d6 finished' }]), { token: 'msg-9' });
 eq([done, statuses(rows)], [['tool-1'], ['done']], 'the real report ends it, and names which row');
 
+// the real shape of a completion: a harness notification naming the agent and
+// the call that started it. This is what the sidebar waits for, and what used
+// to never arrive.
+rows = new AgentRows();
+rows.start('toolu_01BjSdoxjHC8d6rUJrpH3CLF', { label: 'Audit server code quality', type: 'general-purpose' });
+rows.onToolResult('toolu_01BjSdoxjHC8d6rUJrpH3CLF', { text: LAUNCH, token: 'launch' });
+const notification = JSON.stringify([
+  { type: 'text', text: '<task-notification>\n<task-id>a6ec403195d92dc11</task-id>\n<tool-use-id>toolu_01BjSdoxjHC8d6rUJrpH3CLF</tool-use-id>\n<status>completed</status>' },
+]);
+eq(rows.onMention(notification, { token: 'later' }).length, 1, 'a completion notification ends the row');
+eq(statuses(rows), ['done'], 'and it is marked done');
+
+// …even when the notification names only the call it belongs to
+rows = new AgentRows();
+rows.start('toolu_XYZ', { label: 'что-то', type: null });
+rows.onToolResult('toolu_XYZ', { text: 'Async agent launched successfully.', token: 'launch' });
+eq(rows.onMention('… <tool-use-id>toolu_XYZ</tool-use-id> …', { token: 'later' }).length, 1, 'the call id alone is enough');
+
 // a foreground agent: one call, one answer
 rows = new AgentRows();
 rows.start('tool-2', { label: 'посчитать', type: null });
