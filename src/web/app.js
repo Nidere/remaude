@@ -537,7 +537,11 @@ const handlers = {
     $('conn-dot').classList.remove('on');
   },
 
-  settings({ userName, projectsRoot, relay, claudeAuth }) {
+  settings({ userName, projectsRoot, relay, claudeAuth, _host }) {
+    // these belong to the computer that answered, not to the app: with several
+    // hosts connected, saving them anywhere else configures a stranger
+    settingsHost = hostKey(_host);
+    renderSettingsHosts();
     $('set-username').value = userName ?? '';
     $('set-root').value = projectsRoot ?? '';
     renderRelayStatus(relay);
@@ -1237,6 +1241,10 @@ $('doc-inbox').onclick = () => {
         }
   );
   setInboxButton(!kept);
+};
+
+$('doc-download').onclick = () => {
+  if (openDoc.path) sendTo(openDoc.hostId, { type: 'read_artifact', path: openDoc.path, asText: false });
 };
 
 /** A file named in passing — resolved against the chat's project, not a document. */
@@ -2234,7 +2242,39 @@ $('effort-select').addEventListener('change', function () {
   if (activeChatId && this.value) sendTo(chatHostId(activeChatId), { type: 'set_effort', chatId: activeChatId, effort: this.value });
 });
 
-// settings
+// ---------- settings ----------
+// Everything above the "this device" line lives on one computer: its name on
+// messages, where its projects are, which Claude account it runs as. With more
+// than one connected, the dialog has to say which one it is talking to.
+
+let settingsHost = null;
+const settingsTarget = () => settingsHost ?? ownHostId();
+
+function ownHosts() {
+  return [...hostStates.entries()]
+    .filter(([, st]) => !st.guest)
+    .map(([id]) => ({ id, name: knownHosts.find((h) => h.id === id)?.name ?? 'this computer' }));
+}
+
+function renderSettingsHosts() {
+  const hosts = ownHosts();
+  const select = $('set-host');
+  $('set-host-label').hidden = hosts.length < 2;
+  select.innerHTML = '';
+  for (const host of hosts) {
+    const option = document.createElement('option');
+    option.value = host.id;
+    option.textContent = host.name;
+    option.selected = host.id === settingsTarget();
+    select.append(option);
+  }
+}
+
+$('set-host').addEventListener('change', function () {
+  settingsHost = this.value; // ask that computer about itself
+  sendTo(settingsHost, { type: 'get_settings' });
+});
+
 function renderClaudeAuth(status) {
   const node = $('claude-auth-status');
   if (!status) {
@@ -2249,10 +2289,10 @@ function renderClaudeAuth(status) {
   }
 }
 
-$('claude-login-btn').onclick = () => sendTo(ownHostId(), { type: 'claude_login_start' });
+$('claude-login-btn').onclick = () => sendTo(settingsTarget(), { type: 'claude_login_start' });
 $('claude-login-send').onclick = () => {
   const code = $('claude-login-code').value.trim();
-  if (code) sendTo(ownHostId(), { type: 'claude_login_code', code });
+  if (code) sendTo(settingsTarget(), { type: 'claude_login_code', code });
 };
 
 function renderRelayStatus(relay) {
@@ -2266,7 +2306,7 @@ function renderRelayStatus(relay) {
 $('pair-btn').onclick = () => {
   const code = $('set-pair-code').value.trim();
   if (!code) return;
-  sendTo(ownHostId(), { type: 'pair_relay', code });
+  sendTo(settingsTarget(), { type: 'pair_relay', code });
   $('set-pair-code').value = '';
 };
 
@@ -2308,13 +2348,13 @@ $('doc-viewer').addEventListener('click', (e) => {
 
 $('edit-btn').onclick = () => setEditMode(!editMode);
 
-$('settings-btn').onclick = () => sendTo(ownHostId(), { type: 'get_settings' });
+$('settings-btn').onclick = () => sendTo(settingsTarget(), { type: 'get_settings' });
 $('settings-cancel').onclick = () => ($('settings').hidden = true);
 $('settings').addEventListener('click', (e) => {
   if (e.target.id === 'settings') $('settings').hidden = true;
 });
 $('settings-save').onclick = () => {
-  send({
+  sendTo(settingsTarget(), {
     type: 'set_settings',
     userName: $('set-username').value.trim(),
     projectsRoot: $('set-root').value.trim(),
@@ -2436,7 +2476,7 @@ $('notify-btn').onclick = async function () {
 
 $('restart-server').onclick = () => {
   // no confirmation: open chats reopen themselves, so a restart costs nothing
-  sendTo(ownHostId(), { type: 'restart_server' });
+  sendTo(settingsTarget(), { type: 'restart_server' });
   $('settings').hidden = true;
 };
 

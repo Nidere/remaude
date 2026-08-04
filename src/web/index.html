@@ -123,6 +123,7 @@
       <div id="doc-head">
         <span id="doc-title"></span>
         <span id="doc-head-actions">
+          <button id="doc-download" title="Download this document">⤓</button>
           <button id="doc-inbox" title="Keep this document in the inbox">📥</button>
           <button id="doc-threads" title="Comment threads in this document" hidden>💬</button>
           <button id="doc-close">✕</button>
@@ -137,6 +138,8 @@
   <div id="settings" hidden>
     <div id="settings-box">
       <div id="settings-title">Settings</div>
+      <label id="set-host-label" hidden>Computer<select id="set-host"></select></label>
+      <div class="settings-scope">Settings of this computer</div>
       <label>Name (message signature)<input id="set-username" spellcheck="false" /></label>
       <label>Projects root<input id="set-root" spellcheck="false" /></label>
       <div id="auth-block">
@@ -157,10 +160,11 @@
           <button id="pair-btn">Approve</button>
         </div>
       </div>
+      <button id="restart-server" title="Open chats reopen automatically">⟳ Restart server</button>
+      <div class="settings-scope">This device</div>
       <label id="wake-label" title="Hold the screen on while this app is open"><input type="checkbox" id="wake-lock" /> Keep the screen awake</label>
       <button id="notify-btn" title="Push on permission requests and finished tasks (works via relay, not on localhost)">🔔 Enable notifications</button>
       <div id="notify-status"></div>
-      <button id="restart-server" title="Open chats reopen automatically">⟳ Restart server</button>
       <div id="settings-actions">
         <button id="settings-save">Save</button>
         <button id="settings-cancel">Cancel</button>
