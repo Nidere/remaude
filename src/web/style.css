@@ -1824,4 +1824,4 @@ code.md-path:hover { color: var(--accent); border-bottom-style: solid; }
   font-size: 12px;
 }
 #doc-inbox:hover { border-color: var(--accent); color: var(--text); }
-#doc-inbox.done { border-color: var(--green); color: var(--green); cursor: default; }
+#doc-inbox.done { border-color: var(--green); color: var(--green); }

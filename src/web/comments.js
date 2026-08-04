@@ -159,13 +159,50 @@ function pointToOffset(idx, container, offset) {
   return last ? last.start + last.node.nodeValue.length : null;
 }
 
-/** Where the quote lives now — best match by surrounding context, or null if it is gone. */
+/**
+ * Whitespace is where a quote and the text it came from stop matching: a
+ * selection spanning two blocks carries line breaks the flattened text has no
+ * idea about, and a document may be re-wrapped between one reading and the
+ * next. So a failed exact match is retried with every run of whitespace treated
+ * as one space, mapping the answer back to real positions.
+ */
+function loosely(text) {
+  let norm = '';
+  const map = [];
+  let space = false;
+  for (let i = 0; i < text.length; i++) {
+    if (/\s/.test(text[i])) {
+      if (space) continue;
+      norm += ' ';
+      space = true;
+    } else {
+      norm += text[i];
+      space = false;
+    }
+    map.push(i);
+  }
+  return { norm, map };
+}
+
+/** Where `needle` sits in `hay`, forgiving about whitespace: [start, end) or null. */
+export function findLoosely(hay, needle, from = 0) {
+  const exact = hay.indexOf(needle, from);
+  if (exact !== -1) return [exact, exact + needle.length];
+  const h = loosely(hay);
+  const n = loosely(needle).norm.trim();
+  if (!n) return null;
+  const at = h.norm.indexOf(n, 0);
+  if (at === -1) return null;
+  return [h.map[at], (h.map[at + n.length - 1] ?? h.map[h.map.length - 1]) + 1];
+}
+
+/** Where the quote sits now: [start, end) in the flattened text, or null if it is gone. */
 function locate(idx, anchor) {
   const quote = anchor?.quote ?? '';
   if (!quote) return null;
   const hits = [];
   for (let i = idx.text.indexOf(quote); i !== -1 && hits.length < 64; i = idx.text.indexOf(quote, i + 1)) hits.push(i);
-  if (!hits.length) return null;
+  if (!hits.length) return findLoosely(idx.text, quote);
   const backMatch = (a, b) => {
     let k = 0;
     while (k < a.length && k < b.length && a[a.length - 1 - k] === b[b.length - 1 - k]) k++;
@@ -187,7 +224,7 @@ function locate(idx, anchor) {
       best = pos;
     }
   }
-  return best;
+  return [best, best + quote.length];
 }
 
 /** Wrap [start, end) of the flattened text in <mark> elements, splitting text nodes as needed. */
@@ -215,9 +252,9 @@ function renderHighlights() {
   for (const t of doc.threads) {
     if (t.resolved) continue; // resolved threads live in the list only
     const idx = textIndex(body);
-    const pos = locate(idx, t.anchor);
-    doc.located.set(t.id, pos != null);
-    if (pos != null) wrapRange(idx, pos, pos + t.anchor.quote.length, t.id);
+    const span = locate(idx, t.anchor);
+    doc.located.set(t.id, Boolean(span));
+    if (span) wrapRange(idx, span[0], span[1], t.id);
   }
   refreshMarkClasses();
   updateThreadsBtn();
@@ -281,9 +318,12 @@ function captureAnchor() {
   if (start == null || end == null || end - start < 1) {
     const said = sel.toString();
     if (!said.trim()) return null;
-    start = idx.text.indexOf(said);
-    if (start === -1) return { quote: said.slice(0, 1000), prefix: '', suffix: '', rect };
-    end = start + said.length;
+    // the selection's own text carries line breaks between blocks that the
+    // flattened text does not have — so it is matched forgivingly, and the
+    // quote we keep is the document's wording, not the selection's
+    const span = findLoosely(idx.text, said);
+    if (!span) return { quote: said.slice(0, 1000), prefix: '', suffix: '', rect };
+    [start, end] = span;
   }
 
   const quote = idx.text.slice(start, end).slice(0, 1000);

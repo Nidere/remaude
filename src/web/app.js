@@ -1212,18 +1212,25 @@ let openDoc = { path: null, hostId: null };
 function setInboxButton(inInbox) {
   const btn = $('doc-inbox');
   btn.textContent = inInbox ? '📥✓' : '📥';
-  btn.title = inInbox ? 'already in the inbox' : 'keep this document in the inbox';
+  btn.title = inInbox ? 'in the inbox — press to take it back out' : 'keep this document in the inbox';
   btn.classList.toggle('done', Boolean(inInbox));
 }
 
 $('doc-inbox').onclick = () => {
-  if (!openDoc.path || $('doc-inbox').classList.contains('done')) return;
-  sendTo(openDoc.hostId, {
-    type: 'add_artifact',
-    path: openDoc.path,
-    chatId: chatHostId(activeChatId) === openDoc.hostId ? activeChatId : null,
-  });
-  setInboxButton(true);
+  if (!openDoc.path) return;
+  // a press by accident has to be undoable — the same button takes it back out
+  const kept = $('doc-inbox').classList.contains('done');
+  sendTo(
+    openDoc.hostId,
+    kept
+      ? { type: 'remove_artifact', path: openDoc.path }
+      : {
+          type: 'add_artifact',
+          path: openDoc.path,
+          chatId: chatHostId(activeChatId) === openDoc.hostId ? activeChatId : null,
+        }
+  );
+  setInboxButton(!kept);
 };
 
 /** A file named in passing — resolved against the chat's project, not a document. */
