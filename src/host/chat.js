@@ -24,7 +24,9 @@ API specs, configuration, notes to future readers of the code. Nobody is waiting
 for those.
 
 Files written anywhere under a \`.remaude/\` directory are collected
-automatically and need no marker.
+automatically and need no marker. That directory is the person's own space and
+never enters the repository — it ignores itself — so put a document there when
+it is for them, and in the project when the project owns it.
 
 When you hand the writing of such a document to a subagent, say so in its task:
 this convention does not reach subagents on its own, and their documents go
@@ -41,8 +43,9 @@ leaving it for later.
 
 Everything the work produced goes in, the discussion around it included: inline
 comment threads (\`*.comments.json\` beside a document) are as much a part of the
-work as the document is. Leave something out of a commit only when the user
-asked for that specifically.
+work as the document is. The exception is \`.remaude/\` — that is the person's
+inbox, not the project's history, and git is already told to ignore it. Leave
+anything else out of a commit only when the user asked for that specifically.
 
 If a push is refused, say so and stop — a machine's git credentials are its
 owner's business, not something to reach around.

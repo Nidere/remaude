@@ -359,6 +359,28 @@ function isInboxPath(p) {
   return /[\\/]\.remaude[\\/]/.test(p);
 }
 
+// The inbox lives inside the project, but it is not the project: notes written
+// for one person, handoffs, saved conversations. It keeps itself out of the
+// repository by ignoring itself — no need to edit a .gitignore the project owns,
+// and nothing to remember for whoever works here next.
+const INBOX_IGNORE = `# remaude's inbox: written for the person working here, not part of the project.
+# This folder keeps itself out of the repository — including this file.
+*
+`;
+
+function ensureInboxIgnored(path) {
+  const root = /^(.*[\\/]\.remaude)(?:[\\/]|$)/.exec(resolve(path))?.[1];
+  if (!root) return;
+  const file = join(root, '.gitignore');
+  try {
+    if (existsSync(file)) return;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(file, INBOX_IGNORE);
+  } catch {
+    /* a read-only checkout, a folder that vanished — the document still matters more */
+  }
+}
+
 /** First heading or first non-empty line — a human label for the list. */
 function docTitle(file) {
   try {
@@ -376,6 +398,7 @@ function docTitle(file) {
 
 function rememberArtifact(path, chatId) {
   const abs = resolve(path);
+  ensureInboxIgnored(abs);
   const chat = findChatSafe(chatId);
   const existing = artifacts.find((a) => a.path.toLowerCase() === abs.toLowerCase());
   const entry = {
@@ -1529,6 +1552,7 @@ const handlers = {
     // .remaude/ is where documents written for the user live, so it lands in the inbox
     const dir = join(chat.cwd, '.remaude');
     mkdirSync(dir, { recursive: true });
+    ensureInboxIgnored(dir);
     const path = join(dir, exportFileName(chat.title));
     writeFileSync(path, text);
     rememberArtifact(path, chatId);
