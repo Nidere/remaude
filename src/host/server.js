@@ -158,6 +158,18 @@ function saveOpenChats() {
   saveConfig(config);
 }
 
+/**
+ * A chat's name belongs to the conversation, not to the window it is open in:
+ * it is kept per session id so the list of past chats shows it too, and so
+ * closing a chat does not throw its name away.
+ */
+function nameSession(chat) {
+  if (!chat?.title) return;
+  config.chatNames ??= {};
+  for (const id of sessionIdsOf(chat)) config.chatNames[id] = chat.title;
+  saveConfig(config);
+}
+
 /** The shared path for opening a saved session (open_session and the auto-restore at startup). */
 function openSavedSession(projectPath, sessionId, { permissionMode, title, pastIds, model, effort } = {}) {
   if (!isSessionId(sessionId)) throw new Error('bad session id');
@@ -213,6 +225,7 @@ agent.on('chat_message', ({ chatId, msg }) => {
       inited.pastIds ??= new Set();
       if (inited.resumeId) inited.pastIds.add(inited.resumeId);
       inited.pastIds.delete(inited.sessionId);
+      nameSession(inited); // the resume minted a new id — it answers to the same name
     }
     sendChatMeta(chatId);
     saveOpenChats(); // the sessionId is now known — record it so we can reopen the chat
@@ -621,6 +634,7 @@ function finishServiceTurn(chatId) {
       const chat = findChatSafe(chatId);
       if (!chat || !title) return;
       chat.title = title;
+      nameSession(chat);
       saveOpenChats();
       broadcast(stateSnapshot());
       return;
@@ -1378,6 +1392,7 @@ const handlers = {
       const text = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;
       if (text) {
         chat.title = text.slice(0, 60);
+        nameSession(chat);
         broadcast(stateSnapshot());
       }
     }
@@ -1416,7 +1431,9 @@ const handlers = {
       if (chat.resumeId) live[chat.resumeId] = chat.id;
       for (const id of chat.pastIds ?? []) live[id] = chat.id; // old links in the chain are this same chat
     }
-    send(ws, { type: 'sessions', projectPath, sessions: listSessions(resolve(projectPath)), live });
+    // the name we gave a chat wins over whatever the transcript calls itself
+    const named = listSessions(abs).map((s) => ({ ...s, title: config.chatNames?.[s.id] ?? s.title }));
+    send(ws, { type: 'sessions', projectPath, sessions: named, live });
   },
 
   /** Resume a saved session: history comes from the transcript, context from the SDK's resume. */
@@ -2001,7 +2018,9 @@ const handlers = {
   },
 
   rename_chat(ws, { chatId, title }) {
-    findChat(chatId).title = String(title).slice(0, 80);
+    const chat = findChat(chatId);
+    chat.title = String(title).slice(0, 80);
+    nameSession(chat);
     saveOpenChats();
     broadcast(stateSnapshot());
   },
