@@ -640,6 +640,17 @@ function buildUi() {
   }).observe($('doc-viewer'), { attributes: true, attributeFilter: ['hidden'] });
 }
 
+/** Is a thread or the list of them on screen? (Escape closes the topmost thing.) */
+export function overlayOpen() {
+  return !$('cmt-pop').hidden || !$('cmt-list').hidden;
+}
+
+/** Close whichever of the two is open — the popover first, it sits on top. */
+export function closeOverlay() {
+  if (!$('cmt-pop').hidden) closePop();
+  else hideList();
+}
+
 /** A soft error strip instead of alert(): a modal dialog over a PWA feels like a freeze. */
 export function showError(message) {
   const pop = $('cmt-pop');

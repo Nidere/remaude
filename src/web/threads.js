@@ -243,6 +243,13 @@ function buildUi() {
   });
 }
 
+export const panelOpen = () => Boolean(open);
+
+export function closePanel() {
+  $('thread-panel').hidden = true;
+  open = null;
+}
+
 /** Switching chats takes the panel with it — a thread belongs to one chat. */
 export function chatSwitched(chatId) {
   if (!open || open.chatId === chatId) return;

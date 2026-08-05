@@ -3,6 +3,15 @@ import { mdToHtml } from '../src/web/md.js';
 
 const cases = [
   ['**жирный** и *курсив* и `код`', ['<b>жирный</b>', '<i>курсив</i>', '<code>код</code>']],
+  // emphasis a writer wrapped across a line still reads as emphasis
+  ['начало **перед тем как задать\nвопрос, найдите место** конец', ['<b>перед тем как задать<br>вопрос, найдите место</b>']],
+  ['_курсив\nчерез строку_', ['<i>курсив<br>через строку</i>']],
+  // …but the break itself stays where the author put it
+  ['первая строка\nвторая строка', ['<div>первая строка<br>вторая строка</div>']],
+  // an empty line still separates paragraphs
+  ['абзац один\n\nабзац два', ['<div>абзац один</div>', '<div>абзац два</div>']],
+  // markup does not leak across an empty line
+  ['**открыли\n\nне закрыли**', ['<div>**открыли</div>']],
   // the same, written with underscores
   ['_Версия 1 · принята: 1_', ['<i>Версия 1 · принята: 1</i>']],
   ['__жирный__ и _курсив_', ['<b>жирный</b>', '<i>курсив</i>']],

@@ -2205,8 +2205,26 @@ lightboxImg.addEventListener('wheel', (e) => {
 });
 
 $('lightbox').onclick = () => ($('lightbox').hidden = true); // backdrop only
+
+// Escape closes whatever is on top, one layer at a time — the picture over the
+// document, the thread over the chat — and never the chat itself.
+const ESCAPABLE = [
+  { open: () => !$('lightbox').hidden, close: () => ($('lightbox').hidden = true) },
+  { open: () => docComments.overlayOpen(), close: () => docComments.closeOverlay() },
+  { open: () => !$('doc-viewer').hidden, close: () => ($('doc-viewer').hidden = true) },
+  { open: () => !$('picker').hidden, close: () => ($('picker').hidden = true) },
+  { open: () => !$('settings').hidden, close: () => ($('settings').hidden = true) },
+  { open: () => !$('share-panel').hidden, close: () => ($('share-panel').hidden = true) },
+  { open: () => !$('attachments-panel').hidden, close: () => ($('attachments-panel').hidden = true) },
+  { open: () => chatThreads.panelOpen(), close: () => chatThreads.closePanel() },
+];
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') $('lightbox').hidden = true;
+  if (e.key !== 'Escape') return;
+  const layer = ESCAPABLE.find((l) => l.open());
+  if (!layer) return;
+  e.preventDefault();
+  layer.close();
 });
 
 // sharing the active chat
