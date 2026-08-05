@@ -5,6 +5,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
+  unlinkSync,
   existsSync,
   statSync,
   readdirSync,
@@ -338,6 +340,12 @@ agent.on('chat_error', ({ chatId, error }) =>
 const ARTIFACTS_PATH = join(homedir(), '.remaude', 'artifacts.json');
 const INBOX_MARKER = '<!-- remaude -->';
 
+// Files handed over from a browser arrive in pieces — a gigabyte will not fit
+// in one frame, and nothing should have to hold it whole in memory. Each piece
+// is appended as it lands; the map only remembers where the writing is up to.
+const arriving = new Map(); // "chatId:uploadId" -> {path, bytes}
+const UPLOAD_MAX = 1024 * 1024 * 1024;
+
 // Folders the explorer never shows: thousands of files nobody browses to.
 const SKIP_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', '.next', '.cache', 'dist-cache']);
 
@@ -453,6 +461,15 @@ function rememberFileChat(path, chatId) {
     for (const k of oldest) delete fileChats[k];
   }
   saveFileChats();
+}
+
+/** How big a file is, or null if it is gone. */
+function sizeOf(path) {
+  try {
+    return statSync(path).size;
+  } catch {
+    return null;
+  }
 }
 
 /** A Write/Edit landed: index it when the file marks itself as the user's. */
@@ -1729,8 +1746,23 @@ const handlers = {
       saveArtifacts();
       return true;
     };
-    const docs = artifacts
-      .filter((a) => (scope === 'project' ? resolve(a.projectPath ?? '') === project : inThisChat(a)))
+    // everything handed to this project from a browser, newest first
+    const uploads = [];
+    try {
+      const dir = join(project, '.remaude', 'uploads');
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isFile() || entry.name === '.gitignore') continue;
+        const full = join(dir, entry.name);
+        const st = statSync(full);
+        uploads.push({ path: full, name: entry.name, size: st.size, addedAt: st.mtimeMs, uploaded: true });
+      }
+    } catch {
+      /* nothing has been handed over here yet */
+    }
+
+    const mine = artifacts.filter((a) => (scope === 'project' ? resolve(a.projectPath ?? '') === project : inThisChat(a)));
+    const docs = mine
+      .filter((a) => a.path.toLowerCase().endsWith('.md'))
       .map((a) => {
         let size = null;
         let missing = true;
@@ -1745,6 +1777,17 @@ const handlers = {
       })
       .sort((a, b) => b.addedAt - a.addedAt);
 
+    // anything that is not a document: what was attached here, and whatever
+    // else was filed into the inbox
+    const files = [
+      ...uploads,
+      ...mine
+        .filter((a) => !a.path.toLowerCase().endsWith('.md'))
+        .map((a) => ({ ...a, name: a.path.split(/[\\/]/).pop(), size: sizeOf(a.path) })),
+    ]
+      .filter((f, i, all) => all.findIndex((x) => x.path.toLowerCase() === f.path.toLowerCase()) === i)
+      .sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
+
     send(ws, {
       type: 'attachments',
       chatId,
@@ -1752,7 +1795,8 @@ const handlers = {
       images: page,
       imagesTotal: images.length,
       offset,
-      docs: offset ? [] : docs, // docs come with the first page only
+      docs: offset ? [] : docs, // docs and files come with the first page only
+      files: offset ? [] : files,
     });
   },
 
@@ -1875,30 +1919,55 @@ const handlers = {
    * project's inbox and the session is told where — a path it can open with the
    * tools it already has beats anything we could inline into a message.
    */
-  upload_file(ws, { chatId, name, data }) {
+  upload_file(ws, { chatId, name, data, uploadId, seq = 0, last = true }) {
     const chat = findChat(chatId);
     const buf = Buffer.from(String(data ?? ''), 'base64');
-    if (!buf.length) throw new Error('empty file');
-    if (buf.length > 25 * 1024 * 1024) throw new Error('that file is over 25 MB — put it in the project and name it instead');
-    const clean = String(name ?? '')
-      .replace(/[\\/:*?"<>|]/g, '_')
-      .replace(/^\.+/, '')
-      .slice(0, 120) || 'file';
+    const key = `${chatId}:${String(uploadId ?? 'single')}`;
 
-    const dir = join(chat.cwd, '.remaude', 'uploads');
-    mkdirSync(dir, { recursive: true });
-    ensureInboxIgnored(dir);
-    let target = join(dir, clean);
-    if (existsSync(target)) {
-      // never write over something already here
-      const ext = extname(clean);
-      const stem = clean.slice(0, clean.length - ext.length);
-      let n = 2;
-      while (existsSync(join(dir, `${stem} (${n})${ext}`))) n++;
-      target = join(dir, `${stem} (${n})${ext}`);
+    if (seq === 0) {
+      const clean = String(name ?? '')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/^\.+/, '')
+        .slice(0, 120) || 'file';
+      const dir = join(chat.cwd, '.remaude', 'uploads');
+      mkdirSync(dir, { recursive: true });
+      ensureInboxIgnored(dir);
+      let target = join(dir, clean);
+      if (existsSync(target)) {
+        // never write over something already here
+        const ext = extname(clean);
+        const stem = clean.slice(0, clean.length - ext.length);
+        let n = 2;
+        while (existsSync(join(dir, `${stem} (${n})${ext}`))) n++;
+        target = join(dir, `${stem} (${n})${ext}`);
+      }
+      writeFileSync(target, buf);
+      arriving.set(key, { path: target, bytes: buf.length });
+    } else {
+      const open = arriving.get(key);
+      if (!open) throw new Error('this upload was never started (or the host was restarted mid-way)');
+      appendFileSync(open.path, buf);
+      open.bytes += buf.length;
+      if (open.bytes > UPLOAD_MAX) {
+        arriving.delete(key);
+        try {
+          unlinkSync(open.path);
+        } catch {
+          /* it may already be gone */
+        }
+        throw new Error(`that file is over ${Math.round(UPLOAD_MAX / 1024 / 1024 / 1024)} GB`);
+      }
     }
-    writeFileSync(target, buf);
-    send(ws, { type: 'file_uploaded', chatId, name: basename(target), path: target, size: buf.length });
+
+    if (!last) return; // more is coming; nothing to announce yet
+    const done = arriving.get(key);
+    arriving.delete(key);
+    if (!done || !done.bytes) {
+      if (done) unlinkSync(done.path);
+      throw new Error('empty file');
+    }
+    rememberFileChat(done.path, chatId); // this chat is the one that was given it
+    send(ws, { type: 'file_uploaded', chatId, name: basename(done.path), path: done.path, size: done.bytes });
   },
 
   /** Manual "add to inbox" for a file that was written without a marker. */
@@ -2366,6 +2435,9 @@ function originAllowed(req) {
 const wss = new WebSocketServer({
   server: httpServer,
   path: '/ws',
+  // a file arrives in pieces, and a piece plus its base64 padding must fit in a
+  // frame with room to spare — the library's default would cut a large one off
+  maxPayload: 32 * 1024 * 1024,
   verifyClient: ({ req }) => originAllowed(req),
 });
 // ws re-emits the httpServer's errors on itself; without a listener that kills the process

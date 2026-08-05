@@ -528,8 +528,9 @@ const httpServer = createServer(async (req, res) => {
 
 // ---------- WebSocket: browsers (/ws) and hosts (/host) ----------
 
-const wssBrowser = new WebSocketServer({ noServer: true });
-const wssHost = new WebSocketServer({ noServer: true });
+// files travel through here in pieces; a piece has to fit in a frame
+const wssBrowser = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
+const wssHost = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
 wssBrowser.on('error', () => {});
 wssHost.on('error', () => {});
 

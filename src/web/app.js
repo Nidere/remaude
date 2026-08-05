@@ -394,10 +394,11 @@ const handlers = {
     searchAppending = false;
   },
 
-  attachments({ chatId, images, imagesTotal, docs, offset }) {
+  attachments({ chatId, images, imagesTotal, docs, files, offset }) {
     if (chatId !== activeChatId) return;
     attState.images = offset ? [...attState.images, ...images] : images;
     if (!offset) attState.docs = docs ?? [];
+    if (!offset) attState.files = files ?? [];
     attState.total = imagesTotal;
     renderAttachments2();
   },
@@ -414,7 +415,10 @@ const handlers = {
 
   /** The host put the file on disk; the message will carry its path. */
   file_uploaded({ name, path, size }) {
-    attachments.push({ file: true, name, path, size });
+    // the placeholder that was counting its way up becomes the file itself
+    const waiting = attachments.find((a) => a.file && a.sending !== undefined && !a.path);
+    if (waiting) Object.assign(waiting, { name, path, size, sending: undefined });
+    else attachments.push({ file: true, name, path, size });
     renderAttachments();
   },
 
@@ -1422,7 +1426,7 @@ function renderExplorer({ projectPath, path, parent, entries }) {
 
 // ---------- attachments: gallery and document inbox ----------
 
-let attState = { tab: 'images', images: [], docs: [], total: 0, offset: 0 };
+let attState = { tab: 'images', images: [], docs: [], files: [], total: 0, offset: 0 };
 
 // Pictures never travel with the grid: each cell asks for its own image when it
 // nears the screen, keeps a small thumbnail and lets the full one go. A phone
@@ -1536,6 +1540,41 @@ function renderAttachments2() {
         requestAttachments(attState.images.length);
       };
       body.append(more);
+    }
+    return;
+  }
+
+  if (attState.tab === 'files') {
+    if (!attState.files.length) {
+      body.append(el('div', 'att-empty', 'nothing here yet — files you attach to a message land here'));
+      return;
+    }
+    for (const file of attState.files) {
+      const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+      const row = el('div', 'att-doc', '');
+      row.dataset.path = file.path;
+      row.append(el('div', `att-ext ext-${ext}`, ext.slice(0, 4)));
+      const info = el('div', 'att-doc-info', '');
+      info.append(el('div', 'att-doc-name', file.name));
+      info.append(
+        el(
+          'div',
+          'att-doc-meta',
+          [formatSize(file.size), file.uploaded ? 'attached here' : 'in the inbox', new Date(file.addedAt).toLocaleDateString()]
+            .filter(Boolean)
+            .join(' · ')
+        )
+      );
+      row.append(info);
+      const down = el('button', 'att-doc-drop', '⤓');
+      down.title = 'download';
+      down.onclick = (e) => {
+        e.stopPropagation();
+        sendTo(chatHostId(activeChatId), { type: 'read_artifact', path: file.path, asText: false });
+      };
+      row.append(down);
+      row.onclick = () => sendTo(chatHostId(activeChatId), { type: 'read_artifact', path: file.path, asText: false });
+      body.append(row);
     }
     return;
   }
@@ -1887,7 +1926,7 @@ function renderLimits(limits) {
 function currentContent() {
   let text = $('input').value.trim();
   // files travel as paths: the session opens them itself
-  const files = attachments.filter((a) => a.file);
+  const files = attachments.filter((a) => a.file && a.path); // one still on its way is not there yet
   if (files.length)
     text = `${text}${text ? '\n\n' : ''}Приложенные файлы:\n${files.map((f) => `- ${f.path}`).join('\n')}`;
   const pictures = attachments.filter((a) => !a.file);
@@ -1961,7 +2000,8 @@ function renderAttachments() {
   root.innerHTML = '';
   attachments.forEach((a, i) => {
     const wrap = el('div', a.file ? 'att att-file' : 'att', '');
-    if (a.file) wrap.append(el('span', 'att-file-name', `📄 ${a.name}`));
+    if (a.file)
+      wrap.append(el('span', 'att-file-name', a.path ? `📄 ${a.name}` : `⏳ ${a.name} ${a.sending ?? 0}%`));
     else {
       const img = document.createElement('img');
       img.src = a.url;
@@ -2100,16 +2140,36 @@ async function addImageAttachment(file) {
  * path: a session can open a pdf, a csv or an archive with the tools it already
  * has, and nothing has to be squeezed into a message.
  */
-async function addFileAttachment(file) {
-  if (!activeChatId) return;
-  const data = await new Promise((done) => {
+const UPLOAD_CHUNK = 4 * 1024 * 1024; // a piece that fits comfortably in one frame
+
+const base64Of = (blob) =>
+  new Promise((done) => {
     const reader = new FileReader();
     reader.onload = () => done(String(reader.result).split(',')[1] ?? '');
     reader.onerror = () => done('');
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
-  if (!data) return;
-  sendTo(chatHostId(activeChatId), { type: 'upload_file', chatId: activeChatId, name: file.name, data });
+
+async function addFileAttachment(file) {
+  if (!activeChatId) return;
+  if (file.size > 1024 * 1024 * 1024) {
+    docComments.showError(`${file.name} is over a gigabyte — put it in the project and name it instead`);
+    return;
+  }
+  const uploadId = crypto.randomUUID();
+  const hostId = chatHostId(activeChatId);
+  // a big file goes in pieces: nothing holds it whole, and no frame is oversized
+  const waiting = { file: true, name: file.name, uploadId, sending: 0 };
+  attachments.push(waiting);
+  renderAttachments();
+  for (let at = 0, seq = 0; at < file.size || seq === 0; at += UPLOAD_CHUNK, seq++) {
+    const data = await base64Of(file.slice(at, at + UPLOAD_CHUNK));
+    const last = at + UPLOAD_CHUNK >= file.size;
+    sendTo(hostId, { type: 'upload_file', chatId: activeChatId, uploadId, name: file.name, seq, data, last });
+    waiting.sending = Math.min(100, Math.round(((at + UPLOAD_CHUNK) / Math.max(file.size, 1)) * 100));
+    renderAttachments();
+    if (last) break;
+  }
 }
 
 const attachAny = (file) => (file.type.startsWith('image/') ? addImageAttachment(file) : addFileAttachment(file));

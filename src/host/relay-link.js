@@ -19,7 +19,7 @@ export class RelayLink extends EventEmitter {
   #connect() {
     if (this.#stopped) return;
     const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/host?token=' + encodeURIComponent(this.token);
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, { maxPayload: 32 * 1024 * 1024 }); // files come through in pieces
     this.#ws = ws;
 
     ws.on('open', () => {
