@@ -446,7 +446,9 @@ const handlers = {
       $('doc-title').textContent = name;
       setInboxButton(inInbox);
       // an exported conversation is laid out as one, not as a wall of headings
-      const html = text.includes('<!-- remaude:chat -->') ? chatExportHtml(mdToHtml(text)) : mdToHtml(text);
+      const isChat = text.includes('<!-- remaude:chat -->');
+      $('doc-body').classList.toggle('chat-export', isChat);
+      const html = isChat ? chatExportHtml(mdToHtml(text)) : mdToHtml(text);
       $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;

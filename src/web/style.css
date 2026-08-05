@@ -1913,13 +1913,14 @@ body.guest #export-btn { display: none; }
 }
 #doc-full:hover { border-color: var(--accent); color: var(--text); }
 
-/* a saved conversation, laid out like the chat it was */
-#doc-body.md-body { display: flex; flex-direction: column; gap: 10px; }
+/* a saved conversation, laid out like the chat it was — and only it: this is a
+   flex column, which is not how an ordinary document should be laid out */
+#doc-body.chat-export { display: flex; flex-direction: column; gap: 10px; }
 /* as wide as it needs, like in the feed — the alignment is what tells them apart */
-#doc-body > .msg { max-width: 100%; }
-#doc-body > .msg-user { align-self: flex-end; }
-#doc-body > .msg-assistant { align-self: flex-start; max-width: 100%; }
-#doc-body > .msg .msg-time { display: block; margin-top: 2px; }
+#doc-body.chat-export > .msg { max-width: 100%; }
+#doc-body.chat-export > .msg-user { align-self: flex-end; }
+#doc-body.chat-export > .msg-assistant { align-self: flex-start; max-width: 100%; }
+#doc-body.chat-export > .msg .msg-time { display: block; margin-top: 2px; }
 
 /* a file attached to a message: a name, not a thumbnail */
 #attachments { flex-wrap: wrap; }
