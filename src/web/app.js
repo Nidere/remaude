@@ -412,6 +412,12 @@ const handlers = {
     attachToolResult(chat, block);
   },
 
+  /** The host put the file on disk; the message will carry its path. */
+  file_uploaded({ name, path, size }) {
+    attachments.push({ file: true, name, path, size });
+    renderAttachments();
+  },
+
   async image_data({ sessionId, index, mediaType, data }) {
     const key = `${sessionId}:${index}`;
     const url = `data:${mediaType};base64,${data}`;
@@ -1879,9 +1885,14 @@ function renderLimits(limits) {
 // ---------- composer ----------
 
 function currentContent() {
-  const text = $('input').value.trim();
-  if (!attachments.length) return text || null;
-  const blocks = attachments.map((a) => ({
+  let text = $('input').value.trim();
+  // files travel as paths: the session opens them itself
+  const files = attachments.filter((a) => a.file);
+  if (files.length)
+    text = `${text}${text ? '\n\n' : ''}Приложенные файлы:\n${files.map((f) => `- ${f.path}`).join('\n')}`;
+  const pictures = attachments.filter((a) => !a.file);
+  if (!pictures.length) return text || null;
+  const blocks = pictures.map((a) => ({
     type: 'image',
     source: { type: 'base64', media_type: a.mediaType, data: a.data },
   }));
@@ -1949,15 +1960,20 @@ function renderAttachments() {
   const root = $('attachments');
   root.innerHTML = '';
   attachments.forEach((a, i) => {
-    const wrap = el('div', 'att', '');
-    const img = document.createElement('img');
-    img.src = a.url;
+    const wrap = el('div', a.file ? 'att att-file' : 'att', '');
+    if (a.file) wrap.append(el('span', 'att-file-name', `📄 ${a.name}`));
+    else {
+      const img = document.createElement('img');
+      img.src = a.url;
+      wrap.append(img);
+    }
     const del = el('button', '', '×');
+    del.title = a.file ? 'do not send this file (it stays on disk)' : 'remove';
     del.onclick = () => {
       attachments.splice(i, 1);
       renderAttachments();
     };
-    wrap.append(img, del);
+    wrap.append(del);
     root.append(wrap);
   });
 }
@@ -2079,9 +2095,28 @@ async function addImageAttachment(file) {
   }
 }
 
+/**
+ * Anything that is not a picture goes to the host as a file and comes back as a
+ * path: a session can open a pdf, a csv or an archive with the tools it already
+ * has, and nothing has to be squeezed into a message.
+ */
+async function addFileAttachment(file) {
+  if (!activeChatId) return;
+  const data = await new Promise((done) => {
+    const reader = new FileReader();
+    reader.onload = () => done(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => done('');
+    reader.readAsDataURL(file);
+  });
+  if (!data) return;
+  sendTo(chatHostId(activeChatId), { type: 'upload_file', chatId: activeChatId, name: file.name, data });
+}
+
+const attachAny = (file) => (file.type.startsWith('image/') ? addImageAttachment(file) : addFileAttachment(file));
+
 $('attach-btn').onclick = () => $('file-input').click();
 $('file-input').addEventListener('change', function () {
-  for (const f of this.files) addImageAttachment(f);
+  for (const f of this.files) attachAny(f);
   this.value = '';
 });
 
@@ -2091,7 +2126,7 @@ $('input').addEventListener('paste', (e) => {
   e.preventDefault();
   for (const item of files) {
     const file = item.getAsFile();
-    if (file) addImageAttachment(file);
+    if (file) attachAny(file);
   }
 });
 

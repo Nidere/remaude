@@ -1920,3 +1920,22 @@ body.guest #export-btn { display: none; }
 #doc-body > .msg-user { align-self: flex-end; }
 #doc-body > .msg-assistant { align-self: flex-start; max-width: 100%; }
 #doc-body > .msg .msg-time { display: block; margin-top: 2px; }
+
+/* a file attached to a message: a name, not a thumbnail */
+#attachments { flex-wrap: wrap; }
+#attachments .att-file {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  max-width: 240px;
+}
+.att-file-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

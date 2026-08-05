@@ -1232,6 +1232,7 @@ const GUEST_TYPES = new Set([
   'attachments',
   'image',
   'tool_result',
+  'upload_file',
   'save_draft',
   'create_thread',
   'open_doc_link', // both ends checked against the share grants inside the handler
@@ -1867,6 +1868,37 @@ const handlers = {
       anchor: anchor ? decodeURIComponent(anchor) : null,
       inInbox: Boolean(artifactByPath(target)),
     });
+  },
+
+  /**
+   * A file handed to the chat from the browser. It is put on disk in the
+   * project's inbox and the session is told where — a path it can open with the
+   * tools it already has beats anything we could inline into a message.
+   */
+  upload_file(ws, { chatId, name, data }) {
+    const chat = findChat(chatId);
+    const buf = Buffer.from(String(data ?? ''), 'base64');
+    if (!buf.length) throw new Error('empty file');
+    if (buf.length > 25 * 1024 * 1024) throw new Error('that file is over 25 MB — put it in the project and name it instead');
+    const clean = String(name ?? '')
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/^\.+/, '')
+      .slice(0, 120) || 'file';
+
+    const dir = join(chat.cwd, '.remaude', 'uploads');
+    mkdirSync(dir, { recursive: true });
+    ensureInboxIgnored(dir);
+    let target = join(dir, clean);
+    if (existsSync(target)) {
+      // never write over something already here
+      const ext = extname(clean);
+      const stem = clean.slice(0, clean.length - ext.length);
+      let n = 2;
+      while (existsSync(join(dir, `${stem} (${n})${ext}`))) n++;
+      target = join(dir, `${stem} (${n})${ext}`);
+    }
+    writeFileSync(target, buf);
+    send(ws, { type: 'file_uploaded', chatId, name: basename(target), path: target, size: buf.length });
   },
 
   /** Manual "add to inbox" for a file that was written without a marker. */
