@@ -97,5 +97,22 @@ eq(rows.size, 1, 'size counts the rows for the reconnect broadcast');
 rows.drop('x');
 eq(rows.size, 0, 'and follows drops');
 
+// Wiring, not behaviour: the rules above are worth nothing if the completion
+// never reaches them. It arrives twice over — in the live stream and in the
+// transcript — and both paths drop such messages before the feed sees them, so
+// the bookkeeping has to run before those drops. This has broken twice.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const server = readFileSync(new URL('../src/host/server.js', import.meta.url), 'utf-8');
+const liveHandler = server.slice(server.indexOf("agent.on('chat_message'"), server.indexOf('const lastReplies'));
+eq(
+  liveHandler.indexOf('trackAgents(chatId, msg)') < liveHandler.indexOf("if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return"),
+  true,
+  'the live stream counts agents before it skips messages the feed does not want'
+);
+const tail = server.slice(server.indexOf('function drainTail'), server.indexOf('// ---------- limits'));
+eq(tail.indexOf('trackAgents(chatId, {') < tail.indexOf('if (!msg) continue'), true, 'and so does the transcript tail');
+
 console.log(failed ? `AGENT ROWS: ${failed} failed` : 'AGENT ROWS OK');
 process.exit(failed ? 1 : 0);

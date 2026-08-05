@@ -1054,6 +1054,16 @@ function drainTail(chatId, tail) {
     if (entry.uuid && tail.seen.has(entry.uuid)) continue;
     const msg = mapEntry(entry, { defaultAuthor: userName });
     if (entry.uuid) tail.seen.add(entry.uuid);
+    // A background agent's completion is announced by the harness straight into
+    // the transcript — the feed has no use for that message and mapEntry drops
+    // it, but it is the only word we ever get that the agent has finished.
+    if (entry.type === 'user' || entry.type === 'assistant')
+      trackAgents(chatId, {
+        type: entry.type,
+        message: entry.message,
+        uuid: entry.uuid ?? null,
+        parent_tool_use_id: entry.parentToolUseId ?? null,
+      });
     if (!msg) continue;
     // our own typed input reaches the transcript under a uuid we never saw — match by text
     if (msg.type === 'user' && !msg.parent_tool_use_id) {
@@ -1068,9 +1078,6 @@ function drainTail(chatId, tail) {
       }
     }
     pushHistory(chatId, msg);
-    // the same bookkeeping as the live stream: a completion we only see on disk
-    // still has to close the agent's row
-    if (msg.type === 'assistant' || msg.type === 'user') trackAgents(chatId, msg);
     broadcast({ type: 'chat_message', chatId, msg });
   }
 }
