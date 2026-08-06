@@ -21,6 +21,14 @@ const cases = [
   ['`a_b_c`', ['<code>a_b_c</code>']],
   ['# Заголовок\nтекст', ['<h3 id="заголовок">Заголовок</h3>']],
   ['- один\n- два\n\n1. раз\n2. два', ['<ul><li>один</li><li>два</li></ul>', '<ol><li>раз</li><li>два</li></ol>']],
+  // a blank line between items is how people write lists — the numbering must
+  // not start over at one for every item
+  ['1. раз\n\n2. два\n\n3. три', ['<ol><li>раз</li><li>два</li><li>три</li></ol>']],
+  ['- один\n\n- два', ['<ul><li>один</li><li>два</li></ul>']],
+  // …but a paragraph after the list still ends it
+  ['1. раз\n\nобычный текст', ['<ol><li>раз</li></ol>', '<div>обычный текст</div>']],
+  // a list that starts at four says so
+  ['4. четыре\n5. пять', ['<ol start="4"><li>четыре</li><li>пять</li></ol>']],
   ['[линк](https://example.com)', ['<a href="https://example.com" target="_blank" rel="noopener">линк</a>']],
   ['[зло](javascript:alert(1))', []], // must not become a link
   ['```js\nconst x = 1 < 2;\n```', ['<pre class="md-code"><code>const x = 1 &lt; 2;</code></pre>']],
