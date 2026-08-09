@@ -754,7 +754,7 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
       if (block.type === 'text' && block.text.trim()) {
         const node = el('div', 'msg msg-assistant md-body', '');
         node.innerHTML = mdToHtml(block.text);
-        node.title = msg.timestamp ? new Date(msg.timestamp).toLocaleString() : new Date().toLocaleString();
+        // no tooltip on the text itself: it pops up over what you are reading
         node.append(el('span', 'msg-time', fmtTime(msg.timestamp)));
         const copyBtn = el('button', 'copy-btn', '⧉');
         copyBtn.title = 'copy as markdown';
