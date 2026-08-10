@@ -101,11 +101,29 @@ Everything below was checked with live probes kept in `experiments/` — executa
 
 Docs: [Agent SDK TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md) · [streaming](https://code.claude.com/docs/en/agent-sdk/streaming-output.md) · [sessions](https://code.claude.com/docs/en/agent-sdk/sessions.md) · [subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md) · [permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md)
 
+## Backups
+
+Everything a machine holds that no repository does lives in two folders:
+`~/.claude/projects` (the transcript of every conversation, written by Claude
+Code itself) and `~/.remaude` (the inbox index, chat threads, read marks,
+drafts, the list of projects and their chat names). A dead disk takes both.
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\backup.ps1 -Install   # daily, 04:30
+powershell -ExecutionPolicy Bypass -File scripts\backup.ps1            # now
+powershell -ExecutionPolicy Bypass -File scripts\backup.ps1 -Restore   # back onto a fresh machine
+```
+
+It syncs both folders to `s3://remaude-backup-<aws-account>` — private, encrypted,
+old versions kept for a month — and leaves behind what a backup should not
+carry: the relay's ssh key, the oauth secret, logs. `host.json` does go, relay
+token included: without it a restored machine is not the same host.
+
 ## Not there yet
 
 - **LAN mode**: traffic still goes through the relay even at home. The host already serves the UI itself; what is missing is an opt-in bind to the LAN interface with a token. Fully automatic "same network → connect directly" is blocked by mixed content and Private Network Access rules in browsers.
 - **Revoking access from the UI**: removing a trusted device or unpairing a host means editing `relay-state.json` on the server.
-- **Relay state backups** and session cookie rotation.
+- **Relay state backups** and session cookie rotation (the machine itself is covered, see Backups).
 - **Single-file binaries and a tray icon** — for now it is an installer plus OS-level autostart.
 
 ## Rejected alternatives
