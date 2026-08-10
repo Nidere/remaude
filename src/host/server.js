@@ -38,6 +38,7 @@ import {
 import { RelayLink } from './relay-link.js';
 import { TurnTags } from './turn-tags.js';
 import { chatToMarkdown, exportFileName } from './export-md.js';
+import { threadMark, threadIdInText } from './thread-mark.js';
 import { AgentRows } from './agent-rows.js';
 import {
   sidecarPath,
@@ -768,10 +769,6 @@ function saveChatThreads() {
   writeFile(CHAT_THREADS_PATH, JSON.stringify(chatThreads, null, 2)).catch(() => {});
 }
 
-const threadMark = (id) =>
-  `[remaude: thread ${id} — a side thread of this chat. Answer in one message; it is filed into the thread, not the main feed.]`;
-const threadIdInText = (text) => /^\[remaude: thread ([0-9a-f-]{8,})/i.exec(String(text ?? '').trimStart())?.[1] ?? null;
-
 /** Every session id this chat has ever answered to — threads outlive resumes. */
 function sessionIdsOf(chat) {
   return new Set([chat.sessionId, chat.resumeId, ...(chat.pastIds ?? [])].filter(Boolean));
@@ -808,9 +805,15 @@ function annotateThreads(chatId, messages) {
   });
 }
 
+/** The opening words of the message a thread hangs off, so the answer knows what it is about. */
+function anchorQuote(chatId, thread) {
+  const anchor = (chatHistories.get(chatId) ?? []).find((m) => m.uuid && m.uuid === thread.anchorUuid);
+  return anchor ? plainTextOf(anchor) : null;
+}
+
 /** Put the thread tag in front of what the user typed, whatever shape it came in. */
-function withThreadMark(content, threadId) {
-  const mark = threadMark(threadId);
+function withThreadMark(content, threadId, quote = null) {
+  const mark = threadMark(threadId, quote);
   if (typeof content === 'string') return `${mark}\n${content}`;
   if (!Array.isArray(content)) return content;
   const i = content.findIndex((b) => b.type === 'text');
@@ -1435,7 +1438,7 @@ const handlers = {
     // what still identifies it after a restart, when history is re-read.
     const thread = threadId ? threadById(chat, threadId) : null;
     if (threadId && !thread) throw new Error('no such thread');
-    if (thread) content = withThreadMark(content, thread.id);
+    if (thread) content = withThreadMark(content, thread.id, anchorQuote(chatId, thread));
 
     // the turn is tagged when the session takes this message into work, not
     // here: it may sit in the queue behind whatever is running

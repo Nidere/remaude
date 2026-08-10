@@ -22,7 +22,7 @@ function textOf(msg) {
 
 /** Service turns talk to the machinery, not to the reader. */
 const isServiceTitle = (text) => /^\[remaude: a service request/i.test(text.trimStart());
-const stripMarker = (text) => text.replace(/^\[remaude:[^\]]*\]\n?/i, '').trimStart();
+const stripMarker = (text) => text.replace(/^\[remaude:[^\n]*\n?/i, '').trimStart();
 
 function hasImages(msg) {
   const content = msg.message?.content;

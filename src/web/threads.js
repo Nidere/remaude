@@ -96,9 +96,9 @@ function textOf(msg) {
     .join('');
 }
 
-/** The tag line is machine talk — it never belongs on screen. */
+/** The tag line is machine talk — the whole line goes, quote and all. */
 function stripMark(text) {
-  return String(text ?? '').replace(/^\[remaude: thread [0-9a-f-]{8,}[^\]]*\]\n?/i, '');
+  return String(text ?? '').replace(/^\[remaude: thread [^\n]*\n?/i, '');
 }
 
 // ---------- chips on the anchor messages ----------
