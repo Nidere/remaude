@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <button id="att-btn">📎</button>
+  <div class="att-doc" data-path="C:\fake\test.md"><div class="att-ext">MD</div><div class="att-doc-name">test.md</div></div>
+  <div id="doc-viewer">
+    <div id="doc-box">
+      <div id="doc-head">
+        <span id="doc-title">test.md</span>
+        <span id="doc-head-actions">
+          <button id="doc-threads" hidden>💬</button>
+          <button id="doc-close">✕</button>
+        </span>
+      </div>
+      <div id="doc-body" class="md-body"></div>
+    </div>
+  </div>
+  <script type="module">
+    import { mdToHtml } from '/md.js';
+    import * as dc from '/comments.js';
+
+    window.log = [];
+    const DOC = 'C:\\fake\\test.md';
+    let threads = [];
+    const seen = {};
+
+    // a fake host: answers comment commands in-page, synchronously-ish
+    function fakeServer(obj) {
+      window.log.push(obj.type);
+      const reply = () =>
+        dc.onComments({ path: DOC, threads: JSON.parse(JSON.stringify(threads)), seen: { ...seen }, me: '@owner' });
+      setTimeout(() => {
+        if (obj.type === 'list_comments') reply();
+        if (obj.type === 'add_comment') {
+          threads.push({
+            id: 't' + (threads.length + 1),
+            anchor: obj.anchor,
+            resolved: false,
+            createdAt: Date.now(),
+            replies: [{ id: 'r1', author: 'me', authorId: '@owner', role: 'user', text: obj.text, createdAt: Date.now() }],
+          });
+          reply();
+        }
+        if (obj.type === 'reply_comment') {
+          threads.find((t) => t.id === obj.threadId).replies.push({
+            id: 'r' + Math.random(),
+            author: 'me',
+            authorId: '@owner',
+            role: 'user',
+            text: obj.text,
+            createdAt: Date.now(),
+          });
+          reply();
+        }
+        if (obj.type === 'mark_thread_seen') {
+          seen[obj.threadId] = Date.now();
+          reply();
+        }
+        if (obj.type === 'resolve_comment') {
+          threads.find((t) => t.id === obj.threadId).resolved = obj.resolved;
+          reply();
+        }
+        if (obj.type === 'ask_llm_comment') {
+          setTimeout(() => {
+            threads.find((t) => t.id === obj.threadId).replies.push({
+              id: 'llm' + Math.random(),
+              author: 'Claude',
+              authorId: '@llm',
+              role: 'assistant',
+              text: 'ответ модели',
+              createdAt: Date.now(),
+            });
+            dc.onLlmDone({ path: DOC, threadId: obj.threadId });
+            reply();
+          }, 150);
+        }
+      }, 30);
+    }
+
+    dc.initDocComments({ request: fakeServer });
+    const md =
+      '# Title\n\nhello brave new world of comments\n\nsecond paragraph here\n\n' +
+      '| Термин | Перевод |\n|---|---|\n| **NIF** | ИНН налоговый |\n| IVA | НДС |\n\n' +
+      'см. `docs/spec.md` и [раздел](#title)\n';
+    const html = mdToHtml(md);
+    document.getElementById('doc-body').innerHTML = html;
+    document.getElementById('doc-viewer').hidden = false;
+    dc.docOpened(DOC, html);
+
+    document.getElementById('doc-close').onclick = () => (document.getElementById('doc-viewer').hidden = true);
+
+    // select "brave new world" inside the rendered doc
+    window.selectInDoc = (needle) => {
+      const walker = document.createTreeWalker(document.getElementById('doc-body'), NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const i = n.nodeValue.indexOf(needle);
+        if (i === -1) continue;
+        const range = document.createRange();
+        range.setStart(n, i);
+        range.setEnd(n, i + needle.length);
+        const sel = getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return true;
+      }
+      return false;
+    };
+    // select from one block into another — the endpoints land on elements, not
+    // on text nodes, which is where offset-based anchoring gives up
+    window.selectAcrossBlocks = () => {
+      const body = document.getElementById('doc-body');
+      const blocks = [...body.children];
+      const from = blocks.find((b) => b.textContent.includes('brave new world'));
+      const to = blocks.find((b) => b.textContent.includes('second paragraph'));
+      const range = document.createRange();
+      range.setStart(from, 0);
+      range.setEnd(to, to.childNodes.length);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    };
+
+    // …and a selection inside a table cell
+    window.selectInTable = () => {
+      const cell = [...document.querySelectorAll('#doc-body td')].find((c) => c.textContent.includes('ИНН'));
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    };
+
+    window.dc = dc;
+    window.ready = true;
+  </script>
+</body>
+</html>

@@ -215,6 +215,12 @@ agent.on('chat_message', ({ chatId, msg }) => {
   // a harness notification — a plain user message the feed skips — and reading
   // it after the skips below is how those rows came to run forever.
   if (msg.type === 'assistant' || msg.type === 'user') trackAgents(chatId, msg);
+  // The session replays a message back to us as it takes it into work; that is
+  // when a turn begins, and the message itself says whether it belongs to a
+  // thread. Tool results come back as user messages too — they arrive mid-turn
+  // and say nothing about whose turn it is.
+  if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg))
+    turnTags.begin(chatId, threadIdInText(plainTextOf(msg)));
   // We broadcast user input ourselves in handleSend (otherwise it duplicates with the SDK's
   // replay), so plain text user messages of the main dialogue are skipped here.
   if (msg.type === 'user' && msg.parent_tool_use_id === null && !hasToolResult(msg)) return;
@@ -253,8 +259,7 @@ agent.on('chat_message', ({ chatId, msg }) => {
   if (msg.type === 'result') {
     // the service turn's text has to be captured while lastReplies still holds it
     finishServiceTurn(chatId);
-    // this turn is over: whatever was queued behind it now owns the next one
-    turnTags.onTurnEnd(chatId);
+    turnTags.end(chatId); // this turn is over; the next one speaks for itself
     // The turn is over: a foreground agent that never reported back is gone.
     // Background ones outlive the turn by design — they keep their row.
     const aborted = agentsOf(chatId).abortForeground();
@@ -1432,11 +1437,8 @@ const handlers = {
     if (threadId && !thread) throw new Error('no such thread');
     if (thread) content = withThreadMark(content, thread.id);
 
-    // the tag belongs to the turn this message will start — which is not the
-    // running one if the model is still busy
-    const wasBusy = chat.status === 'thinking' || chat.status === 'waiting_permission';
-    turnTags.onSend(chatId, { busy: wasBusy, threadId: thread?.id ?? null });
-
+    // the turn is tagged when the session takes this message into work, not
+    // here: it may sit in the queue behind whatever is running
     chat.send(content);
     // a thread message must never become the chat's name — it is a side remark
     if (!chat.title && !thread) {

@@ -1,6 +1,9 @@
-// The rule that cannot be eyeballed: a thread tag must ride on the turn its own
-// message starts, not on whatever the model happens to be doing right now.
+// Which thread the running turn belongs to. The rule that matters: the turn is
+// tagged when the session takes a message into work, so nothing has to be
+// counted — the previous version counted turns and lost its place whenever one
+// ended without reporting back.
 import { TurnTags } from '../src/host/turn-tags.js';
+import { readFileSync } from 'node:fs';
 
 let failed = 0;
 const eq = (got, want, name) => {
@@ -12,58 +15,62 @@ const eq = (got, want, name) => {
   }
 };
 
-// idle chat: the message starts a turn right away, so its tag is active at once
 let t = new TurnTags();
-t.onSend('c', { busy: false, threadId: 'T1' });
-eq(t.active('c'), 'T1', 'idle send tags the turn it starts');
+eq(t.active('c'), null, 'nothing is tagged to begin with');
 
-// the classic case: the model is working, a thread reply is written meanwhile.
-// The running turn must stay untagged; the reply owns the NEXT one.
-t = new TurnTags();
-t.onSend('c', { busy: false }); // the main question
-eq(t.active('c'), null, 'a plain turn carries no tag');
-t.onSend('c', { busy: true, threadId: 'T1' }); // typed while it thinks
-eq(t.active('c'), null, 'the running turn is not stolen by the thread');
-eq(t.queued('c'), ['T1'], 'the tag waits in the queue');
-t.onTurnEnd('c');
-eq(t.active('c'), 'T1', 'the thread owns the next turn');
-t.onTurnEnd('c');
-eq(t.active('c'), null, 'and lets go afterwards');
+// an ordinary message: the turn belongs to no thread
+t.begin('c', null);
+eq(t.active('c'), null, 'an ordinary turn carries no tag');
+t.end('c');
 
-// several messages queued behind one turn keep their order — untagged included,
-// or every tag after the first would land on the wrong turn
-t = new TurnTags();
-t.onSend('c', { busy: false, threadId: 'A' });
-t.onSend('c', { busy: true, threadId: null });
-t.onSend('c', { busy: true, threadId: 'B' });
-eq(t.active('c'), 'A', 'first turn keeps its own tag');
-t.onTurnEnd('c');
-eq(t.active('c'), null, 'the plain message keeps its place in the queue');
-t.onTurnEnd('c');
-eq(t.active('c'), 'B', 'the second thread reply lands on its own turn');
+// a message written in a thread: everything the turn says belongs there
+t.begin('c', 'T1');
+eq(t.active('c'), 'T1', 'a thread message tags its own turn');
+t.end('c');
+eq(t.active('c'), null, 'and the tag goes when the turn reports back');
 
-// two messages typed in a row while idle: the second still queues behind the
-// first (the first one is already starting a turn)
+// the case that used to break it: a turn that never reported back (an
+// interrupt). The next message still tags its own turn, because nothing is
+// being counted.
 t = new TurnTags();
-t.onSend('c', { busy: false, threadId: 'A' });
-t.onSend('c', { busy: false, threadId: 'B' });
-eq(t.active('c'), 'A', 'a burst does not overwrite the running tag');
-eq(t.queued('c'), ['B'], 'the second waits');
-t.onTurnEnd('c');
-eq(t.active('c'), 'B', 'and gets its turn next');
+t.begin('c', null); // a turn the user interrupts — no end() ever comes
+t.begin('c', 'T2'); // the next message is written in a thread
+eq(t.active('c'), 'T2', 'an interrupted turn does not shift the next one');
+
+// two threads in a row, and an ordinary message between them
+t = new TurnTags();
+t.begin('c', 'A');
+eq(t.active('c'), 'A', 'first thread');
+t.end('c');
+t.begin('c', null);
+eq(t.active('c'), null, 'an ordinary message in between is not in a thread');
+t.end('c');
+t.begin('c', 'B');
+eq(t.active('c'), 'B', 'second thread');
 
 // chats do not leak into each other
 t = new TurnTags();
-t.onSend('c1', { busy: false, threadId: 'A' });
-t.onSend('c2', { busy: false, threadId: 'B' });
+t.begin('c1', 'A');
+t.begin('c2', 'B');
 eq([t.active('c1'), t.active('c2')], ['A', 'B'], 'tags are per chat');
-t.onTurnEnd('c1');
+t.end('c1');
 eq([t.active('c1'), t.active('c2')], [null, 'B'], 'ending one turn leaves the other alone');
 
-// an end with nothing queued (a turn nobody tagged) is not an error
+// ending a turn nobody started is harmless
 t = new TurnTags();
-t.onTurnEnd('fresh');
+t.end('fresh');
 eq(t.active('fresh'), null, 'ending an unknown turn is harmless');
+
+// Wiring: the tag has to be set from the message the session replays back, and
+// tool results must not be mistaken for the start of a turn.
+const server = readFileSync(new URL('../src/host/server.js', import.meta.url), 'utf-8');
+const wiring = server.slice(server.indexOf("agent.on('chat_message'"), server.indexOf('const lastReplies'));
+eq(
+  /if \(msg\.type === 'user' && msg\.parent_tool_use_id === null && !hasToolResult\(msg\)\)\s*\n\s*turnTags\.begin\(chatId, threadIdInText\(plainTextOf\(msg\)\)\)/.test(wiring),
+  true,
+  'a turn is tagged from the message that starts it, tool results excluded'
+);
+eq(/turnTags\.end\(chatId\)/.test(wiring), true, 'and untagged when the turn reports back');
 
 console.log(failed ? `TURN TAGS: ${failed} failed` : 'TURN TAGS OK');
 process.exit(failed ? 1 : 0);
