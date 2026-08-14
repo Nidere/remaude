@@ -84,11 +84,18 @@ const cases = [
   ['см. `docs/дизайн-боёвки.md`', ['data-path="docs/дизайн-боёвки.md"']],
   ['`./README.md`', ['class="md-path"']],
   ['`src\\host\\server.md`', ['class="md-path"']],
+  // not only markdown: a note or a source file opens in the viewer too, and a
+  // cyrillic name inside the inbox is a name like any other
+  ['`.remaude/геймдизайнер-разметка.txt`', ['data-path=".remaude/геймдизайнер-разметка.txt"']],
+  ['`src/host/server.js`', ['class="md-path"']],
+  ['`docs/отчёт.pdf`', ['class="md-path"']],
   // …but ordinary code stays ordinary
   ['`npm install`', ['<code>npm install</code>']],
-  ['`src/host/server.js`', ['<code>src/host/server.js</code>']],
   ['`a/b`', ['<code>a/b</code>']],
   ['`*.md`', ['<code>*.md</code>']],
+  ['`Unity/Unreal`', ['<code>Unity/Unreal</code>']],
+  ['`array.map`', ['<code>array.map</code>']],
+  ['`роль: recorder`', ['<code>роль: recorder</code>']],
 ];
 
 let failed = 0;

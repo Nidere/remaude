@@ -518,6 +518,17 @@ function artifactByPath(path) {
   return artifacts.find((a) => a.path.toLowerCase() === abs.toLowerCase()) ?? null;
 }
 
+/**
+ * Can this be read rather than downloaded?
+ *
+ * The browser asks for text whenever it means to *show* a file; this decides
+ * whether showing it makes sense, so a click on a name in a chat never dumps a
+ * zip into the viewer, and never downloads a note the person wanted to read.
+ */
+const TEXT_FILE =
+  /\.(md|txt|log|csv|tsv|json|jsonl|ya?ml|toml|ini|xml|html?|css|m?js|cjs|tsx?|jsx|py|rb|go|rs|java|kt|c|h|cpp|sh|ps1|bat|sql|patch|diff|gitignore|env)$/i;
+const readableAsText = (path) => TEXT_FILE.test(String(path));
+
 /** The project a path belongs to (the deepest one, if projects nest), or null. */
 function projectOf(absPath) {
   const p = resolve(absPath).toLowerCase();
@@ -1839,12 +1850,13 @@ const handlers = {
     if (!canReadDoc(ws, abs)) throw new Error('no access to this file');
     const buf = readFileSync(abs);
     if (buf.length > 12 * 1024 * 1024) throw new Error('file too large to send');
+    const text = asText && readableAsText(abs); // asking to show a zip still downloads it
     send(ws, {
       type: 'artifact',
       path: abs,
       name: abs.split(/[\\/]/).pop(),
-      text: asText ? buf.toString('utf-8') : null,
-      base64: asText ? null : buf.toString('base64'),
+      text: text ? buf.toString('utf-8') : null,
+      base64: text ? null : buf.toString('base64'),
       inInbox: Boolean(artifactByPath(abs)),
     });
   },
@@ -1925,7 +1937,7 @@ const handlers = {
     if (!existsSync(target) || !statSync(target).isFile()) throw new Error('no such file');
     const buf = readFileSync(target);
     if (buf.length > 12 * 1024 * 1024) throw new Error('file too large to send');
-    const asText = target.toLowerCase().endsWith('.md');
+    const asText = readableAsText(target);
     send(ws, {
       type: 'artifact',
       path: target,

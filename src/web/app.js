@@ -448,7 +448,15 @@ const handlers = {
       // an exported conversation is laid out as one, not as a wall of headings
       const isChat = text.includes('<!-- remaude:chat -->');
       $('doc-body').classList.toggle('chat-export', isChat);
-      const html = isChat ? chatExportHtml(mdToHtml(text)) : mdToHtml(text);
+      // markdown is rendered; a plain text file is shown as it is written —
+      // running a note or a log through a markdown renderer only mangles it
+      const plain = !/\.mdx?$/i.test(path);
+      $('doc-body').classList.toggle('plain-text', plain);
+      const html = plain
+        ? `<pre class="doc-plain">${text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</pre>`
+        : isChat
+          ? chatExportHtml(mdToHtml(text))
+          : mdToHtml(text);
       $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;
@@ -1351,6 +1359,11 @@ $('doc-body').addEventListener(
 
 let explorer = { hostId: null, projectPath: null, path: null };
 
+// Which files the viewer can show rather than download. The host holds the same
+// list and has the last word — this one only chooses between 📄 and ⬇.
+const READABLE =
+  /\.(md|txt|log|csv|tsv|json|jsonl|ya?ml|toml|ini|xml|html?|css|m?js|cjs|tsx?|jsx|py|rb|go|rs|java|kt|c|h|cpp|sh|ps1|bat|sql|patch|diff|gitignore|env)$/i;
+
 function openExplorer(hostId, projectPath, path) {
   explorer = { hostId, projectPath, path };
   $('picker-title').textContent = 'loading…';
@@ -1378,9 +1391,10 @@ function renderExplorer({ projectPath, path, parent, entries }) {
   if (!entries.length) list.append(el('div', 'picker-item muted', 'empty folder'));
 
   for (const entry of entries) {
-    const isMd = !entry.dir && entry.name.toLowerCase().endsWith('.md');
+    // only the icon: the host decides for real whether a file can be shown
+    const readable = !entry.dir && READABLE.test(entry.name);
     const row = el('div', 'picker-item exp-row', '');
-    row.append(el('span', 'exp-icon', entry.dir ? '📁' : isMd ? '📄' : '⬇'));
+    row.append(el('span', 'exp-icon', entry.dir ? '📁' : readable ? '📄' : '⬇'));
     const name = el('span', 'exp-name', entry.name);
     if (docComments.unseenForDoc(entry.path)) name.append(el('span', 'exp-dot', ''));
     row.append(name);
@@ -1411,8 +1425,8 @@ function renderExplorer({ projectPath, path, parent, entries }) {
 
     row.onclick = () => {
       if (entry.dir) return openExplorer(explorer.hostId, projectPath, entry.path);
-      // markdown opens in the viewer; everything else is handed over as a download
-      sendTo(explorer.hostId, { type: 'read_artifact', path: entry.path, asText: isMd });
+      // anything readable opens in the viewer; the host hands the rest over as a download
+      sendTo(explorer.hostId, { type: 'read_artifact', path: entry.path, asText: true });
     };
     list.append(row);
   }
@@ -1617,7 +1631,7 @@ function renderAttachments2() {
 
     if (!doc.missing)
       row.onclick = () =>
-        sendTo(chatHostId(activeChatId), { type: 'read_artifact', path: doc.path, asText: ext === 'md' });
+        sendTo(chatHostId(activeChatId), { type: 'read_artifact', path: doc.path, asText: true });
     body.append(row);
   }
   docComments.refreshBadges(); // red dots on the rows just rendered

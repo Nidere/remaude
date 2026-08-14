@@ -1915,6 +1915,10 @@ body.guest #export-btn { display: none; }
 
 /* a saved conversation, laid out like the chat it was — and only it: this is a
    flex column, which is not how an ordinary document should be laid out */
+/* a file that is not markdown is shown as written: wrapped, so a long line is
+   readable on a phone, but otherwise untouched */
+.doc-plain { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 var(--mono, ui-monospace, SFMono-Regular, Consolas, monospace); }
+
 #doc-body.chat-export { display: flex; flex-direction: column; gap: 10px; }
 /* as wide as it needs, like in the feed — the alignment is what tells them apart */
 #doc-body.chat-export > .msg { max-width: 100%; }

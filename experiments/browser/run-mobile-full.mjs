@@ -22,6 +22,8 @@ const MD =
   Array.from({ length: 40 }, (_, i) => `наполнитель ${i}`).join('\n\n') +
   '\n\n## Действия героя\n\nтекст про действия\n';
 const HEROES = '# Герои\n\nсписок героев проекта\n';
+// a plain text file: markdown characters in it mean nothing and must survive
+const PLAIN = '1. Technical Game Designer\n2. What you bring: *опыт* с Unity\n# не заголовок\n';
 
 const server = createServer(async (req, res) => {
   const path = req.url === '/' ? '/index.html' : req.url.split('?')[0];
@@ -92,7 +94,7 @@ wss.on('connection', (ws) => {
         type: 'artifact',
         path: target,
         name,
-        text: name === 'spec.md' ? MD : HEROES,
+        text: name.endsWith('.txt') ? PLAIN : name === 'spec.md' ? MD : HEROES,
         base64: null,
         anchor: anchor ?? null,
       });
@@ -133,7 +135,10 @@ wss.on('connection', (ws) => {
           type: 'assistant',
           parent_tool_use_id: null,
           uuid: 'u-mention',
-          message: { role: 'assistant', content: [{ type: 'text', text: 'Написал в `docs/spec.md` — целиком' }] },
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Написал в `docs/spec.md` — целиком, заметки в `.remaude/заметки-по-вакансии.txt`' }],
+          },
         },
       });
   });
@@ -196,6 +201,25 @@ await page.waitForFunction(`document.querySelector('#feed code.md-path') !== nul
 await page.click('#feed code.md-path');
 await page.waitForFunction(`!document.getElementById('doc-viewer').hidden`, { timeout: 3000 }).catch(() => fail('clicking a named file did not open the viewer'));
 ok('a file named in a message opens on a tap');
+
+// ---------- and not only markdown ----------
+{
+  const mentions = await page.evaluate(`[...document.querySelectorAll('#feed code.md-path')].map((n) => n.dataset.path)`);
+  if (!mentions.includes('.remaude/заметки-по-вакансии.txt'))
+    await fail(`a plain text file named in a message was not made clickable: ${JSON.stringify(mentions)}`);
+  await page.evaluate(`document.querySelector('#feed code.md-path[data-path$=".txt"]').click()`);
+  await page.waitForFunction(`document.querySelector('#doc-body .doc-plain') !== null`, { timeout: 3000 })
+    .catch(() => fail('a text file did not open as text in the viewer'));
+  const shown = await page.evaluate(`document.querySelector('#doc-body .doc-plain').textContent`);
+  if (!shown.includes('# не заголовок') || !shown.includes('*опыт*'))
+    await fail(`the text was mangled by the markdown renderer: ${JSON.stringify(shown)}`);
+  if (await page.evaluate(`document.querySelector('#doc-body h1') !== null`)) await fail('a line of the text became a heading');
+  ok('a text file opens as written, not run through markdown');
+  await page.evaluate(`document.getElementById('doc-close').click()`);
+  await wait(150);
+  await page.click('#feed code.md-path'); // back to the markdown document the rest of the run expects
+  await page.waitForFunction(`!document.getElementById('doc-viewer').hidden`, { timeout: 3000 });
+}
 
 // the header offers to keep it in the inbox, and says so once it is there
 await mustTap('#doc-inbox', 'the "keep in the inbox" button');
