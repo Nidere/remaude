@@ -97,6 +97,36 @@ eq(rows.size, 1, 'size counts the rows for the reconnect broadcast');
 rows.drop('x');
 eq(rows.size, 0, 'and follows drops');
 
+
+// The shape the completion actually arrives in. Taken from a transcript where
+// four "Judge adverts" rows sat running for ten minutes after the work was
+// done: the harness does not send a message, it queues the notification, and
+// the transcript records the queueing.
+import { agentNoticeText } from '../src/host/agent-notice.js';
+
+const NOTICE = [
+  '<task-notification>',
+  '<task-id>a4ac256c088173df9</task-id>',
+  '<tool-use-id>toolu_014tNFTUAhVRWYhwW819w3ci</tool-use-id>',
+  '<status>completed</status>',
+  '</task-notification>',
+].join('\n');
+
+eq(agentNoticeText({ type: 'queue-operation', operation: 'enqueue', content: NOTICE }), NOTICE, 'a queued notification is heard');
+eq(agentNoticeText({ type: 'attachment', attachment: { type: 'queued_command', prompt: NOTICE } }), NOTICE, 'and so is the queued command it becomes');
+eq(agentNoticeText({ type: 'queue-operation', content: 'но в нарезке были свои проблемы' }), null, 'a queued message of the person is not one');
+eq(agentNoticeText({ type: 'user', message: { content: [] } }), null, 'an ordinary turn is left to the ordinary path');
+eq(agentNoticeText(null), null, 'and nothing at all is survivable');
+
+// end to end over those two entries: the row must not outlive them
+rows = new AgentRows();
+rows.start('toolu_014tNFTUAhVRWYhwW819w3ci', { label: 'Judge adverts 00-04', type: 'general-purpose' });
+rows.onToolResult('toolu_014tNFTUAhVRWYhwW819w3ci', { text: LAUNCH, token: 'launch' });
+rows.abortForeground();
+eq(statuses(rows), ['running'], 'the turn ends, the background agent works on');
+eq(rows.onMention(agentNoticeText({ type: 'queue-operation', content: NOTICE }), { token: 'queued' }).length, 1, 'the queued notification ends the row');
+eq(statuses(rows), ['done'], 'and the sidebar stops showing it as running');
+
 // Wiring, not behaviour: the rules above are worth nothing if the completion
 // never reaches them. It arrives twice over — in the live stream and in the
 // transcript — and both paths drop such messages before the feed sees them, so
@@ -113,6 +143,7 @@ eq(
 );
 const tail = server.slice(server.indexOf('function drainTail'), server.indexOf('// ---------- limits'));
 eq(tail.indexOf('trackAgents(chatId, {') < tail.indexOf('if (!msg) continue'), true, 'and so does the transcript tail');
+eq(tail.includes('trackAgentNotice(chatId, entry)'), true, 'and the tail offers everything else to the notice path — the completion is not a message');
 
 console.log(failed ? `AGENT ROWS: ${failed} failed` : 'AGENT ROWS OK');
 process.exit(failed ? 1 : 0);

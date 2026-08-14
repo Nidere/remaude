@@ -40,6 +40,7 @@ import { TurnTags } from './turn-tags.js';
 import { chatToMarkdown, exportFileName } from './export-md.js';
 import { threadMark, threadIdInText } from './thread-mark.js';
 import { AgentRows } from './agent-rows.js';
+import { agentNoticeText } from './agent-notice.js';
 import {
   sidecarPath,
   isSidecarPath,
@@ -955,6 +956,15 @@ function trackAgents(chatId, msg) {
   if (changed) broadcastAgents(chatId);
 }
 
+/** A background agent's completion, which arrives as no message at all. */
+function trackAgentNotice(chatId, entry) {
+  const text = agentNoticeText(entry);
+  if (!text) return;
+  const ended = agentsOf(chatId).onMention(text, { token: entry.uuid ?? entry.timestamp ?? null });
+  for (const id of ended) retireAgent(chatId, id);
+  if (ended.length) broadcastAgents(chatId);
+}
+
 /** The harness's stand-in for "this turn needs no answer". */
 function isHarnessNoise(msg) {
   const content = msg.message?.content;
@@ -1072,6 +1082,7 @@ function drainTail(chatId, tail) {
         uuid: entry.uuid ?? null,
         parent_tool_use_id: entry.parentToolUseId ?? null,
       });
+    else trackAgentNotice(chatId, entry);
     if (!msg) continue;
     // our own typed input reaches the transcript under a uuid we never saw — match by text
     if (msg.type === 'user' && !msg.parent_tool_use_id) {
