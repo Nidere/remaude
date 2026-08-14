@@ -925,20 +925,13 @@ function paintStream(chat) {
     }
     chat.streamPaintedAt = Date.now();
     chat.streamEl.innerHTML = mdToHtml(closeDanglingFence(chat.streamText));
+    scrollToBottom(); // the text just grew: follow it, if we are following at all
   });
 }
 
-/**
- * A short answer may pull the view along as it lands; a long one must not.
- * Once it outgrows the screen you are reading it, not watching it arrive, and
- * every new line dragging the text out from under you is the annoyance. From
- * then on the view stays where you left it — the ↓ button is right there.
- */
+/** The feed follows an answer as it is written — unless you have scrolled away from it. */
 function followStream(chat) {
-  const node = chat.streamEl;
-  if (!node) return;
-  if (node.getBoundingClientRect().height < feedHost.clientHeight * 0.75) scrollToBottom();
-  else updateScrollDown(); // it stopped following: say so, or there is no way back
+  if (chat.streamEl) scrollToBottom();
 }
 
 /** Mid-stream a code fence is usually still open; closing it keeps the block a block. */
@@ -1952,6 +1945,7 @@ function sendMessage() {
     appendTo(activeChatId, el('div', 'error-banner', 'not connected to this chat yet — the message was not sent'));
     return;
   }
+  stickToBottom(); // writing something is as clear a "follow along" as there is
   // draw the bubble at once instead of waiting for the echo to travel
   // browser → relay → host → back; the echo is then skipped by this id
   const localId = crypto.randomUUID();
@@ -2049,15 +2043,29 @@ function fmtTime(ts) {
  * reflow — and a single scroll leaves you stranded mid-conversation.
  */
 function scrollToBottomSettled() {
+  stuck = true; // opening a chat starts at its newest line, following again
   scrollToBottom(true);
   requestAnimationFrame(() => scrollToBottom(true));
   document.fonts?.ready?.then(() => scrollToBottom(true));
   setTimeout(() => scrollToBottom(true), 250);
 }
 
+/**
+ * The feed sticks to the bottom and stays there while the conversation grows.
+ * Scrolling away is the only thing that detaches it — then nothing moves under
+ * you until you come back down, or press ↓, or write something yourself.
+ */
+let stuck = true;
+
+const fromBottom = () => feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight;
+
+function stickToBottom() {
+  stuck = true;
+  scrollToBottom(true);
+}
+
 function scrollToBottom(force = false) {
-  const nearBottom = feedHost.scrollHeight - feedHost.scrollTop - feedHost.clientHeight < 120;
-  if (force || nearBottom) feedHost.scrollTop = feedHost.scrollHeight;
+  if (force || stuck) feedHost.scrollTop = feedHost.scrollHeight;
   updateScrollDown();
 }
 
@@ -2386,9 +2394,14 @@ $('menu-btn').onclick = () => {
 };
 $('sidebar-overlay').onclick = closeSidebar;
 
-// the “scroll down” button
-feedHost.addEventListener('scroll', updateScrollDown);
-$('scroll-down').onclick = () => scrollToBottom(true);
+// The one thing that detaches the feed, and the one that reattaches it: a
+// scroll. Our own scrolling lands at the bottom, so it reattaches by the same
+// rule and needs no flag of its own.
+feedHost.addEventListener('scroll', () => {
+  stuck = fromBottom() < 80;
+  updateScrollDown();
+});
+$('scroll-down').onclick = stickToBottom;
 
 // model and effort of the active chat
 $('model-select').addEventListener('change', function () {

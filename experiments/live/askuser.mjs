@@ -2,7 +2,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Chat } from '../src/host/chat.js';
+import { Chat } from '../../src/host/chat.js';
 
 const chat = new Chat({
   cwd: mkdtempSync(join(tmpdir(), 'remaude-ask-')),

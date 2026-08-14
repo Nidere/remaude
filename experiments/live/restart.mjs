@@ -1,10 +1,12 @@
 // End-to-end self-restart test: restart_server over WS → the old one died →
 // the copy came up → it responds over HTTP and WS.
-import WebSocket from 'ws';
+import { startHost } from './host.mjs';
+
+const host = await startHost();
 
 function wsOnce(fn) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket('ws://127.0.0.1:7699/ws');
+    const ws = host.connect();
     ws.on('open', () => fn(ws, resolve));
     ws.on('error', reject);
     setTimeout(() => reject(new Error('ws timeout')), 8000);
@@ -16,7 +18,7 @@ const pidBefore = await wsOnce((ws, resolve) => {
   ws.close();
   resolve(null);
 }).then(async () => {
-  const res = await fetch('http://127.0.0.1:7699/');
+  const res = await fetch(host.http + '/');
   return res.ok;
 });
 console.log('server before: reachable =', pidBefore);
@@ -36,7 +38,7 @@ let alive = false;
 for (let i = 0; i < 30; i++) {
   await new Promise((r) => setTimeout(r, 1000));
   try {
-    const res = await fetch('http://127.0.0.1:7699/');
+    const res = await fetch(host.http + '/');
     if (res.ok) {
       alive = true;
       break;
@@ -46,6 +48,7 @@ for (let i = 0; i < 30; i++) {
   }
 }
 if (!alive) {
+  host.stop();
   console.error('SERVER DID NOT COME BACK');
   process.exit(1);
 }
@@ -59,4 +62,5 @@ await wsOnce((ws, resolve) => {
     }
   });
 });
+host.stop();
 console.log('RESTART CYCLE OK');

@@ -190,29 +190,48 @@ if (!midStream.bold || !midStream.code || !midStream.list)
 if (midStream.raw) await fail('raw ** is still showing in a half-typed answer');
 ok('markup renders while the answer is still being typed');
 
-// a long answer must not drag the text out from under the reader
-for (let i = 0; i < 40; i++) {
-  delta(`\n\nабзац номер ${i}, достаточно длинный, чтобы лента переросла экран и её пришлось бы прокручивать`);
-  await new Promise((r) => setTimeout(r, 20));
-}
-await new Promise((r) => setTimeout(r, 400));
-const reading = await page.evaluate(`(() => {
-  const feed = document.getElementById('feed');
-  const node = document.querySelector('#feed .msg-assistant.streaming');
-  const box = node.getBoundingClientRect();
-  const view = feed.getBoundingClientRect();
-  return {
-    pinnedToBottom: feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40,
-    startVisible: box.top >= view.top - 4 && box.top < view.bottom,
-    grewPastScreen: box.height > feed.clientHeight,
-    downButton: !document.getElementById('scroll-down').hidden,
-  };
-})()`);
-if (!reading.grewPastScreen) await fail('the test did not manage to outgrow the screen');
-if (reading.pinnedToBottom) await fail('BUG: a long answer still drags the view to the bottom as it types');
-if (!reading.startVisible) await fail('the beginning of the answer was scrolled away while it typed');
-if (!reading.downButton) await fail('nothing offers a way back to the newest line');
-ok('a long answer types on without moving what you are reading');
+// the feed stays at the newest line while an answer is written
+const grow = async (from, to) => {
+  for (let i = from; i < to; i++) {
+    delta(`\n\nабзац номер ${i}, достаточно длинный, чтобы лента переросла экран и её пришлось бы прокручивать`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  await new Promise((r) => setTimeout(r, 400));
+};
+const feedState = () =>
+  page.evaluate(`(() => {
+    const feed = document.getElementById('feed');
+    const node = document.querySelector('#feed .msg-assistant.streaming');
+    return {
+      fromBottom: feed.scrollHeight - feed.scrollTop - feed.clientHeight,
+      tall: node.getBoundingClientRect().height > feed.clientHeight,
+      downButton: !document.getElementById('scroll-down').hidden,
+    };
+  })()`);
+
+await grow(0, 40);
+let view = await feedState();
+if (!view.tall) await fail('the test did not manage to outgrow the screen');
+if (view.fromBottom > 4) await fail(`the feed fell behind the answer by ${Math.round(view.fromBottom)}px`);
+ok('the feed keeps up with an answer as it is written');
+
+// scrolling away stops it: nothing moves under the reader
+await page.evaluate(`document.getElementById('feed').scrollTop -= 600`);
+await new Promise((r) => setTimeout(r, 100));
+const before = (await feedState()).fromBottom;
+await grow(40, 60);
+view = await feedState();
+if (view.fromBottom <= before) await fail('the feed dragged the view back down after a scroll away');
+if (!view.downButton) await fail('nothing offers a way back to the newest line');
+ok('scrolling away stops it following');
+
+// coming back to the bottom picks it up again
+await page.evaluate(`const f = document.getElementById('feed'); f.scrollTop = f.scrollHeight`);
+await new Promise((r) => setTimeout(r, 100));
+await grow(60, 70);
+view = await feedState();
+if (view.fromBottom > 4) await fail(`coming back did not resume following: ${Math.round(view.fromBottom)}px behind`);
+ok('coming back to the bottom follows again');
 
 // and the finished message replaces the stream cleanly, without doubling it
 hostSocket.send(

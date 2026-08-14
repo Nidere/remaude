@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 
 const PORT = 7791;
-const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+const repo = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const dir = mkdtempSync(join(tmpdir(), 'remaude-guard-'));
 const projectDir = mkdtempSync(join(tmpdir(), 'remaude-guardproj-'));
 const config = join(dir, 'host.json');

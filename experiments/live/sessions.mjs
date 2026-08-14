@@ -1,16 +1,17 @@
 // End-to-end resumption test: list_sessions sees the session on disk,
 // open_session brings it up, history returns the old messages from the transcript.
-import WebSocket from 'ws';
+import { startHost, scratchProject } from './host.mjs';
 
 const projectDir = process.argv[2];
 const expectSession = process.argv[3];
 const expectText = process.argv[4] ?? '';
 if (!projectDir || !expectSession) {
-  console.error('usage: node test-sessions.mjs <projectDir> <sessionId> [expectText]');
+  console.error('usage: node experiments/live/sessions.mjs <projectDir> <sessionId> [expectText]');
   process.exit(2);
 }
 
-const ws = new WebSocket('ws://127.0.0.1:7699/ws');
+const host = await startHost();
+const ws = host.connect();
 let chatId;
 
 const finished = new Promise((resolve, reject) => {
@@ -42,5 +43,5 @@ const finished = new Promise((resolve, reject) => {
 });
 
 await finished;
-ws.close();
+host.stop();
 console.log('SESSIONS OK');

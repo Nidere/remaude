@@ -1,13 +1,11 @@
 // Subagent tracking e2e: ask the chat to run one trivial agent and watch the
 // host report it as running and then finished over the WS protocol.
-import WebSocket from 'ws';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { startHost, scratchProject } from './host.mjs';
 import { randomUUID } from 'node:crypto';
 
-const projectDir = mkdtempSync(join(tmpdir(), 'remaude-agents-'));
-const ws = new WebSocket('ws://127.0.0.1:7699/ws');
+const projectDir = scratchProject('agents');
+const host = await startHost();
+const ws = host.connect();
 let chatId;
 const seen = [];
 
@@ -42,9 +40,6 @@ const finished = new Promise((resolve, reject) => {
 
 await finished;
 console.log(`statuses seen: ${[...new Set(seen)].join(', ')}`);
-ws.send(JSON.stringify({ type: 'hide_chat', chatId }));
-ws.send(JSON.stringify({ type: 'close_project', path: projectDir }));
-setTimeout(() => {
-  console.log(seen.includes('running') ? 'AGENTS OK' : 'AGENTS: running state never seen');
-  process.exit(seen.includes('running') ? 0 : 1);
-}, 500);
+host.stop();
+console.log(seen.includes('running') ? 'AGENTS OK' : 'AGENTS: running state never seen');
+process.exit(seen.includes('running') ? 0 : 1);

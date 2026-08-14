@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
-const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+const repo = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const dir = mkdtempSync(join(tmpdir(), 'remaude-boot-'));
 const projectDir = mkdtempSync(join(tmpdir(), 'remaude-bootproj-'));
 

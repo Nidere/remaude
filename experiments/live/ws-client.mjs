@@ -1,12 +1,12 @@
 // End-to-end test of the WS protocol: project → chat → message → permission (Write) →
 // allow → check that the file was actually created → history.
-import WebSocket from 'ws';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { startHost, scratchProject } from './host.mjs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const projectDir = mkdtempSync(join(tmpdir(), 'remaude-e2e-'));
-const ws = new WebSocket('ws://127.0.0.1:7699/ws');
+const projectDir = scratchProject('e2e');
+const host = await startHost();
+const ws = host.connect();
 let chatId = null;
 let sawPermission = false;
 let streamed = '';
@@ -73,5 +73,5 @@ try {
   console.log(`[file] ${readFileSync(join(projectDir, 'hello.txt'), 'utf-8').trim()}`);
   console.log('E2E OK');
 } finally {
-  ws.close();
+  host.stop();
 }

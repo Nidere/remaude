@@ -1,13 +1,13 @@
 // Transcript sync e2e: open a chat over a synthetic session file, then append
 // a "foreign" entry to that file (as VS Code would) and expect the host to
 // broadcast it into the feed without any SDK involvement.
-import WebSocket from 'ws';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { startHost, scratchProject } from './host.mjs';
+import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-const projectDir = mkdtempSync(join(tmpdir(), 'remaude-sync-'));
+const projectDir = scratchProject('sync');
 const sessionId = randomUUID();
 const slug = projectDir.replace(/[^a-zA-Z0-9-]/g, '-');
 const sessionsDir = join(homedir(), '.claude', 'projects', slug);
@@ -25,7 +25,8 @@ const entry = (type, content) =>
 
 writeFileSync(file, entry('user', 'старое сообщение') + entry('assistant', [{ type: 'text', text: 'старый ответ' }]));
 
-const ws = new WebSocket('ws://127.0.0.1:7699/ws');
+const host = await startHost();
+const ws = host.connect();
 const marker = `чужая запись ${Date.now()}`;
 let chatId;
 
@@ -52,11 +53,6 @@ const finished = new Promise((resolve, reject) => {
 });
 
 await finished;
-// прибираем за собой: закрываем чат и проект
-ws.send(JSON.stringify({ type: 'hide_chat', chatId }));
-ws.send(JSON.stringify({ type: 'close_project', path: projectDir }));
-setTimeout(() => {
-  ws.close();
-  console.log('SYNC OK');
-  process.exit(0);
-}, 500);
+host.stop();
+console.log('SYNC OK');
+process.exit(0);

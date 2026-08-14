@@ -436,6 +436,11 @@ function startEdit(t, r, row) {
 
 function renderPop(rectOverride) {
   const pop = $('cmt-pop');
+  // a reply arriving from elsewhere rebuilds this box; what you were typing in
+  // it is yours and must survive that
+  const typing = pop.querySelector('.cmt-composer textarea');
+  const typed = typing?.value ?? '';
+  const wasTyping = document.activeElement === typing;
   pop.innerHTML = '';
   const t = openThreadId ? threadById(openThreadId) : null;
 
@@ -508,8 +513,13 @@ function renderPop(rectOverride) {
       submit.click();
     }
   });
+  area.value = typed;
   composer.append(area, row);
   pop.append(composer);
+  if (wasTyping) {
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+  }
 
   // a re-render of the highlights detaches the mark this popover was pinned to —
   // a detached element measures as (0,0) and would drag the popover into the corner

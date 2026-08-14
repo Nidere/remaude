@@ -2,7 +2,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Chat } from '../src/host/chat.js';
+import { Chat } from '../../src/host/chat.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'remaude-cwd-'));
 console.log('expected cwd:', dir);

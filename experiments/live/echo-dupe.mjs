@@ -1,14 +1,12 @@
 // Repro probe for duplicated user bubbles: send one message, count how many
 // user-type broadcasts with that text come back (echo, tail, anything else).
-import WebSocket from 'ws';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { startHost, scratchProject } from './host.mjs';
 import { randomUUID } from 'node:crypto';
 
-const projectDir = mkdtempSync(join(tmpdir(), 'remaude-dupe-'));
+const projectDir = scratchProject('dupe');
 const marker = `тест дедупа ${Date.now()}`;
-const ws = new WebSocket('ws://127.0.0.1:7699/ws');
+const host = await startHost();
+const ws = host.connect();
 let chatId;
 const hits = [];
 
@@ -31,7 +29,6 @@ ws.on('message', (raw) => {
 // ждём достаточно, чтобы и результат пришёл, и tail успел отработать пару циклов
 setTimeout(() => {
   console.log(`total user broadcasts: ${hits.length} (1 = ок, 2+ = дубль)`);
-  ws.send(JSON.stringify({ type: 'hide_chat', chatId }));
-  ws.send(JSON.stringify({ type: 'close_project', path: projectDir }));
-  setTimeout(() => process.exit(hits.length === 1 ? 0 : 1), 500);
+  host.stop();
+  process.exit(hits.length === 1 ? 0 : 1);
 }, 20000);

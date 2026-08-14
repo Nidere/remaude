@@ -1,9 +1,10 @@
 // Transcript search e2e: ask the host for a phrase that exists in this very
 // project's history, then ask for the next page.
-import WebSocket from 'ws';
+import { startHost, scratchProject } from './host.mjs';
 
 const query = process.argv[2] ?? 'багульник';
-const ws = new WebSocket('ws://127.0.0.1:7699/ws');
+const host = await startHost();
+const ws = host.connect();
 let pages = 0;
 
 const done = new Promise((resolve, reject) => {
@@ -23,5 +24,5 @@ const done = new Promise((resolve, reject) => {
 });
 
 const last = await done;
-ws.close();
+host.stop();
 console.log(last.results.length || pages > 1 ? 'SEARCH OK' : 'SEARCH: no hits');
