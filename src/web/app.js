@@ -340,7 +340,9 @@ const handlers = {
     chat.model = model;
     chat.mode = permissionMode;
     chat.effort = effort;
-    chat.context = context;
+    // the count arrives after the header it belongs to, so a message without one
+    // means "not counted yet", never "the number you are looking at is wrong"
+    if (context) chat.context = context;
     if (chatId === activeChatId) {
       renderMeta(chat);
       syncHeaderSelects(chat);

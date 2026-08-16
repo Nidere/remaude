@@ -294,7 +294,19 @@ agent.on('chat_message', ({ chatId, msg }) => {
 
 const lastReplies = new Map(); // chatId -> last assistant text, for the push body
 
-/** Chat metadata for the header: model, mode, how full the context is, effort. */
+const lastContext = new Map(); // chatId -> the last count that came back
+const countingContext = new Set(); // chats with a count already on the way
+
+/**
+ * Chat metadata for the header: model, mode, how full the context is, effort.
+ *
+ * The header goes out at once and the count follows in a second message. The
+ * count is slow — measured at 3-8s on an empty session and worse on a full one
+ * — and a session resumed but never spoken to does not answer it at all: the
+ * call does not fail, it simply never returns. Waiting on it swallowed the
+ * whole header (no model, no mode, no effort), and giving up early meant the
+ * number was never shown at all.
+ */
 async function sendChatMeta(chatId) {
   let chat;
   try {
@@ -302,27 +314,33 @@ async function sendChatMeta(chatId) {
   } catch {
     return;
   }
-  let context = null;
-  try {
-    // A session resumed but never spoken to answers nothing at all — the call
-    // does not fail, it simply never returns (verified against the SDK). Waiting
-    // on it swallowed the whole header: no model, no mode, no effort either.
-    const u = await Promise.race([chat.contextUsage(), new Promise((r) => setTimeout(() => r(null), 2500))]);
-    if (u) {
-      context = { percentage: Math.round(u.percentage), totalTokens: u.totalTokens, maxTokens: u.maxTokens };
-      if (u.model) chat.model = u.model;
-    }
-  } catch {
-    /* the session may already be dead */
-  }
-  broadcast({
+  const meta = () => ({
     type: 'chat_meta',
     chatId,
     model: chat.model,
     permissionMode: chat.permissionMode,
     effort: chat.effort ?? hostEffort,
-    context,
+    context: lastContext.get(chatId) ?? null,
   });
+  broadcast(meta());
+  if (countingContext.has(chatId)) return; // one count at a time, however often the header is asked for
+  countingContext.add(chatId);
+  try {
+    // long enough to outlast a real count, short enough to release a hung one
+    const u = await Promise.race([chat.contextUsage(), new Promise((r) => setTimeout(() => r(null), 20000))]);
+    if (!u) return; // no answer — the header keeps the number it already had
+    lastContext.set(chatId, {
+      percentage: Math.round(u.percentage),
+      totalTokens: u.totalTokens,
+      maxTokens: u.maxTokens,
+    });
+    if (u.model) chat.model = u.model;
+    broadcast(meta());
+  } catch {
+    /* the session may already be dead */
+  } finally {
+    countingContext.delete(chatId);
+  }
 }
 
 // Effort: the host's effective default taken from the Claude Code settings (the documented default is high)
@@ -1428,6 +1446,7 @@ const handlers = {
       for (const chat of project.chats.values()) {
         chat.close();
         chatHistories.delete(chat.id);
+        lastContext.delete(chat.id);
         stopTail(chat.id);
       }
       agent.projects.delete(abs);
@@ -2215,6 +2234,7 @@ const handlers = {
     for (const p of agent.projects.values()) p.chats.delete(chatId);
     chatHistories.delete(chatId);
     turnTags.forget(chatId);
+    lastContext.delete(chatId);
     stopTail(chatId);
     saveOpenChats();
     broadcast(stateSnapshot());

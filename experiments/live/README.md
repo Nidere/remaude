@@ -29,4 +29,5 @@ node experiments/live/ws-client.mjs
 | `guard.mjs` | foreign origin, path traversal, bare `/connect` |
 | `startup.mjs` | the process boots and reopens its chats |
 | `search.mjs` | transcript search, including the second page |
+| `ctx.mjs` | how slow the context count is, and that the header goes out without waiting for it |
 | `usage.mjs` · `image.mjs` · `askuser.mjs` · `cwd.mjs` · `resume.mjs` | SDK behaviour the README's table claims |
