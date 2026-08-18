@@ -105,6 +105,7 @@ const clients = new Set();
 const pendingPermissions = new Map(); // requestId -> {resolve, chatId}
 const chatHistories = new Map(); // chatId -> messages to replay on reconnect
 const tails = new Map(); // chatId -> {file, offset, restBuf, seen, ownTexts, listener}
+const tailWaits = new Map(); // chatId -> timer, while the transcript is still to appear
 
 const agent = new HostAgent({
   onPermissionRequest: ({ chat, toolName, input, suggestions, signal }) =>
@@ -1026,12 +1027,26 @@ function pushHistory(chatId, msg) {
 
 // (declared with the other state above — startup reopens chats before this point)
 
+/**
+ * Follow this chat's transcript.
+ *
+ * Two ways it used to follow nothing at all. A chat started here has no
+ * transcript when it announces itself — the file appears a second or two later,
+ * and a tail that looked once and gave up never looked again. A chat resumed
+ * writes to a *new* file, and a tail already sitting on the old one was left
+ * where it was. Either way the chat is not being read, and the only thing that
+ * is ever said about a finished background agent is said in that file.
+ */
 function startTail(chat) {
-  if (tails.has(chat.id)) return;
   const sid = chat.sessionId ?? chat.resumeId;
   if (!sid) return;
   const file = sessionFile(chat.cwd, sid);
-  if (!file) return;
+  if (!file) return waitForTranscript(chat, sid);
+  const already = tails.get(chat.id);
+  if (already) {
+    if (already.file === file) return;
+    stopTail(chat.id); // the session moved to another file; follow that one
+  }
   const tail = {
     file,
     offset: statSync(file).size,
@@ -1050,7 +1065,24 @@ function startTail(chat) {
   tails.set(chat.id, tail);
 }
 
+/** The session has said hello but written nothing yet — look again until it does. */
+function waitForTranscript(chat, sid, attempt = 0) {
+  clearTimeout(tailWaits.get(chat.id));
+  tailWaits.delete(chat.id);
+  if (attempt >= 120) return; // two minutes: a session that wrote nothing by then never will
+  const timer = setTimeout(() => {
+    tailWaits.delete(chat.id);
+    if (chat.status === 'closed') return;
+    if (sessionFile(chat.cwd, sid)) startTail(chat);
+    else waitForTranscript(chat, sid, attempt + 1);
+  }, 1000);
+  timer.unref?.();
+  tailWaits.set(chat.id, timer);
+}
+
 function stopTail(chatId) {
+  clearTimeout(tailWaits.get(chatId));
+  tailWaits.delete(chatId);
   const tail = tails.get(chatId);
   if (!tail) return;
   unwatchFile(tail.file, tail.listener);

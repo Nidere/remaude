@@ -23,6 +23,7 @@ node experiments/live/ws-client.mjs
 | `ws-client.mjs` | the whole protocol: project → chat → message → permission → file on disk → history |
 | `agents.mjs` | a subagent is reported running and then finished |
 | `sync.mjs` | an entry appended to the transcript by someone else reaches the feed |
+| `tail-fresh.mjs` | the same, for a chat started here rather than reopened — its transcript appears late |
 | `echo-dupe.mjs` | one message sent, one user bubble back |
 | `sessions.mjs` | a session on disk can be listed, opened and read (`<projectDir> <sessionId> [text]`) |
 | `restart.mjs` | the host restarts itself and comes back |
