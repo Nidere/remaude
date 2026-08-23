@@ -137,6 +137,8 @@ await new Promise((r) => setTimeout(r, 3000)); // long enough for sessions to ha
 const atRest = sessions(again.child.pid);
 console.log(`  reopened ${restored.length} chat(s) on startup: ${atRest} session(s), status ${restored[0].status}`);
 if (restored[0].status !== 'sleeping') fail(`a reopened chat came back as "${restored[0].status}"`, again);
+// the browser finds its way back to what it was reading by the session id alone
+if (!restored[0].sessionId) fail('a sleeping chat came back nameless — no session id to recognise it by', again);
 if (atRest !== null && atRest !== 0) fail(`${atRest} session(s) started for chats nobody had opened`, again);
 
 again.stop();

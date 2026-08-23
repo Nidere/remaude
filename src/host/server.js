@@ -1471,7 +1471,10 @@ function stateSnapshot() {
       name: config.projectNames?.[p.path] ?? null,
       chats: [...p.chats.values()].map((c) => ({
         id: c.id,
-        sessionId: c.sessionId,
+        // A sleeping chat has no session running, but it is not anonymous: it is
+        // the conversation it will resume. The browser finds its way back to the
+        // chat it was reading by this id, and after a restart that is all it has.
+        sessionId: c.sessionId ?? c.resumeId ?? null,
         status: c.status,
         title: c.title ?? null,
         model: c.model,
@@ -1641,13 +1644,19 @@ const handlers = {
     const messages = annotateThreads(chatId, tail.map((m, i) => lazyHistoryMessage(m, i < keepRich)));
     send(ws, { type: 'history', chatId, messages });
     send(ws, threadsPayload(chatId)); // the feed needs to know which tags are threads
-    const draft = draftFor(findChat(chatId));
+    // A browser reconnecting after a restart asks about the chat it was reading,
+    // whose id died with the old host. That is the browser catching up, not a
+    // mistake worth a red banner — it re-lands on the chat as soon as the
+    // snapshot arrives.
+    const chat = findChatSafe(chatId);
+    const draft = chat && draftFor(chat);
     if (draft) send(ws, { type: 'draft', chatId, ...draft });
   },
 
   /** What is being typed into this chat, kept where a browser cannot lose it. */
   save_draft(ws, { chatId, text, at }) {
-    const chat = findChat(chatId);
+    const chat = findChatSafe(chatId);
+    if (!chat) return; // typing into a chat this host no longer knows — see history()
     const body = String(text ?? '');
     if (body.length > DRAFT_MAX) throw new Error(`the draft is too long to keep (over ${DRAFT_MAX} characters)`);
     const key = draftKeyOf(chat);
