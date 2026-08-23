@@ -136,6 +136,9 @@ body {
 .status-dot.waiting_permission { background: var(--red); animation: pulse 0.8s infinite; }
 .status-dot.idle { background: var(--green); }
 .status-dot.closed { background: #555; }
+/* asleep: the chat is all there, it just has no session running until you open it */
+.status-dot.sleeping { background: #555; }
+.chat-item.sleeping .chat-label { opacity: 0.45; }
 
 @keyframes pulse { 50% { opacity: 0.35; } }
 

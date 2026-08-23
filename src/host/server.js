@@ -176,13 +176,13 @@ function nameSession(chat) {
 }
 
 /** The shared path for opening a saved session (open_session and the auto-restore at startup). */
-function openSavedSession(projectPath, sessionId, { permissionMode, title, pastIds, model, effort } = {}) {
+function openSavedSession(projectPath, sessionId, { permissionMode, title, pastIds, model, effort, asleep } = {}) {
   if (!isSessionId(sessionId)) throw new Error('bad session id');
   for (const chat of agent.allChats()) {
     if (chat.sessionId === sessionId || chat.resumeId === sessionId || chat.pastIds?.has(sessionId)) return chat;
   }
   const abs = resolve(projectPath);
-  const chat = agent.createChat(abs, { resume: sessionId, permissionMode, model: model || defaultModel() });
+  const chat = agent.createChat(abs, { resume: sessionId, permissionMode, model: model || defaultModel(), asleep });
   chat.resumeId = sessionId;
   chat.pastIds = new Set(pastIds ?? []);
   chat.title = title ?? null;
@@ -193,9 +193,13 @@ function openSavedSession(projectPath, sessionId, { permissionMode, title, pastI
   return chat;
 }
 
+// Reopened asleep, every one of them. A sidebar of thirty chats used to be
+// thirty `claude` processes from the moment the host started — eleven gigabytes
+// of sessions nobody had spoken to that day. Each wakes when it is opened or
+// written to, and the history the feed shows comes off disk either way.
 for (const oc of config.openChats ?? []) {
   try {
-    openSavedSession(oc.projectPath, oc.sessionId, oc);
+    openSavedSession(oc.projectPath, oc.sessionId, { ...oc, asleep: true });
     console.log(`reopened: ${oc.title ?? oc.sessionId}`);
   } catch (e) {
     console.error(`reopen failed: ${oc.sessionId} (${e.message})`);
@@ -260,6 +264,8 @@ agent.on('chat_message', ({ chatId, msg }) => {
     if (text) lastReplies.set(chatId, text);
   }
   if (msg.type === 'result') {
+    const done = findChatSafe(chatId);
+    if (done) done.lastActiveAt = Date.now(); // the hour of quiet starts here
     // the service turn's text has to be captured while lastReplies still holds it
     finishServiceTurn(chatId);
     turnTags.end(chatId); // this turn is over; the next one speaks for itself
@@ -294,6 +300,38 @@ agent.on('chat_message', ({ chatId, msg }) => {
 });
 
 const lastReplies = new Map(); // chatId -> last assistant text, for the push body
+
+// ---------- sleeping chats ----------
+// A chat costs a process only while it is being used. Nothing here decides that
+// a chat is over — it keeps its place, its name and its history, and the next
+// word wakes it.
+
+// an hour untouched; the probes turn it down to seconds
+const IDLE_SLEEP_MS = Number(process.env.REMAUDE_IDLE_SLEEP_MS) || 60 * 60 * 1000;
+const SLEEP_SWEEP_MS = Math.min(60 * 1000, Math.max(500, IDLE_SLEEP_MS / 4));
+
+/** Someone is about to use this chat: bring the session back if it is away. */
+function wakeChat(chat) {
+  if (!chat) return chat;
+  chat.lastActiveAt = Date.now();
+  if (chat.status !== 'sleeping') return chat;
+  chat.wake();
+  broadcast(stateSnapshot());
+  return chat;
+}
+
+setInterval(() => {
+  let changed = false;
+  for (const chat of agent.allChats()) {
+    if (chat.status !== 'idle') continue; // thinking, or waiting to be let through
+    if (Date.now() - chat.lastActiveAt < IDLE_SLEEP_MS) continue;
+    if (agentsOf(chat.id).size) continue; // a background agent is still out there
+    if (!chat.sleep()) continue;
+    changed = true;
+    console.log(`asleep: ${chat.title ?? chat.id}`);
+  }
+  if (changed) broadcast(stateSnapshot());
+}, SLEEP_SWEEP_MS).unref?.();
 
 const lastContext = new Map(); // chatId -> the last count that came back
 const countingContext = new Set(); // chats with a count already on the way
@@ -1500,7 +1538,7 @@ const handlers = {
   },
 
   send(ws, { chatId, content, localId, threadId }) {
-    const chat = findChat(chatId);
+    const chat = wakeChat(findChat(chatId));
     ws.watching = chatId; // whoever is typing here is plainly watching it
     // a human message lands mid-service-turn: the turn is a shared one now, so
     // stop hiding it (a thread answer still gets copied; a title is dropped)
@@ -1703,9 +1741,12 @@ const handlers = {
   /** Which chat this client is looking at right now (null when hidden). */
   focus(ws, { chatId }) {
     ws.watching = chatId ?? null;
-    // opening a chat is the moment its header should fill in: a chat reopened
-    // after a restart has said nothing yet, so nothing has been broadcast for it
-    if (chatId) sendChatMeta(chatId);
+    if (!chatId) return;
+    // opening a chat is meant to be enough: by the time the first word is typed
+    // the session is up, and the header fills in — a chat reopened after a
+    // restart has said nothing yet, so nothing has been broadcast for it
+    wakeChat(findChatSafe(chatId));
+    sendChatMeta(chatId);
   },
 
   /** Who this chat / project / host is shared with right now. */
@@ -2499,6 +2540,16 @@ button{background:#7aa2f7;color:#10141f;border:0;border-radius:8px;padding:11px 
 // The host must stay alive at all times: we log any unexpected errors instead of crashing.
 process.on('uncaughtException', (e) => console.error('uncaught:', e));
 process.on('unhandledRejection', (e) => console.error('unhandled rejection:', e));
+
+// Going down, take the sessions along: they are our children, and a killed host
+// used to leave a row of them behind for whoever noticed the memory first.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+  process.on(signal, () => {
+    agent.closeAll();
+    process.exit(0);
+  });
+}
+process.on('exit', () => agent.closeAll());
 
 /**
  * Any page in the user's browser can open ws://127.0.0.1:7699 — browsers do not

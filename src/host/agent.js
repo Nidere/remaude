@@ -64,7 +64,7 @@ export class HostAgent extends EventEmitter {
   /** Snapshot of the limits for the widget — taken from any live session. */
   async limits() {
     for (const chat of this.allChats()) {
-      if (chat.status === 'closed') continue;
+      if (!chat.awake) continue; // asking a sleeping chat would only wake it
       try {
         return extractLimits(await chat.rawUsage());
       } catch {

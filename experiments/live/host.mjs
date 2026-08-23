@@ -16,13 +16,21 @@ const REPO = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 /**
  * Start a host of our own.
- * @param {{projects?: string[], port?: number, env?: object}} opts
+ *
+ * Pass `configPath` to reuse the config another host left behind — that is how
+ * a probe watches the same chats come back after a restart.
+ * @param {{projects?: string[], port?: number, env?: object, configPath?: string}} opts
  * @returns {Promise<{url: string, port: number, http: string, config: string, connect: () => WebSocket, stop: () => void}>}
  */
-export async function startHost({ projects = [], port = 7790 + Math.floor(process.pid % 100), env = {} } = {}) {
+export async function startHost({
+  projects = [],
+  port = 7790 + Math.floor(process.pid % 100),
+  env = {},
+  configPath = null,
+} = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'remaude-probe-cfg-'));
-  const config = join(dir, 'host.json');
-  writeFileSync(config, JSON.stringify({ projects, openChats: [] }));
+  const config = configPath ?? join(dir, 'host.json');
+  if (!configPath) writeFileSync(config, JSON.stringify({ projects, openChats: [] }));
 
   const child = spawn(process.execPath, [join(REPO, 'src', 'host', 'server.js')], {
     cwd: REPO,

@@ -52,37 +52,61 @@ owner's business, not something to reach around.
 `.trim();
 
 /**
- * One chat = one live Agent SDK session in streaming-input mode.
+ * One chat = one Agent SDK session in streaming-input mode.
+ *
+ * The session is not the chat. A session is a `claude` process holding a third
+ * of a gigabyte, and a chat that nobody has spoken to for an hour has no use
+ * for one — so it sleeps, and wakes on the next word. All it takes to come back
+ * is the session id, which we keep anyway.
  *
  * Events:
  *  - 'message' (msg)  — every SDK message as-is (system/assistant/user/stream_event/result/...)
- *  - 'status'  (status) — idle | thinking | waiting_permission | closed
+ *  - 'status'  (status) — idle | thinking | waiting_permission | sleeping | closed
  *  - 'error'   (err)
  */
 export class Chat extends EventEmitter {
   #queue = [];
   #wake = null;
   #closed = false;
-  #query;
+  #query = null;
+  #session = null; // identity of the current session, so a stale pump stays quiet
+  #model;
+  #onPermissionRequest;
 
   /** Local id; after system:init it is complemented by sessionId (which is what we resume with). */
   id = randomUUID();
   sessionId = null;
   status = 'idle';
+  lastActiveAt = Date.now(); // when anything last happened here — the sleep clock
   model = null; // the actual model reported by system:init
   permissionMode = 'default';
 
-  constructor({ cwd, resume, permissionMode = 'default', model, onPermissionRequest }) {
+  constructor({ cwd, resume, permissionMode = 'default', model, onPermissionRequest, asleep = false }) {
     super();
     this.cwd = cwd;
     this.permissionMode = permissionMode;
-    this.#query = query({
-      prompt: this.#input(),
+    this.resumeId = resume ?? null;
+    this.#model = model;
+    this.#onPermissionRequest = onPermissionRequest;
+    if (asleep) this.status = 'sleeping';
+    else this.#spawn();
+  }
+
+  /** Start the session, or do nothing if one is already running. */
+  #spawn() {
+    if (this.#query || this.#closed) return;
+    // where to pick the conversation up: wherever it got to last
+    const from = this.sessionId ?? this.resumeId ?? undefined;
+    if (from) this.resumeId = from;
+    const session = {};
+    this.#session = session;
+    const q = query({
+      prompt: this.#input(session),
       options: {
-        cwd,
-        resume,
-        permissionMode,
-        model,
+        cwd: this.cwd,
+        resume: from,
+        permissionMode: this.permissionMode,
+        model: this.#model,
         includePartialMessages: true,
         // remaude collects documents written *for the user* into an inbox. The
         // convention has to reach every session in every project, so it rides
@@ -98,22 +122,49 @@ export class Chat extends EventEmitter {
                 'Interactive questionnaires are not supported here. Ask all of your questions as plain text in your reply, as a numbered list, and continue once the user answers.',
             };
           }
-          if (!onPermissionRequest) return { behavior: 'allow', updatedInput: input };
+          if (!this.#onPermissionRequest) return { behavior: 'allow', updatedInput: input };
           this.#setStatus('waiting_permission');
           try {
-            return await onPermissionRequest({ chat: this, toolName, input, suggestions, signal });
+            return await this.#onPermissionRequest({ chat: this, toolName, input, suggestions, signal });
           } finally {
             if (this.status === 'waiting_permission') this.#setStatus('thinking');
           }
         },
       },
     });
-    this.#pump();
+    this.#query = q;
+    if (this.status === 'sleeping') this.#setStatus('idle');
+    this.#pump(q);
+    // a session started over does not remember what it was told to run as
+    if (this.effort) this.#query.applyFlagSettings({ effortLevel: this.effort }).catch(() => {});
   }
 
-  async #pump() {
+  /** Bring the session back — for a message, or because the chat was opened. */
+  wake() {
+    if (this.#closed) throw new Error('chat is closed');
+    this.#spawn();
+  }
+
+  /**
+   * Let the session go and keep the chat. Only ever an idle one: a turn in
+   * flight, a permission waiting to be answered or a background agent still
+   * working all mean the process is earning its memory.
+   * @returns whether it actually went to sleep.
+   */
+  sleep() {
+    if (this.#closed || !this.#query || this.status !== 'idle') return false;
+    const q = this.#query;
+    this.#query = null;
+    this.#session = null;
+    this.#wake?.(); // the input ends, stdin closes, the process leaves
+    this.#setStatus('sleeping');
+    Promise.resolve(q.return?.()).catch(() => {});
+    return true;
+  }
+
+  async #pump(q) {
     try {
-      for await (const msg of this.#query) {
+      for await (const msg of q) {
         if (msg.type === 'system' && msg.subtype === 'init') {
           this.sessionId = msg.session_id;
           if (msg.model) this.model = msg.model;
@@ -123,17 +174,24 @@ export class Chat extends EventEmitter {
         this.emit('message', msg);
       }
     } catch (err) {
-      if (!this.#closed) this.emit('error', err);
+      if (!this.#closed && this.#query === q) this.emit('error', err);
     } finally {
-      this.#closed = true;
-      this.#setStatus('closed');
+      // The session ended without being asked to — killed from outside, or it
+      // fell over. That is the end of a process, not of a chat: the transcript
+      // is on disk and the next message resumes from it. Only close() means a
+      // chat is over. (If #query is no longer ours, it was put to sleep.)
+      if (this.#query === q) {
+        this.#query = null;
+        this.#session = null;
+        this.#setStatus('sleeping');
+      }
     }
   }
 
-  async *#input() {
-    while (!this.#closed) {
+  async *#input(session) {
+    while (!this.#closed && this.#session === session) {
       while (this.#queue.length) yield this.#queue.shift();
-      if (this.#closed) break;
+      if (this.#closed || this.#session !== session) break;
       await new Promise((r) => (this.#wake = r));
     }
   }
@@ -141,6 +199,7 @@ export class Chat extends EventEmitter {
   /** @param content string | array of Messages API content blocks (text/image) */
   send(content) {
     if (this.#closed) throw new Error('chat is closed');
+    this.#spawn(); // a sleeping chat wakes to take the message
     this.#queue.push({
       type: 'user',
       parent_tool_use_id: null,
@@ -150,45 +209,63 @@ export class Chat extends EventEmitter {
     this.#wake?.();
   }
 
+  /** Whether a session is running right now (as opposed to asleep or gone). */
+  get awake() {
+    return Boolean(this.#query);
+  }
+
   async interrupt() {
+    if (!this.#query) return; // asleep: there is nothing in flight to stop
     await this.#query.interrupt();
     // an aborted turn does not always send a result — without this the chat
     // (and its stop button) would stay "thinking" until something else moves
     this.#setStatus('idle');
   }
 
+  // The settings below are remembered whether or not a session is running: a
+  // sleeping chat is not worth waking to be told which model it will use, and
+  // #spawn starts the next one the way it was last set.
+
   async setPermissionMode(mode) {
-    await this.#query.setPermissionMode(mode);
     this.permissionMode = mode;
+    if (this.#query) await this.#query.setPermissionMode(mode);
   }
 
   async contextUsage() {
-    return this.#query.getContextUsage();
+    return this.#query ? this.#query.getContextUsage() : null;
   }
 
   async setModel(model) {
-    await this.#query.setModel(model);
+    this.#model = model ?? undefined;
     this.model = model ?? null; // the actual name will be clarified by the next init/usage
+    if (this.#query) await this.#query.setModel(model);
   }
 
   async setEffort(level) {
-    await this.#query.applyFlagSettings({ effortLevel: level });
     this.effort = level;
+    if (this.#query) await this.#query.applyFlagSettings({ effortLevel: level });
   }
 
   async accountInfo() {
+    if (!this.#query) throw new Error('the session is asleep');
     return this.#query.accountInfo();
   }
 
   /** Raw response of the experimental usage API; parsing lives in usage.js */
   async rawUsage() {
+    if (!this.#query) throw new Error('the session is asleep');
     return this.#query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
   }
 
   close() {
     if (this.#closed) return;
     this.#closed = true;
+    const q = this.#query;
+    this.#query = null;
+    this.#session = null;
     this.#wake?.();
+    Promise.resolve(q?.return?.()).catch(() => {});
+    this.#setStatus('closed');
   }
 
   #setStatus(status) {

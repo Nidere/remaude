@@ -1172,7 +1172,9 @@ function renderHostProjects(root, hostId, hostState) {
 
       const item = el('div', 'chat-item', '');
       item.dataset.chatId = c.id;
-      const dot = el('span', `status-dot ${chat.status ?? c.status}`, ''); // live status wins over the snapshot
+      const status = chat.status ?? c.status; // live status wins over the snapshot
+      if (status === 'sleeping') item.classList.add('sleeping');
+      const dot = el('span', `status-dot ${status}`, '');
       const label = el('span', 'chat-label', labelText);
       item.append(dot, label);
 
@@ -1894,8 +1896,9 @@ function updateTabState() {
 }
 
 function updateStatusDot(chatId, status) {
-  document.querySelectorAll(`.chat-item[data-chat-id="${chatId}"] .status-dot`).forEach((d) => {
-    d.className = `status-dot ${status}`;
+  document.querySelectorAll(`.chat-item[data-chat-id="${chatId}"]`).forEach((item) => {
+    item.classList.toggle('sleeping', status === 'sleeping');
+    item.querySelector('.status-dot').className = `status-dot ${status}`;
   });
 }
 

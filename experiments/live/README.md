@@ -27,6 +27,7 @@ node experiments/live/ws-client.mjs
 | `echo-dupe.mjs` | one message sent, one user bubble back |
 | `sessions.mjs` | a session on disk can be listed, opened and read (`<projectDir> <sessionId> [text]`) |
 | `restart.mjs` | the host restarts itself and comes back |
+| `sleep.mjs` | an idle chat lets its session go, a message brings it back, a restart starts none |
 | `guard.mjs` | foreign origin, path traversal, bare `/connect` |
 | `startup.mjs` | the process boots and reopens its chats |
 | `search.mjs` | transcript search, including the second page |
