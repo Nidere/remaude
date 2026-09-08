@@ -232,8 +232,8 @@ const handlers = {
     renderSidebar();
   },
 
-  state({ projects, guest, _host }) {
-    hostStates.set(hostKey(_host), { projects, guest: Boolean(guest) });
+  state({ projects, guest, hostPrompt, _host }) {
+    hostStates.set(hostKey(_host), { projects, guest: Boolean(guest), hostPrompt: hostPrompt ?? '' });
     // A snapshot is only true at the moment it arrives; live status then comes
     // from chat_status. Store it here so a later repaint (an agent update, say)
     // does not resurrect a stale "idle" from this frozen snapshot.
@@ -1073,7 +1073,18 @@ function renderSidebar() {
           'A guest can write into every chat on this machine, and chats run in bypass — that is command execution on your computer under your account. Share a host only with someone you trust that far.'
         );
       };
-      actions.append(btnAdd, btnShare);
+      const btnPrompt = el('button', '', '⚙');
+      btnPrompt.title = 'instructions for every chat on this computer';
+      btnPrompt.onclick = (e) => {
+        e.stopPropagation();
+        openPrompt(
+          { host: true, hostId },
+          meta?.name ? `This computer · ${meta.name}` : 'This computer',
+          'Added to the prompt of every chat on this machine, whatever the project: the tools it has, the accounts it uses, the things about it that catch people out. Guests working here get it too.',
+          hostState.hostPrompt ?? ''
+        );
+      };
+      actions.append(btnAdd, btnPrompt, btnShare);
       head.append(actions);
     }
     if (editMode && !hostState.guest && meta) {
@@ -1149,8 +1160,19 @@ function renderHostProjects(root, hostId, hostState) {
           'Guests see every chat in this project, including ones created later, and may start new chats here.'
         );
       };
+      const btnPrompt = el('button', '', '⚙');
+      btnPrompt.title = 'project settings';
+      btnPrompt.onclick = (e) => {
+        e.stopPropagation();
+        openPrompt(
+          { projectPath: p.path, hostId },
+          `Project · ${p.name ?? shortPath(p.path)}`,
+          'Added to the prompt of every chat in this project. It is kept on the host, not in the folder — so put here only what cannot be committed. Anything the project owns belongs in its CLAUDE.md, where it is visible in git and works without remaude.',
+          p.prompt ?? ''
+        );
+      };
       // no delete outside edit mode: removing things is what edit mode is for
-      actions.append(btnNew, btnOld, btnFiles, btnShare);
+      actions.append(btnNew, btnOld, btnFiles, btnPrompt, btnShare);
       head.append(name, actions);
     } else {
       head.append(name);
@@ -2339,6 +2361,7 @@ const ESCAPABLE = [
   { open: () => !$('picker').hidden, close: () => ($('picker').hidden = true) },
   { open: () => !$('settings').hidden, close: () => ($('settings').hidden = true) },
   { open: () => !$('share-panel').hidden, close: () => ($('share-panel').hidden = true) },
+  { open: () => !$('prompt-panel').hidden, close: () => closePrompt() },
   { open: () => !$('attachments-panel').hidden, close: () => ($('attachments-panel').hidden = true) },
   { open: () => chatThreads.panelOpen(), close: () => chatThreads.closePanel() },
 ];
@@ -2397,6 +2420,83 @@ $('share-btn').onclick = () => {
 $('share-close').onclick = () => ($('share-panel').hidden = true);
 $('share-panel').addEventListener('click', (e) => {
   if (e.target.id === 'share-panel') $('share-panel').hidden = true;
+});
+
+// ---------- instructions: the host and project levels of the system prompt ----------
+// The third level, remaude's own, is not here: it describes the product and
+// lives with the code that makes the product true.
+
+let promptScope = null; // {host:true, hostId} | {projectPath, hostId}
+
+function openPrompt(scope, title, hint, text) {
+  promptScope = scope;
+  $('prompt-title').textContent = title;
+  $('prompt-hint').textContent = hint;
+  $('prompt-text').value = text ?? '';
+  $('prompt-panel').hidden = false;
+  $('prompt-text').focus();
+}
+
+function closePrompt() {
+  $('prompt-panel').hidden = true;
+  promptScope = null;
+}
+
+function savePrompt() {
+  if (!promptScope) return;
+  const text = $('prompt-text').value;
+  sendTo(
+    promptScope.hostId,
+    promptScope.host
+      ? { type: 'set_host_prompt', text }
+      : { type: 'set_project_prompt', path: promptScope.projectPath, text }
+  );
+  closePrompt();
+}
+
+$('prompt-close').onclick = closePrompt;
+$('prompt-save').onclick = savePrompt;
+$('prompt-panel').addEventListener('click', (e) => {
+  if (e.target.id === 'prompt-panel') closePrompt();
+});
+$('prompt-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) savePrompt();
+});
+
+// ---------- the sidebar's width belongs to whoever is reading it ----------
+
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 560;
+
+function setSidebarWidth(px) {
+  const w = Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, px)));
+  document.documentElement.style.setProperty('--sidebar-w', `${w}px`);
+  return w;
+}
+
+const savedSidebarWidth = Number(localStorage.getItem('sidebarWidth'));
+if (savedSidebarWidth) setSidebarWidth(savedSidebarWidth);
+
+$('sidebar-resizer').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startW = $('sidebar').getBoundingClientRect().width;
+  document.body.classList.add('resizing');
+  const move = (ev) => setSidebarWidth(startW + ev.clientX - startX);
+  const up = (ev) => {
+    move(ev);
+    document.body.classList.remove('resizing');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    localStorage.setItem('sidebarWidth', String(setSidebarWidth(startW + ev.clientX - startX)));
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+});
+
+$('sidebar-resizer').addEventListener('dblclick', () => {
+  document.documentElement.style.removeProperty('--sidebar-w');
+  localStorage.removeItem('sidebarWidth');
 });
 $('share-form').addEventListener('submit', (e) => {
   e.preventDefault();

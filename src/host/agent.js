@@ -16,10 +16,15 @@ export class HostAgent extends EventEmitter {
   /** @type {Map<string, {path: string, chats: Map<string, Chat>}>} */
   projects = new Map();
 
-  /** @param onPermissionRequest shared handler for the permission requests of all chats */
-  constructor({ onPermissionRequest } = {}) {
+  /**
+   * @param onPermissionRequest shared handler for the permission requests of all chats
+   * @param extraPrompt (projectPath) => string — the host and project levels of the
+   *        system prompt, asked for anew whenever a session starts
+   */
+  constructor({ onPermissionRequest, extraPrompt } = {}) {
     super();
     this.onPermissionRequest = onPermissionRequest;
+    this.extraPrompt = extraPrompt ?? null;
   }
 
   addProject(path) {
@@ -48,6 +53,7 @@ export class HostAgent extends EventEmitter {
     const chat = new Chat({
       cwd: project.path,
       onPermissionRequest: this.onPermissionRequest,
+      extraPrompt: this.extraPrompt ? () => this.extraPrompt(project.path) : undefined,
       ...opts,
     });
     project.chats.set(chat.id, chat);

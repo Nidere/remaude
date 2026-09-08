@@ -101,6 +101,35 @@ const defaultModel = () => config.defaultModel ?? 'opus';
 let projectsRoot =
   config.projectsRoot ??
   (existsSync(join(homedir(), 'Documents', 'Projects')) ? join(homedir(), 'Documents', 'Projects') : homedir());
+// ---------- system prompt: the host and project levels ----------
+
+/**
+ * Two of the three levels appended to every session's prompt. The remaude level
+ * lives in chat.js, because it describes the product and changes with it; these
+ * two describe one machine and one folder and are written by the owner from the
+ * web UI. Both are kept in host.json rather than in the project: what can be
+ * committed belongs in the project's own CLAUDE.md, and what cannot must not
+ * end up in a repository the owner may not even own.
+ */
+function systemPromptFor(projectPath) {
+  const parts = [];
+  const host = (config.hostPrompt ?? '').trim();
+  if (host)
+    parts.push(
+      '## This machine\n\nWhat the owner of this computer wants every session on it to know — its tools, its\n' +
+        'accounts, the things about it that surprise people. True wherever this session runs,\n' +
+        `whatever the project.\n\n${host}`
+    );
+  const project = (config.projectPrompts?.[resolve(projectPath)] ?? '').trim();
+  if (project)
+    parts.push(
+      '## This project\n\nWhat the owner wants known about this folder in particular. It is kept outside the\n' +
+        "repository on purpose — anything the project itself owns belongs in its CLAUDE.md,\n" +
+        `where it is visible in git and works without remaude.\n\n${project}`
+    );
+  return parts.join('\n\n');
+}
+
 const clients = new Set();
 const pendingPermissions = new Map(); // requestId -> {resolve, chatId}
 const chatHistories = new Map(); // chatId -> messages to replay on reconnect
@@ -108,6 +137,7 @@ const tails = new Map(); // chatId -> {file, offset, restBuf, seen, ownTexts, li
 const tailWaits = new Map(); // chatId -> timer, while the transcript is still to appear
 
 const agent = new HostAgent({
+  extraPrompt: systemPromptFor,
   onPermissionRequest: ({ chat, toolName, input, suggestions, signal }) =>
     new Promise((resolvePerm) => {
       const requestId = randomUUID();
@@ -1466,9 +1496,12 @@ function broadcast(obj) {
 function stateSnapshot() {
   return {
     type: 'state',
+    // the owner's two editable prompt levels, so the settings popups open filled in
+    hostPrompt: config.hostPrompt ?? '',
     projects: [...agent.projects.values()].map((p) => ({
       path: p.path,
       name: config.projectNames?.[p.path] ?? null,
+      prompt: config.projectPrompts?.[p.path] ?? '',
       chats: [...p.chats.values()].map((c) => ({
         id: c.id,
         // A sleeping chat has no session running, but it is not anonymous: it is
@@ -2277,6 +2310,32 @@ const handlers = {
     config.projectNames ??= {};
     if (name?.trim()) config.projectNames[abs] = name.trim().slice(0, 60);
     else delete config.projectNames[abs];
+    saveConfig(config);
+    broadcast(stateSnapshot());
+  },
+
+  /**
+   * The host level of the system prompt. It reaches a session when the session
+   * starts, so a chat that is awake keeps the old text until it sleeps and wakes.
+   */
+  set_host_prompt(ws, { text }) {
+    const value = String(text ?? '').slice(0, 20000);
+    if (value.trim()) config.hostPrompt = value;
+    else delete config.hostPrompt;
+    saveConfig(config);
+    broadcast(stateSnapshot());
+  },
+
+  /** The project level — kept on the host, never written into the project. */
+  set_project_prompt(ws, { path, text }) {
+    // the project's own spelling of its path, so the key matches the one systemPromptFor looks up
+    const project = agent.findProject(resolve(path));
+    if (!project) throw new Error('no such project');
+    const abs = project.path;
+    const value = String(text ?? '').slice(0, 20000);
+    config.projectPrompts ??= {};
+    if (value.trim()) config.projectPrompts[abs] = value;
+    else delete config.projectPrompts[abs];
     saveConfig(config);
     broadcast(stateSnapshot());
   },

@@ -27,6 +27,7 @@
     <div id="search-results"></div>
     <div id="sidebar-footer"></div>
   </aside>
+  <div id="sidebar-resizer" title="Drag to resize · double-click to reset"></div>
 
   <main id="main">
     <header id="header">
@@ -92,6 +93,18 @@
         <button type="submit">Add</button>
       </form>
       <div id="share-hint">Guests read and write in this chat only. They never see other chats or the file system.</div>
+    </div>
+  </div>
+
+  <div id="prompt-panel" hidden>
+    <div id="prompt-box">
+      <div id="prompt-head"><span id="prompt-title">Instructions</span><button id="prompt-close">✕</button></div>
+      <div id="prompt-hint"></div>
+      <textarea id="prompt-text" spellcheck="false" placeholder="Nothing yet — anything written here is added to the prompt of every chat in scope."></textarea>
+      <div id="prompt-foot">
+        <span id="prompt-note">Reaches a chat the next time it starts: an open chat keeps the old text until it sleeps and wakes.</span>
+        <button id="prompt-save">Save</button>
+      </div>
     </div>
   </div>
 

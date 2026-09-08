@@ -2,7 +2,12 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-const INBOX_CONVENTION = `
+// The remaude level of the system prompt: what is true of every chat in every
+// project on every host, because it describes the product itself. It lives in
+// code and changes with the code — the host and project levels, which describe
+// one machine and one folder, are edited from the web UI and arrive as
+// `extraPrompt`.
+const REMAUDE_CONVENTION = `
 ## remaude inbox
 
 This session runs inside remaude, whose UI has an inbox — the place the user
@@ -47,8 +52,11 @@ work as the document is. The exception is \`.remaude/\` — that is the person's
 inbox, not the project's history, and git is already told to ignore it. Leave
 anything else out of a commit only when the user asked for that specifically.
 
-If a push is refused, say so and stop — a machine's git credentials are its
-owner's business, not something to reach around.
+If a push is refused, stop and say so — a machine's git credentials are its
+owner's business, not something to reach around. The exception is a fix the
+owner has already written down: if the notes about this machine below say how
+its credentials are meant to be set up, following them is repair, not a way
+around the refusal.
 `.trim();
 
 /**
@@ -72,6 +80,7 @@ export class Chat extends EventEmitter {
   #session = null; // identity of the current session, so a stale pump stays quiet
   #model;
   #onPermissionRequest;
+  #extraPrompt; // () => string — the host and project levels, read afresh on every start
 
   /** Local id; after system:init it is complemented by sessionId (which is what we resume with). */
   id = randomUUID();
@@ -81,15 +90,35 @@ export class Chat extends EventEmitter {
   model = null; // the actual model reported by system:init
   permissionMode = 'default';
 
-  constructor({ cwd, resume, permissionMode = 'default', model, onPermissionRequest, asleep = false }) {
+  constructor({
+    cwd,
+    resume,
+    permissionMode = 'default',
+    model,
+    onPermissionRequest,
+    extraPrompt,
+    asleep = false,
+  }) {
     super();
     this.cwd = cwd;
     this.permissionMode = permissionMode;
     this.resumeId = resume ?? null;
     this.#model = model;
     this.#onPermissionRequest = onPermissionRequest;
+    this.#extraPrompt = extraPrompt ?? null;
     if (asleep) this.status = 'sleeping';
     else this.#spawn();
+  }
+
+  /** The three levels of the appended prompt: remaude, then this host, then this project. */
+  #append() {
+    let extra = '';
+    try {
+      extra = this.#extraPrompt?.() ?? '';
+    } catch {
+      extra = ''; // a broken host config must not cost the user their chat
+    }
+    return [REMAUDE_CONVENTION, extra.trim()].filter(Boolean).join('\n\n');
   }
 
   /** Start the session, or do nothing if one is already running. */
@@ -111,7 +140,9 @@ export class Chat extends EventEmitter {
         // remaude collects documents written *for the user* into an inbox. The
         // convention has to reach every session in every project, so it rides
         // along with the preset prompt instead of relying on project files.
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: INBOX_CONVENTION },
+        // The host and project levels follow it, read at start rather than at
+        // construction, so an edited prompt reaches a chat as soon as it wakes.
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: this.#append() },
         canUseTool: async (toolName, input, { signal, suggestions }) => {
           // remaude has no interactive questionnaires (and the user hates them) — so we
           // force the model to ask again in plain text. This hook fires even in bypass mode.
