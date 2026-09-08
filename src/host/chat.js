@@ -40,6 +40,13 @@ missing.
 If you cannot decide, mark it. An extra line in a file costs nothing; a document
 the user never finds costs all the work that went into it.
 
+## Asking
+
+remaude has no interactive questionnaires. The AskUserQuestion tool is refused
+here, so reaching for it only costs a turn and lands the person back where they
+started. Ask in the reply itself, in plain text, as a numbered list, with your
+own recommendation where you have one — and carry on once the answers come.
+
 ## Committing
 
 Work that is not in git is not finished. When a meaningful piece of work is
