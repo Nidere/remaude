@@ -197,6 +197,18 @@ body {
   padding: 7px 10px;
   font: inherit;
 }
+/* the account picker sits with the inputs, so it borrows their shape */
+#settings-box select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 7px 10px;
+  font: inherit;
+}
 #relay-block, #auth-block { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
 #relay-status, #claude-auth-status { font-size: 12px; color: var(--dim); margin-bottom: 6px; }
 #relay-status.ok, #claude-auth-status.ok { color: var(--green); }
@@ -461,6 +473,24 @@ body.resizing { user-select: none; cursor: col-resize; }
   flex-shrink: 0;
 }
 #prompt-close:hover { border-color: var(--red); color: var(--red); }
+#prompt-profile-row[hidden] { display: none; }
+#prompt-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+#prompt-profile {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 10px;
+  font: inherit;
+}
 #prompt-hint { padding: 10px 16px 0; font-size: 11px; color: var(--dim); line-height: 1.5; }
 #prompt-text {
   margin: 10px 16px;

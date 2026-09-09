@@ -232,8 +232,14 @@ const handlers = {
     renderSidebar();
   },
 
-  state({ projects, guest, hostPrompt, _host }) {
-    hostStates.set(hostKey(_host), { projects, guest: Boolean(guest), hostPrompt: hostPrompt ?? '' });
+  state({ projects, guest, hostPrompt, profiles, defaultProfile, _host }) {
+    hostStates.set(hostKey(_host), {
+      projects,
+      guest: Boolean(guest),
+      hostPrompt: hostPrompt ?? '',
+      profiles: profiles ?? [],
+      defaultProfile: defaultProfile ?? 'personal',
+    });
     // A snapshot is only true at the moment it arrives; live status then comes
     // from chat_status. Store it here so a later repaint (an agent update, say)
     // does not resurrect a stale "idle" from this frozen snapshot.
@@ -560,7 +566,7 @@ const handlers = {
     $('conn-dot').classList.remove('on');
   },
 
-  settings({ userName, projectsRoot, relay, claudeAuth, _host }) {
+  settings({ userName, projectsRoot, relay, claudeAuth, profiles, profile, _host }) {
     // these belong to the computer that answered, not to the app: with several
     // hosts connected, saving them anywhere else configures a stranger
     settingsHost = hostKey(_host);
@@ -568,6 +574,7 @@ const handlers = {
     $('set-username').value = userName ?? '';
     $('set-root').value = projectsRoot ?? '';
     renderRelayStatus(relay);
+    renderAuthProfiles(profiles ?? [], profile);
     renderClaudeAuth(claudeAuth);
     $('settings').hidden = false;
   },
@@ -579,11 +586,19 @@ const handlers = {
     $('claude-login-btn').textContent = 'Start over';
   },
 
-  claude_auth({ status }) {
+  claude_auth({ status, profile }) {
+    // a login that finished for another account must not relabel the one on screen
+    if (profile && profile !== authProfile) return;
     renderClaudeAuth(status);
     $('claude-login-flow').hidden = true;
     $('claude-login-btn').textContent = 'Sign in to Claude';
     $('claude-login-code').value = '';
+  },
+
+  /** A new account exists but is signed out — take the person straight to signing in. */
+  profile_created({ profile }) {
+    authProfile = profile;
+    sendTo(settingsTarget(), { type: 'claude_login_start', profile });
   },
 
   relay_status(relay) {
@@ -1165,10 +1180,11 @@ function renderHostProjects(root, hostId, hostState) {
       btnPrompt.onclick = (e) => {
         e.stopPropagation();
         openPrompt(
-          { projectPath: p.path, hostId },
+          { projectPath: p.path, hostId, profile: p.profile ?? '' },
           `Project · ${p.name ?? shortPath(p.path)}`,
           'Added to the prompt of every chat in this project. It is kept on the host, not in the folder — so put here only what cannot be committed. Anything the project owns belongs in its CLAUDE.md, where it is visible in git and works without remaude.',
-          p.prompt ?? ''
+          p.prompt ?? '',
+          hostState
         );
       };
       // no delete outside edit mode: removing things is what edit mode is for
@@ -2428,11 +2444,25 @@ $('share-panel').addEventListener('click', (e) => {
 
 let promptScope = null; // {host:true, hostId} | {projectPath, hostId}
 
-function openPrompt(scope, title, hint, text) {
+function openPrompt(scope, title, hint, text, hostState) {
   promptScope = scope;
   $('prompt-title').textContent = title;
   $('prompt-hint').textContent = hint;
   $('prompt-text').value = text ?? '';
+  // the account is a property of a project, not of the machine
+  const row = $('prompt-profile-row');
+  row.hidden = !scope.projectPath;
+  if (!row.hidden) {
+    const select = $('prompt-profile');
+    const fallback = hostState?.defaultProfile ?? 'personal';
+    select.innerHTML = '';
+    for (const name of hostState?.profiles ?? [fallback]) {
+      const option = el('option', '', name === fallback ? `default (${fallback})` : name);
+      option.value = name === fallback ? '' : name;
+      option.selected = (scope.profile ?? '') === option.value;
+      select.append(option);
+    }
+  }
   $('prompt-panel').hidden = false;
   $('prompt-text').focus();
 }
@@ -2445,12 +2475,15 @@ function closePrompt() {
 function savePrompt() {
   if (!promptScope) return;
   const text = $('prompt-text').value;
-  sendTo(
-    promptScope.hostId,
-    promptScope.host
-      ? { type: 'set_host_prompt', text }
-      : { type: 'set_project_prompt', path: promptScope.projectPath, text }
-  );
+  if (promptScope.host) {
+    sendTo(promptScope.hostId, { type: 'set_host_prompt', text });
+  } else {
+    sendTo(promptScope.hostId, { type: 'set_project_prompt', path: promptScope.projectPath, text });
+    const profile = $('prompt-profile').value;
+    // switching accounts restarts sessions, so only say so when it actually changed
+    if (profile !== (promptScope.profile ?? ''))
+      sendTo(promptScope.hostId, { type: 'set_project_profile', path: promptScope.projectPath, profile });
+  }
   closePrompt();
 }
 
@@ -2563,6 +2596,37 @@ $('set-host').addEventListener('change', function () {
   sendTo(settingsHost, { type: 'get_settings' });
 });
 
+// Which account the auth block is talking about. Several may be signed in on one
+// machine; a project picks between them in its own settings.
+let authProfile = 'personal';
+const NEW_PROFILE = ' new';
+
+function renderAuthProfiles(profiles, current) {
+  const select = $('auth-profile');
+  authProfile = current ?? profiles[0] ?? 'personal';
+  select.innerHTML = '';
+  for (const name of profiles) {
+    const option = el('option', '', name);
+    option.value = name;
+    option.selected = name === authProfile;
+    select.append(option);
+  }
+  const add = el('option', '', '+ add an account…');
+  add.value = NEW_PROFILE;
+  select.append(add);
+}
+
+$('auth-profile').addEventListener('change', function () {
+  if (this.value !== NEW_PROFILE) {
+    authProfile = this.value;
+    sendTo(settingsTarget(), { type: 'get_settings', profile: authProfile });
+    return;
+  }
+  this.value = authProfile; // the add entry is an action, not a choice
+  const name = prompt('Name for the new account (letters, digits, dashes):');
+  if (name?.trim()) sendTo(settingsTarget(), { type: 'create_profile', name: name.trim() });
+});
+
 function renderClaudeAuth(status) {
   const node = $('claude-auth-status');
   if (!status) {
@@ -2577,7 +2641,7 @@ function renderClaudeAuth(status) {
   }
 }
 
-$('claude-login-btn').onclick = () => sendTo(settingsTarget(), { type: 'claude_login_start' });
+$('claude-login-btn').onclick = () => sendTo(settingsTarget(), { type: 'claude_login_start', profile: authProfile });
 $('claude-login-send').onclick = () => {
   const code = $('claude-login-code').value.trim();
   if (code) sendTo(settingsTarget(), { type: 'claude_login_code', code });

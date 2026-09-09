@@ -20,11 +20,14 @@ export class HostAgent extends EventEmitter {
    * @param onPermissionRequest shared handler for the permission requests of all chats
    * @param extraPrompt (projectPath) => string — the host and project levels of the
    *        system prompt, asked for anew whenever a session starts
+   * @param sessionEnv (projectPath) => object — the environment of a session, and with
+   *        it the Claude account the project is worked on under; asked for the same way
    */
-  constructor({ onPermissionRequest, extraPrompt } = {}) {
+  constructor({ onPermissionRequest, extraPrompt, sessionEnv } = {}) {
     super();
     this.onPermissionRequest = onPermissionRequest;
     this.extraPrompt = extraPrompt ?? null;
+    this.sessionEnv = sessionEnv ?? null;
   }
 
   addProject(path) {
@@ -54,6 +57,7 @@ export class HostAgent extends EventEmitter {
       cwd: project.path,
       onPermissionRequest: this.onPermissionRequest,
       extraPrompt: this.extraPrompt ? () => this.extraPrompt(project.path) : undefined,
+      env: this.sessionEnv ? () => this.sessionEnv(project.path) : undefined,
       ...opts,
     });
     project.chats.set(chat.id, chat);

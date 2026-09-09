@@ -35,6 +35,7 @@ import {
   collectImages,
   isSessionId,
 } from './transcripts.js';
+import { DEFAULT_PROFILE, createProfile, profileEnv } from './profiles.js';
 import { RelayLink } from './relay-link.js';
 import { TurnTags } from './turn-tags.js';
 import { chatToMarkdown, exportFileName } from './export-md.js';
@@ -130,6 +131,19 @@ function systemPromptFor(projectPath) {
   return parts.join('\n\n');
 }
 
+// ---------- Claude accounts (profiles) ----------
+
+/** Every profile this host knows: the one that was always here, then the owner's. */
+function allProfiles() {
+  return [DEFAULT_PROFILE, ...(config.profiles ?? [])];
+}
+
+/** Which account a project is worked on under. An unknown one falls back rather than failing. */
+function profileOf(projectPath) {
+  const chosen = config.projectProfiles?.[resolve(projectPath)];
+  return chosen && allProfiles().includes(chosen) ? chosen : DEFAULT_PROFILE;
+}
+
 const clients = new Set();
 const pendingPermissions = new Map(); // requestId -> {resolve, chatId}
 const chatHistories = new Map(); // chatId -> messages to replay on reconnect
@@ -138,6 +152,7 @@ const tailWaits = new Map(); // chatId -> timer, while the transcript is still t
 
 const agent = new HostAgent({
   extraPrompt: systemPromptFor,
+  sessionEnv: (projectPath) => profileEnv(profileOf(projectPath)),
   onPermissionRequest: ({ chat, toolName, input, suggestions, signal }) =>
     new Promise((resolvePerm) => {
       const requestId = randomUUID();
@@ -1455,10 +1470,11 @@ function startRelay() {
 // ---------- Claude authentication on the host (logging in from the web UI) ----------
 
 let loginChild = null; // the single active `claude auth login` process
+let loginProfile = DEFAULT_PROFILE; // the account it is signing in to
 
-function runClaudeJson(args) {
+function runClaudeJson(args, profile) {
   return new Promise((resolveRun) => {
-    const p = spawn('claude', args, { shell: true });
+    const p = spawn('claude', args, { shell: true, env: profileEnv(profile) });
     let out = '';
     p.stdout.on('data', (d) => (out += d));
     p.on('close', () => {
@@ -1472,8 +1488,8 @@ function runClaudeJson(args) {
   });
 }
 
-async function claudeAuthStatus() {
-  const st = await runClaudeJson(['auth', 'status']);
+async function claudeAuthStatus(profile) {
+  const st = await runClaudeJson(['auth', 'status'], profile);
   return st ? { loggedIn: st.loggedIn, email: st.email, subscriptionType: st.subscriptionType } : null;
 }
 
@@ -1498,10 +1514,14 @@ function stateSnapshot() {
     type: 'state',
     // the owner's two editable prompt levels, so the settings popups open filled in
     hostPrompt: config.hostPrompt ?? '',
+    profiles: allProfiles(),
+    defaultProfile: DEFAULT_PROFILE,
     projects: [...agent.projects.values()].map((p) => ({
       path: p.path,
       name: config.projectNames?.[p.path] ?? null,
       prompt: config.projectPrompts?.[p.path] ?? '',
+      // null means "whatever the default is", so renaming the default never orphans a project
+      profile: config.projectProfiles?.[p.path] ?? null,
       chats: [...p.chats.values()].map((c) => ({
         id: c.id,
         // A sleeping chat has no session running, but it is not anonymous: it is
@@ -2340,6 +2360,39 @@ const handlers = {
     broadcast(stateSnapshot());
   },
 
+  /**
+   * A second Claude account on this machine. Only the directory and its links
+   * are made here — signing in is `claude auth login` under it, which the
+   * settings panel drives so the person can see the code.
+   */
+  async create_profile(ws, { name }) {
+    const value = String(name ?? '').trim();
+    await createProfile(value);
+    config.profiles = [...(config.profiles ?? []), value];
+    saveConfig(config);
+    broadcast(stateSnapshot());
+    send(ws, { type: 'profile_created', profile: value });
+  },
+
+  /**
+   * Which account a project is worked on under. The chats stay where they are —
+   * every profile shares one `projects` directory — so a chat only has to start
+   * again to change hands. Idle ones are put to sleep for that; one in the middle
+   * of a turn is left to finish, and changes over the next time it starts.
+   */
+  set_project_profile(ws, { path, profile }) {
+    const project = agent.findProject(resolve(path));
+    if (!project) throw new Error('no such project');
+    const value = profile && profile !== DEFAULT_PROFILE ? String(profile) : null;
+    if (value && !allProfiles().includes(value)) throw new Error(`no such profile: ${value}`);
+    config.projectProfiles ??= {};
+    if (value) config.projectProfiles[project.path] = value;
+    else delete config.projectProfiles[project.path];
+    saveConfig(config);
+    for (const chat of project.chats.values()) if (chat.status === 'idle') chat.sleep();
+    broadcast(stateSnapshot());
+  },
+
   rename_chat(ws, { chatId, title }) {
     const chat = findChat(chatId);
     chat.title = String(title).slice(0, 80);
@@ -2391,7 +2444,7 @@ const handlers = {
     sendChatMeta(chatId);
   },
 
-  async get_settings(ws) {
+  async get_settings(ws, { profile } = {}) {
     send(ws, {
       type: 'settings',
       userName,
@@ -2401,14 +2454,17 @@ const handlers = {
         connected: relayLink?.connected ?? false,
         url: config.relay?.url ?? RELAY_DEFAULT_URL ?? '',
       },
-      claudeAuth: await claudeAuthStatus(),
+      profiles: allProfiles(),
+      profile: profile ?? DEFAULT_PROFILE,
+      claudeAuth: await claudeAuthStatus(profile),
     });
   },
 
   /** Start `claude auth login`: the link goes to the UI, the code comes back via claude_login_code. */
-  claude_login_start(ws) {
+  claude_login_start(ws, { profile } = {}) {
     loginChild?.kill();
-    const child = spawn('claude', ['auth', 'login'], { shell: true });
+    const child = spawn('claude', ['auth', 'login'], { shell: true, env: profileEnv(profile) });
+    loginProfile = profile ?? DEFAULT_PROFILE;
     loginChild = child;
     let buf = '';
     const onData = (d) => {
@@ -2422,7 +2478,7 @@ const handlers = {
     child.stdout.on('data', onData);
     child.on('close', async () => {
       if (loginChild === child) loginChild = null;
-      broadcast({ type: 'claude_auth', status: await claudeAuthStatus() });
+      broadcast({ type: 'claude_auth', profile: loginProfile, status: await claudeAuthStatus(loginProfile) });
     });
     child.on('error', () => send(ws, { type: 'error', message: 'failed to start claude auth login' }));
     setTimeout(() => child === loginChild && child.kill(), 600e3); // don't hang around forever

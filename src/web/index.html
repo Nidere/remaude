@@ -99,6 +99,7 @@
   <div id="prompt-panel" hidden>
     <div id="prompt-box">
       <div id="prompt-head"><span id="prompt-title">Instructions</span><button id="prompt-close">✕</button></div>
+      <label id="prompt-profile-row" hidden>Claude account<select id="prompt-profile"></select></label>
       <div id="prompt-hint"></div>
       <textarea id="prompt-text" spellcheck="false" placeholder="Nothing yet — anything written here is added to the prompt of every chat in scope."></textarea>
       <div id="prompt-foot">
@@ -158,6 +159,7 @@
       <label>Name (message signature)<input id="set-username" spellcheck="false" /></label>
       <label>Projects root<input id="set-root" spellcheck="false" /></label>
       <div id="auth-block">
+        <label id="auth-profile-row">Account<select id="auth-profile"></select></label>
         <div id="claude-auth-status">Claude account: …</div>
         <div id="claude-login-flow" hidden>
           <a id="claude-login-link" target="_blank" rel="noopener">1. Open the sign-in page →</a>

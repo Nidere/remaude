@@ -88,6 +88,7 @@ export class Chat extends EventEmitter {
   #model;
   #onPermissionRequest;
   #extraPrompt; // () => string — the host and project levels, read afresh on every start
+  #env; // () => object — which Claude account this session runs as, likewise
 
   /** Local id; after system:init it is complemented by sessionId (which is what we resume with). */
   id = randomUUID();
@@ -104,6 +105,7 @@ export class Chat extends EventEmitter {
     model,
     onPermissionRequest,
     extraPrompt,
+    env,
     asleep = false,
   }) {
     super();
@@ -113,6 +115,7 @@ export class Chat extends EventEmitter {
     this.#model = model;
     this.#onPermissionRequest = onPermissionRequest;
     this.#extraPrompt = extraPrompt ?? null;
+    this.#env = env ?? null;
     if (asleep) this.status = 'sleeping';
     else this.#spawn();
   }
@@ -141,6 +144,9 @@ export class Chat extends EventEmitter {
       options: {
         cwd: this.cwd,
         resume: from,
+        // the account this project is worked on under, asked for at every start
+        // so a chat that changes hands only has to sleep and wake
+        ...(this.#env ? { env: this.#env() } : {}),
         permissionMode: this.permissionMode,
         model: this.#model,
         includePartialMessages: true,
