@@ -35,7 +35,7 @@ import {
   collectImages,
   isSessionId,
 } from './transcripts.js';
-import { DEFAULT_PROFILE, createProfile, profileEnv } from './profiles.js';
+import { DEFAULT_PROFILE, createProfile, profileDir, profileEnv } from './profiles.js';
 import { RelayLink } from './relay-link.js';
 import { TurnTags } from './turn-tags.js';
 import { chatToMarkdown, exportFileName } from './export-md.js';
@@ -105,15 +105,18 @@ let projectsRoot =
 // ---------- system prompt: the host and project levels ----------
 
 /**
- * Two of the three levels appended to every session's prompt. The remaude level
- * lives in chat.js, because it describes the product and changes with it; these
- * two describe one machine and one folder and are written by the owner from the
- * web UI. Both are kept in host.json rather than in the project: what can be
+ * Everything appended to a session's prompt below the remaude level, which lives
+ * in chat.js because it describes the product and changes with it. First the
+ * account this session runs as, which the host knows and the session cannot work
+ * out; then the machine and the folder, written by the owner from the web UI.
+ * Those two are kept in host.json rather than in the project: what can be
  * committed belongs in the project's own CLAUDE.md, and what cannot must not
  * end up in a repository the owner may not even own.
  */
 function systemPromptFor(projectPath) {
   const parts = [];
+  const account = accountPrompt(projectPath);
+  if (account) parts.push(account);
   const host = (config.hostPrompt ?? '').trim();
   if (host)
     parts.push(
@@ -142,6 +145,33 @@ function allProfiles() {
 function profileOf(projectPath) {
   const chosen = config.projectProfiles?.[resolve(projectPath)];
   return chosen && allProfiles().includes(chosen) ? chosen : DEFAULT_PROFILE;
+}
+
+/**
+ * Which account a session is, told to the session itself — because it cannot
+ * work this out. `~/.claude.json` looks like the answer and is not: it holds the
+ * identity of whichever account is the default here, while a session on another
+ * one reads and writes a different directory entirely. A chat asked whose
+ * account it is spends its time on that file and answers with someone else's
+ * email, confidently. So the fact is stated rather than left to be discovered.
+ *
+ * Nothing is said when there is only one account on this machine: then the
+ * obvious place is also the right one, and the paragraph is noise in every prompt.
+ */
+function accountPrompt(projectPath) {
+  if (allProfiles().length < 2) return '';
+  const name = profileOf(projectPath);
+  return (
+    "## This session's Claude account\n\n" +
+    `This session is signed in as the account named **${name}**, and its login, settings\n` +
+    `and \`.claude.json\` are in \`${profileDir(name)}\`.\n\n` +
+    'There is more than one Claude account on this machine, each with a directory of\n' +
+    'its own. Anything about *this* session — who it is, what it may spend, what it has\n' +
+    'been configured with — is read from the path above, which is also what\n' +
+    '`CLAUDE_CONFIG_DIR` points at whenever it is set. `~/.claude.json` and `~/.claude/`\n' +
+    'answer the same questions about a different account; reading them instead is the\n' +
+    'standing mistake here, and it looks exactly like a right answer.'
+  );
 }
 
 const clients = new Set();
