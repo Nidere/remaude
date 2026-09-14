@@ -17,6 +17,11 @@ The three parts ship differently, and each has its own way of reaching a browser
 - **`src/host/*`** — the host must restart: ⚙ → Restart server in the UI. Ask the
   owner to press it. **Never restart the host yourself**: your session is a
   process that host spawned, and killing it kills the conversation mid-sentence.
+- **If the host is down**, run `scripts/start-host.ps1` and nothing else. It hands
+  the launch to the "remaude host" Task Scheduler task; that task also checks on the
+  host every minute and brings a dead one back on its own. Never start the host
+  with `node` or `Start-Process` from a session: a host that is your child dies
+  when your tool call ends, silently, and takes every open chat with it.
 
 ## Deploying can fail on the ssh key, and it is not your fault
 

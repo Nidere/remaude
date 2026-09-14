@@ -57,6 +57,19 @@ everything else (remote access, sharing, push) is a layer on top.
 (`claude auth status` reports `"loggedIn": true`) because the SDK spawns it as a
 subprocess. If it is not, that can be done from the UI: ⚙ → "sign in to Claude".
 
+On Windows, hand the host to Task Scheduler once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-host.ps1 -Install
+```
+
+The task starts the host at logon and checks on it every minute, so a host that
+died for any reason is back within a minute. ⚠ Start the host through that
+script, not with `node` from a terminal or an agent session: a host that is a
+child of a shell dies with it, silently. The script hands the launch to the task.
+The task runs through `scripts/start-host.vbs`, so no console window flashes on
+every check; each start the watchdog had to make is noted in `~/.remaude/watchdog.log`.
+
 ### 2. Google OAuth client
 
 Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID →
@@ -299,7 +312,8 @@ touch devices.
 
 ```bash
 # host
-~/.remaude/server.log, server.err.log
+~/.remaude/server.log, server.err.log  (the run before: *.prev.log)
+~/.remaude/watchdog.log                  (every time the scheduler found the host dead)
 # relay
 ssh -i <pem> ubuntu@<ip> 'journalctl -u remaude-relay -n 50 --no-pager'
 ssh -i <pem> ubuntu@<ip> 'systemctl is-active remaude-relay caddy'

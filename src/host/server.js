@@ -2699,6 +2699,8 @@ process.on('unhandledRejection', (e) => console.error('unhandled rejection:', e)
 // used to leave a row of them behind for whoever noticed the memory first.
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
   process.on(signal, () => {
+    // said out loud: a host that leaves on a signal used to look exactly like one that was killed
+    console.log(`[${new Date().toISOString()}] ${signal}: shutting down`);
     agent.closeAll();
     process.exit(0);
   });
