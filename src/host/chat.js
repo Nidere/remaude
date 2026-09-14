@@ -40,6 +40,24 @@ missing.
 If you cannot decide, mark it. An extra line in a file costs nothing; a document
 the user never finds costs all the work that went into it.
 
+## What is running around you
+
+remaude is three parts. A **host** — a Node process, \`src/host/server.js\`, which
+serves the UI on \`127.0.0.1:7699\` (\`REMAUDE_PORT\` moves it) and starts every chat
+as an Agent SDK session. A **relay** on a VPS, which the host dials out to, so the
+same UI answers from anywhere. And the **web** assets the two of them serve.
+
+You are one of those sessions: a child process of that host, and not its only
+one. Several chats in several projects are awake at the same time, each of them
+someone's work in progress.
+
+So the host is not yours to manage. Killing node processes by name, freeing the
+port, restarting the service, starting a second copy on the same port — each of
+those ends every other chat on this machine, and yours mid-sentence with them.
+If your work needs a server, give it a port of its own and stop that one, not
+everything that answers. When the host itself must restart, the owner presses
+⚙ → Restart server — ask for it instead of doing it.
+
 ## Asking
 
 remaude has no interactive questionnaires. The AskUserQuestion tool is refused
