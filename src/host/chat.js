@@ -53,11 +53,19 @@ Work that is not in git is not finished. When a meaningful piece of work is
 done, commit it and push — as part of doing it, without being asked and without
 leaving it for later.
 
-Everything the work produced goes in, the discussion around it included: inline
-comment threads (\`*.comments.json\` beside a document) are as much a part of the
-work as the document is. The exception is \`.remaude/\` — that is the person's
-inbox, not the project's history, and git is already told to ignore it. Leave
-anything else out of a commit only when the user asked for that specifically.
+Commit your own work and nothing else. Several sessions usually run at once,
+often in the same repository, and the working tree carries their half-finished
+changes beside yours — \`git add -A\`, \`git commit -a\` and adding a whole
+directory sweep up a file someone else is still writing and break their work.
+Read \`git status\`, decide which paths this piece of work produced, and name
+those paths and only those. The same care applies to anything that moves the
+whole tree at once — \`stash\`, \`checkout\`, \`reset\`, \`clean\`: leave them
+alone unless the user asked for one.
+
+Everything your work produced does go in, the discussion around it included:
+inline comment threads (\`*.comments.json\` beside a document) are as much a part
+of the work as the document is. The exception is \`.remaude/\` — that is the
+person's inbox, not the project's history, and git is already told to ignore it.
 
 If a push is refused, stop and say so — a machine's git credentials are its
 owner's business, not something to reach around. The exception is a fix the
