@@ -26,6 +26,9 @@ let knownHosts = []; // [{id, name, owner, own}] as reported by the relay
 const hostStates = new Map(); // hostId -> {projects, guest}
 let liveChats = new Set(); // chat ids the hosts actually report right now
 const hostKey = (id) => id ?? LOCAL_HOST;
+// hostId -> {profile: limits}: a window belongs to a Claude account, and the
+// widget shows the account the chat on screen is worked on under
+const limitsByHost = new Map();
 
 // Drafts survive the tab being evicted (iOS kills backgrounded PWAs at will),
 // so they live in localStorage keyed by session id — chat ids change when the
@@ -279,6 +282,9 @@ const handlers = {
       renderActivity(active);
       syncHeaderSelects(active); // the snapshot knows the model and effort; a reload has nothing else
     }
+    // the snapshot is also where a project's account comes from, and it can have
+    // just changed — or have arrived after the limits it explains
+    renderLimits();
   },
 
   chat_created({ chatId }) {
@@ -355,8 +361,9 @@ const handlers = {
     }
   },
 
-  limits({ limits }) {
-    renderLimits(limits);
+  limits({ limits, _host }) {
+    limitsByHost.set(hostKey(_host), limits ?? {});
+    renderLimits();
   },
 
   /** The host's copy of what is being typed — from a restart, or another device. */
@@ -688,6 +695,12 @@ function selectChat(chatId) {
   $('chat-title').textContent = `${shortPath(chat.projectPath)} · ${chat.title ?? chatId.slice(0, 8)}`;
   if (chat.mode) setModeSelect(chat.mode);
   renderMeta(chat);
+  renderLimits(); // the account changes with the project, and with it the numbers
+  // nothing known about this account yet — ask, instead of showing an empty widget
+  {
+    const { hostId, profile } = activeAccount();
+    if (!limitsByHost.get(hostId)?.[profile]) sendTo(hostId, { type: 'get_limits' });
+  }
   updateComposerButtons(chat.status);
   renderActivity(chat); // the strip belongs to this chat, not to the one we left
   document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
@@ -1955,10 +1968,30 @@ function renderMeta(chat) {
 
 // ---------- limits ----------
 
-function renderLimits(limits) {
+/** The host and the Claude account the chat on screen belongs to. */
+function activeAccount() {
+  const hostId = chatHostId(activeChatId);
+  const st = hostStates.get(hostId);
+  const fallback = st?.defaultProfile ?? 'personal';
+  const path = chats.get(activeChatId)?.projectPath;
+  const project = st?.projects?.find((p) => p.path === path);
+  return { hostId, profile: project?.profile || fallback, fallback };
+}
+
+/**
+ * The widget sits beside the model and the context of the open chat, so it is
+ * read as that chat's — and a window is spent by an account, not by a machine.
+ * Hence the numbers of the account this project is worked on under, named when
+ * it is not the host's usual one.
+ */
+function renderLimits() {
   const root = $('limits');
   root.innerHTML = '';
+  const { hostId, profile, fallback } = activeAccount();
+  const limits = limitsByHost.get(hostId)?.[profile];
+  root.title = profile === fallback ? 'Claude limits' : `Claude limits of the “${profile}” account`;
   if (!limits) return;
+  if (profile !== fallback) root.append(el('span', 'acct', `${profile} · `));
   const parts = [];
   if (limits.fiveHour) parts.push(['5h', limits.fiveHour]);
   if (limits.sevenDay) parts.push(['wk', limits.sevenDay]);

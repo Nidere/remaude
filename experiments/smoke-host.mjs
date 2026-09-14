@@ -31,7 +31,7 @@ async function turn(text) {
 }
 
 await turn('Ответь одним предложением: что такое WebSocket?');
-console.log('\n[limits]', JSON.stringify(await agent.limits()));
+console.log('\n[limits]', JSON.stringify(await agent.limitsByProfile(() => 'personal')));
 await turn('А теперь то же самое, но как хокку.');
 console.log(`\n[session] ${chat.sessionId}`);
 

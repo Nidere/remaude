@@ -1278,15 +1278,16 @@ function drainTail(chatId, tail) {
 // ---------- limits (widget) ----------
 
 let lastLimitsAt = 0;
-let lastLimits = null;
+let lastLimits = null; // {profile: limits} — the widget picks the one the open chat belongs to
 async function refreshLimits(force = false) {
   if (!force && Date.now() - lastLimitsAt < 60_000) return;
-  const limits = await agent.limits();
-  if (limits) {
-    lastLimitsAt = Date.now();
-    lastLimits = limits;
-    broadcast({ type: 'limits', limits });
-  }
+  const fresh = await agent.limitsByProfile(profileOf);
+  if (!Object.keys(fresh).length) return;
+  lastLimitsAt = Date.now();
+  // An account with nothing awake says nothing this time round; its last known
+  // numbers are better than an empty widget, so they stay until it speaks again.
+  lastLimits = { ...lastLimits, ...fresh };
+  broadcast({ type: 'limits', limits: lastLimits });
 }
 
 // ---------- relay: the tunnel for remote browsers ----------

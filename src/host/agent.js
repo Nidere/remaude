@@ -71,17 +71,35 @@ export class HostAgent extends EventEmitter {
     for (const p of this.projects.values()) yield* p.chats.values();
   }
 
-  /** Snapshot of the limits for the widget — taken from any live session. */
-  async limits() {
-    for (const chat of this.allChats()) {
-      if (!chat.awake) continue; // asking a sleeping chat would only wake it
-      try {
-        return extractLimits(await chat.rawUsage());
-      } catch {
-        continue; // the session could have died between the check and the call — try the next one
+  /**
+   * A limit belongs to an account, not to a host: a project worked on under a
+   * second Claude account spends that account's window, and one number for the
+   * whole machine is a number about somebody else. So the snapshot is taken per
+   * profile — one live session of each is enough, and a sleeping chat is left
+   * alone rather than woken to be asked.
+   *
+   * @param profileOf (projectPath) => string — which account a project runs under
+   * @returns {Promise<Record<string, object>>} profile name → limits
+   */
+  async limitsByProfile(profileOf) {
+    const found = {};
+    for (const project of this.projects.values()) {
+      const profile = profileOf(project.path);
+      if (found[profile]) continue; // this account has already answered
+      for (const chat of project.chats.values()) {
+        if (!chat.awake) continue;
+        try {
+          const limits = extractLimits(await chat.rawUsage());
+          if (limits) {
+            found[profile] = limits;
+            break;
+          }
+        } catch {
+          continue; // the session could have died between the check and the call — try the next one
+        }
       }
     }
-    return null;
+    return found;
   }
 
   closeAll() {

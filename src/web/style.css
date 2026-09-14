@@ -867,6 +867,8 @@ body.guest .chat-actions { display: none !important; }
 #limits { white-space: nowrap; font-variant-numeric: tabular-nums; }
 #limits .warn { color: var(--yellow); }
 #limits .crit { color: var(--red); }
+/* whose windows these are, when it is not the host's usual account */
+#limits .acct { color: var(--dim); }
 
 #notify-btn {
   display: block;
