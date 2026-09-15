@@ -1563,6 +1563,7 @@ async function serverModeStatus() {
         }
         $p = Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue
         if ($p) { $out.session = $p.SessionId }
+        $out.desktops = @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'").Count
         [pscustomobject]$out | ConvertTo-Json -Compress
       `)
     );
@@ -1570,9 +1571,14 @@ async function serverModeStatus() {
     return { ready: false, reason: `could not ask the task scheduler: ${e.message}` };
   }
 
-  // Session 0 is where a batch logon lands, and no desktop ever does: finding
-  // ourselves there means this already happened, and there is nothing to sign out of.
-  if (info.session === 0) return { ready: false, already: true, reason: 'already running with no desktop session' };
+  // Session 0 is where a batch logon lands, and no desktop ever does. Finding
+  // ourselves there means the hard half is done — but somebody may have logged in
+  // since, and putting the machine back is then only a matter of ending that
+  // session. Without this the button would be good once per boot.
+  if (info.session === 0)
+    return info.desktops
+      ? { ready: true, already: true, reason: 'the host is already outside the desktop session — this signs it out' }
+      : { ready: false, already: true, reason: 'already a server: no desktop session on this machine' };
   if (!info.task) return { ready: false, reason: `the "${HOST_TASK}" task is not registered — ${install}` };
   if (info.logon !== 'Password')
     return { ready: false, reason: `the "${HOST_TASK}" task only runs while you are signed in — ${install}` };
