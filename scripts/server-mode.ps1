@@ -101,6 +101,16 @@ foreach ($s in $sessions) {
   # and a log that ends here means it worked.
   Log "signing out of session ${s}"
   $out = (& logoff.exe $s 2>&1 | Out-String).Trim()
-  Start-Sleep -Seconds 5
-  Log "session $s is still here after logoff (exit $LASTEXITCODE) $out"
+  $code = $LASTEXITCODE
+
+  # A session with a browser and a WSL in it does not go quietly: sixty-odd
+  # processes have to be torn down, and the first version of this called that a
+  # failure five seconds in and wrote it down as one.
+  $gone = $false
+  for ($i = 0; $i -lt 30; $i++) {
+    if (-not @(Get-Process | Where-Object { $_.SessionId -eq $s })) { $gone = $true; break }
+    Start-Sleep -Seconds 2
+  }
+  if ($gone) { Log "session $s is gone" }
+  else { Log "session $s is still here a minute after logoff (exit $code) $out" }
 }
