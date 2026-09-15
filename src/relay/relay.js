@@ -1,5 +1,5 @@
 // remaude relay: the public entry point (the domain is set via BASE_URL).
-// Browsers: web UI static files + Google OAuth (whitelist) + WSS /ws.
+// Browsers: web UI static files + Google OAuth (owners + guests) + WSS /ws.
 // Hosts: outbound WSS /host?token=… ; pairing: POST /pair {code}.
 // Chat content is not stored — only routing and bookkeeping of host tokens.
 import { createServer } from 'node:http';
@@ -15,6 +15,8 @@ const PORT = Number(process.env.PORT ?? 8080);
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+// Who may own a host here. Guests are not in it: they are let in by the share
+// grants their host announces — see `isGuestSomewhere`.
 const WHITELIST = (process.env.WHITELIST ?? '')
   .split(',')
   .map((s) => s.trim().toLowerCase())
@@ -48,6 +50,7 @@ if (!state.vapid) {
   saveState();
 }
 if (!state.pushSubs) state.pushSubs = {}; // email -> [subscription]
+if (!state.shareEmails) state.shareEmails = {}; // hostId -> [email]: who that host shared something with
 // hosts paired before multiplexing have no id — give them one, the UI groups by it
 let hostsMigrated = false;
 for (const entry of Object.values(state.hosts ?? {}))
@@ -109,10 +112,16 @@ function hasHosts(email) {
   return Object.values(state.hosts).some((h) => h.email === email);
 }
 
-/** A guest owns no hosts but still reaches someone else's machine. */
+/**
+ * A guest owns no hosts but still reaches someone else's machine.
+ *
+ * Read from the saved grants rather than off the live links: both callers have to
+ * get an answer while the host is asleep — the login gate, which would otherwise
+ * turn a guest away whenever their host is offline, and the device exemption,
+ * which would otherwise hand that same guest an unapproved device cookie.
+ */
 function isGuestSomewhere(email) {
-  for (const links of hostLinks.values()) for (const link of links) if ((link.shareEmails ?? []).includes(email)) return true;
-  return false;
+  return Object.values(state.shareEmails ?? {}).some((list) => list.includes(email));
 }
 
 /**
@@ -281,7 +290,9 @@ const httpServer = createServer(async (req, res) => {
         res.writeHead(401).end('bad token');
         return;
       }
-      if (!WHITELIST.includes(userEmail)) {
+      // an owner is on the list; a guest is let in by whoever shared with them,
+      // and sees only what that host's grants cover
+      if (!WHITELIST.includes(userEmail) && !isGuestSomewhere(userEmail)) {
         res.writeHead(403, { 'content-type': 'text/html; charset=utf-8' }).end(deniedPage(userEmail));
         return;
       }
@@ -380,6 +391,7 @@ const httpServer = createServer(async (req, res) => {
           return;
         }
         delete state.hosts[token]; // the machine must be paired again to come back
+        delete state.shareEmails[body.hostId]; // and its guests stop being let in with it
         saveState();
         for (const link of [...(hostLinks.get(email) ?? [])])
           if (link.hostId === body.hostId) {
@@ -688,9 +700,15 @@ function attachHost(ws, info, ip) {
       for (const client of link.clients.values()) if (client.readyState === client.OPEN) client.send(data);
     } else if (msg.t === 'shares') {
       // just the guest list: the host decides what each of them may see
-      link.shareEmails = Array.isArray(msg.emails)
-        ? msg.emails
-        : (msg.shares ?? []).flatMap((s) => s.emails ?? []); // older hosts sent per-session grants
+      const emails = (
+        Array.isArray(msg.emails) ? msg.emails : (msg.shares ?? []).flatMap((s) => s.emails ?? []) // older hosts sent per-session grants
+      )
+        .map((e) => String(e).trim().toLowerCase()) // the gate compares against a Google claim, which is lowercase
+        .filter(Boolean);
+      link.shareEmails = emails;
+      // saved, because the login gate has to answer for a guest whose host is offline
+      state.shareEmails[link.hostId] = emails;
+      saveState();
       refreshBrowsers(); // a new share may open a slot for the guest right away
     } else if (msg.t === 'push') {
       pushToUser(info.email, { url: BASE_URL, ...msg.payload });

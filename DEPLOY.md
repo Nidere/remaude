@@ -154,6 +154,10 @@ remaude/relay-deploy   {"instanceIp":"…","domain":"…","whitelist":"a@b.com,c
                         "contactEmail":"…","sshKeyPath":"~/.remaude/…pem"}
 ```
 
+`whitelist` is who may **own a host** here. Guests do not belong in it and
+adding them is not needed: sharing a chat or a project from the UI is itself
+what lets that address sign in, and it sees only what the grant covers.
+
 Create them:
 
 ```bash
