@@ -7,12 +7,19 @@
 # comes from the scheduled task gets a batch logon, and only a task with a stored
 # password can do that with nobody logged in. Hence both checks below.
 #
+# The host reaches this script through server-mode.vbs, never directly — see the
+# comment there, it is a trap that costs an afternoon to find.
+#
 # The order is the whole point. Signing out first would take the host down with the
 # session and leave the machine unreachable until somebody walks up to it, so we
 # sign out only after seeing a listener that belongs to session 0.
 $log = "$env:USERPROFILE\.remaude\server-mode.log"
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.remaude" | Out-Null
 function Log($m) { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m" | Add-Content $log }
+
+# wscript throws away whatever we print, so anything that goes wrong has to put
+# itself in the log or it never happened as far as anyone can tell.
+trap { Log "unhandled: $_"; exit 1 }
 
 $task = 'remaude host'
 $port = if ($env:REMAUDE_PORT) { [int]$env:REMAUDE_PORT } else { 7699 }

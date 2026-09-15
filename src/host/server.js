@@ -2639,6 +2639,11 @@ const handlers = {
    * this process, since this process is what it kills first. It also refuses to
    * sign anyone out until it can see the new host in session 0 — the check that
    * keeps a mistake here from costing the machine its remote access entirely.
+   *
+   * It goes through wscript for a reason worth knowing before changing this line:
+   * node kills the children it did not spawn detached, and spawning powershell.exe
+   * detached does not work at all — DETACHED_PROCESS leaves it without a console
+   * and it exits without running a line, silently, pid and all. See server-mode.vbs.
    */
   async server_mode() {
     const status = await serverModeStatus();
@@ -2646,15 +2651,12 @@ const handlers = {
     console.log('server mode requested');
     broadcast({ type: 'server_restarting' });
 
-    const logDir = join(homedir(), '.remaude');
-    mkdirSync(logDir, { recursive: true });
-    const log = openSync(join(logDir, 'server-mode.err.log'), 'a');
     const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-    const child = spawn(
-      'powershell',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'scripts', 'server-mode.ps1')],
-      { detached: true, stdio: ['ignore', log, log], windowsHide: true }
-    );
+    const child = spawn('wscript.exe', ['//B', '//Nologo', join(root, 'scripts', 'server-mode.vbs')], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
     child.on('error', (e) => console.error('server mode spawn failed:', e));
     child.unref();
     console.log(`server mode: spawned pid ${child.pid}`);

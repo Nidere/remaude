@@ -50,6 +50,18 @@ $e | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }
 `ParseFile` decodes the file the same way the interpreter will, so it sees the
 problem. Reading the file yourself as UTF-8 and parsing the string does not.
 
+## The host cannot spawn PowerShell, and fails at it quietly
+
+`spawn('powershell', …, { detached: true })` from the host returns a pid, emits no
+error, writes nothing to stderr — and never runs a line of the script.
+`DETACHED_PROCESS` leaves `powershell.exe` without a console and it exits at once.
+Dropping `detached` makes it run, but node puts non-detached children in a job that
+dies with the parent, which is useless for anything that restarts or kills the host.
+
+Go through `wscript` instead, the way `start-host.vbs` and `server-mode.vbs` do: a
+GUI program does not mind being detached, and the shell it starts gets its own
+console. Whatever it runs has to log for itself — wscript keeps no stdout.
+
 ## Probes
 
 `experiments/test-*.mjs` are offline and free to run in a loop.
