@@ -1,6 +1,7 @@
-// Settings belong to a computer, not to the app. With two hosts connected, the
-// dialog has to say which one it is showing and send every change back to that
-// one — saving into a stranger is the bug this exists for.
+// Settings belong to a computer, not to the app, and they are opened from that
+// computer's row in the sidebar — the one place where a machine is already named.
+// Saving into a stranger is the bug this exists for. The header's gear is a
+// different thing entirely: the browser's own settings, which need no host at all.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
@@ -45,7 +46,7 @@ wss.on('connection', (ws) => {
     if (m.type === 'history') say({ type: 'history', chatId: m.chatId, messages: [] });
     if (m.type === 'get_settings') {
       const h = HOSTS[m._host] ?? HOSTS['host-a'];
-      say({ type: 'settings', _host: m._host ?? 'host-a', userName: h.userName, projectsRoot: h.projectsRoot, relay: { paired: true, connected: true }, claudeAuth: { loggedIn: true, email: 'a@b.c', subscriptionType: 'max' } });
+      say({ type: 'settings', _host: m._host ?? 'host-a', userName: h.userName, projectsRoot: h.projectsRoot, relay: { paired: true, connected: true }, claudeAuth: { loggedIn: true, email: 'a@b.c', subscriptionType: 'max' }, serverMode: { ready: true, reason: '' } });
     }
   });
 });
@@ -66,55 +67,74 @@ const fail = async (why) => {
 const ok = (n) => console.log('ok:', n);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// the row of a named computer, and the 🛠 on it
+const openSettingsOf = (name) =>
+  page.evaluate(
+    `(() => {
+      const head = [...document.querySelectorAll('.host-head')].find((h) => h.querySelector('.host-name')?.textContent === ${JSON.stringify(name)});
+      if (!head) return 'no row for ' + ${JSON.stringify(name)};
+      const btn = [...head.querySelectorAll('.host-actions button')].find((b) => b.title === 'settings of this computer');
+      if (!btn) return 'no settings button on the row';
+      btn.click();
+      return '';
+    })()`
+  );
+
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle2' });
 await page.waitForFunction(`document.querySelectorAll('.chat-item').length === 2`, { timeout: 5000 }).catch(() => fail('both computers never showed up'));
 
-await page.click('#settings-btn');
-await page.waitForFunction(`!document.getElementById('settings').hidden`, { timeout: 3000 }).catch(() => fail('settings did not open'));
+// 1. a computer's settings are opened from the computer
+const problem = await openSettingsOf(HOSTS['host-a'].name);
+if (problem) await fail(problem);
+await page.waitForFunction(`!document.getElementById('host-settings').hidden`, { timeout: 3000 }).catch(() => fail('the settings of that computer did not open'));
 await wait(200);
+ok('the 🛠 on a computer opens that computer');
 
-// 1. the dialog says whose settings these are
-const picker = await page.evaluate(`(() => {
-  const label = document.getElementById('set-host-label');
-  const select = document.getElementById('set-host');
-  return { shown: !label.hidden, options: [...select.options].map((o) => o.textContent), value: select.value, root: document.getElementById('set-root').value };
-})()`);
-if (!picker.shown) await fail('with two computers connected the dialog does not say which one it is showing');
-if (picker.options.length !== 2) await fail(`the picker lists ${picker.options.length} computers`);
-ok(`the dialog names the computer (${picker.options.join(', ')})`);
+// 2. the panel says whose settings these are, and shows theirs
+const shown = await page.evaluate(`(() => ({
+  title: document.getElementById('host-settings-title').textContent,
+  root: document.getElementById('set-root').value,
+}))()`);
+if (shown.title !== HOSTS['host-a'].name) await fail(`the panel is titled "${shown.title}" and not "${HOSTS['host-a'].name}"`);
+if (shown.root !== HOSTS['host-a'].projectsRoot) await fail(`showing ${shown.root} while host-a has ${HOSTS['host-a'].projectsRoot}`);
+ok(`it names the computer (${shown.title}) and shows its own settings`);
 
-// 2. what it shows is that computer's own settings
-const firstHost = picker.value;
-if (picker.root !== HOSTS[firstHost].projectsRoot) await fail(`showing ${picker.root} while ${firstHost} has ${HOSTS[firstHost].projectsRoot}`);
-ok('it shows the settings of the computer it names');
-
-// 3. switching asks the other computer about itself
-const other = Object.keys(HOSTS).find((id) => id !== firstHost);
-await page.select('#set-host', other);
-await page.waitForFunction(`document.getElementById('set-root').value === ${JSON.stringify(HOSTS[other].projectsRoot)}`, { timeout: 3000 }).catch(() => fail('switching the computer did not load its settings'));
-const askedOther = asked.some((a) => a.type === 'get_settings' && a.host === other);
-if (!askedOther) await fail('the other computer was never asked about itself');
-ok('switching computers loads that one, from that one');
+// 3. the other computer's row asks the other computer
+await page.click('#host-settings-cancel');
+await wait(100);
+await openSettingsOf(HOSTS['host-b'].name);
+await page.waitForFunction(`document.getElementById('set-root').value === ${JSON.stringify(HOSTS['host-b'].projectsRoot)}`, { timeout: 3000 }).catch(() => fail('opening the other computer did not load its settings'));
+if (!asked.some((a) => a.type === 'get_settings' && a.host === 'host-b')) await fail('the other computer was never asked about itself');
+ok('the other row loads the other computer, from that one');
 
 // 4. and saving goes back to it — not to whichever host answers first
 await page.evaluate(`document.getElementById('set-root').value = 'E:\\\\новое место'`);
-await page.click('#settings-save');
+await page.click('#host-settings-save');
 await wait(300);
 const saved = asked.filter((a) => a.type === 'set_settings');
 if (!saved.length) await fail('nothing was saved at all');
 const last = saved[saved.length - 1];
-if (last.host !== other) await fail(`BUG: the settings of ${other} were sent to ${last.host ?? 'nobody in particular'}`);
+if (last.host !== 'host-b') await fail(`BUG: the settings of host-b were sent to ${last.host ?? 'nobody in particular'}`);
 if (last.body.projectsRoot !== 'E:\\новое место') await fail(`what was saved is not what was typed: ${last.body.projectsRoot}`);
 ok('what you change is saved on the computer you were looking at');
 
-// 5. restarting from here restarts that computer, too
-await page.click('#settings-btn');
-await wait(200);
+// 5. restarting from there restarts that computer, too
+await openSettingsOf(HOSTS['host-b'].name);
+await wait(300);
 await page.click('#restart-server');
 await wait(200);
 const restart = asked.filter((a) => a.type === 'restart_server').pop();
-if (!restart || restart.host !== other) await fail(`restart went to ${restart?.host ?? 'nobody in particular'}`);
+if (!restart || restart.host !== 'host-b') await fail(`restart went to ${restart?.host ?? 'nobody in particular'}`);
 ok('and so does restarting it');
+
+// 6. the header's gear is the browser's own, and asks no computer anything
+const before = asked.length;
+await page.click('#settings-btn');
+await page.waitForFunction(`!document.getElementById('settings').hidden`, { timeout: 3000 }).catch(() => fail('the device settings did not open'));
+const nothingHostly = await page.evaluate(`document.getElementById('host-settings').hidden && !!document.getElementById('wake-label')`);
+if (!nothingHostly) await fail('the header gear opened a computer, not the browser');
+if (asked.length !== before) await fail(`opening the browser's own settings asked a computer: ${asked.slice(before).map((a) => a.type).join(', ')}`);
+ok('the header gear is this browser, and needs no computer to open');
 
 if (problems.length) await fail('page errors were collected');
 console.log('SETTINGS OK');

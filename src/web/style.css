@@ -162,8 +162,9 @@ body {
 
 /* ---------- settings ---------- */
 
-#settings[hidden] { display: none; }
-#settings {
+/* two panels, one shape: the computer's settings and this browser's */
+#settings[hidden], #host-settings[hidden] { display: none; }
+#settings, #host-settings {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
@@ -172,21 +173,21 @@ body {
   justify-content: center;
   z-index: 15;
 }
-#settings-box {
+.settings-box {
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: 12px;
   width: min(420px, 92vw);
   padding: 16px;
 }
-#settings-title { font-weight: 600; margin-bottom: 12px; }
-#settings-box label {
+.settings-title { font-weight: 600; margin-bottom: 12px; }
+.settings-box label {
   display: block;
   font-size: 12px;
   color: var(--dim);
   margin-bottom: 10px;
 }
-#settings-box input {
+.settings-box input {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -198,7 +199,7 @@ body {
   font: inherit;
 }
 /* the account picker sits with the inputs, so it borrows their shape */
-#settings-box select {
+.settings-box select {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -248,8 +249,8 @@ body {
 }
 #claude-login-btn:hover { border-color: var(--accent); color: var(--text); }
 
-#settings-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
-#settings-actions button {
+.settings-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.settings-actions button {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 14px;
@@ -257,7 +258,7 @@ body {
   background: var(--bg-3);
   color: var(--text);
 }
-#settings-save { background: var(--accent); color: #10141f; border-color: var(--accent); }
+.settings-save { background: var(--accent); color: #10141f; border-color: var(--accent); }
 
 /* ---------- mobile ---------- */
 
@@ -848,12 +849,13 @@ body.resizing { user-select: none; cursor: col-resize; }
 }
 #share-btn:hover { border-color: var(--accent); color: var(--text); }
 
-/* guest mode: host controls are hidden, reading and writing stay */
+/* Guest mode: host controls are hidden, reading and writing stay. The header's
+   gear is not among them any more — what is behind it now is the guest's own
+   browser, its screen and its notifications, and none of that is the host's. */
 body.guest #share-btn,
 body.guest #permission-mode,
 body.guest #model-select,
 body.guest #effort-select,
-body.guest #settings-btn,
 body.guest #stop-btn,
 body.guest #limits,
 body.guest .new-chat,
@@ -1374,9 +1376,11 @@ body.editing .agent-item { display: none; } /* agents are not editable */
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
   }
   #sidebar.open { transform: translateX(0); }
-  /* four thumb-sized buttons plus a name do not fit 260px: the name takes its own line */
-  .project-head { flex-wrap: wrap; row-gap: 4px; }
-  .project-name { flex: 1 1 100%; }
+  /* thumb-sized buttons plus a name do not fit 260px: the name takes its own line.
+     The computer's row learned this the moment its settings moved onto it — four
+     buttons left its name 39 pixels, which is an ellipsis and nothing else. */
+  .project-head, .host-head { flex-wrap: wrap; row-gap: 4px; }
+  .project-name, .host-name { flex: 1 1 100%; }
   #header { padding: 8px 10px; gap: 8px; }
   #limits { font-size: 10px; }
   #chat-meta { font-size: 10px; }
@@ -1488,9 +1492,9 @@ body.guest .add-host { display: none; }
 /* panels must fit the *visible* viewport, not the tallest one the URL bar allows */
 #att-box { max-height: 86dvh; }
 #doc-box, #att-box { max-height: 92dvh; }
-#share-box, #settings-box { max-height: 90dvh; display: flex; flex-direction: column; }
+#share-box, .settings-box { max-height: 90dvh; display: flex; flex-direction: column; }
 #share-list { max-height: none; flex: 1; }
-#settings-box { overflow-y: auto; }
+.settings-box { overflow-y: auto; }
 #picker-box { max-height: 80dvh; }
 #lightbox img { max-height: 96dvh; }
 
@@ -2001,29 +2005,8 @@ body.guest #export-btn { display: none; }
 .att-doc-drop:hover { color: var(--accent); }
 .att-doc .att-doc-drop:last-child:hover { color: var(--red); }
 
-/* which computer these settings belong to, and which are the browser's */
-.settings-scope {
-  font-size: 11px;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  color: var(--dim);
-  margin: 14px 0 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-#settings-box .settings-scope:first-of-type { margin-top: 6px; }
-#set-host {
-  display: block;
-  width: 100%;
-  margin-top: 4px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  padding: 7px 10px;
-  font: inherit;
-}
-#set-host-label[hidden] { display: none; }
+/* The scope labels and the computer picker are gone: each panel now belongs to
+   one thing and is opened from it, so it says what it is in its own title. */
 
 /* download, in the viewer's header */
 #doc-download {

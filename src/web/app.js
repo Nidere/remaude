@@ -577,14 +577,15 @@ const handlers = {
     // these belong to the computer that answered, not to the app: with several
     // hosts connected, saving them anywhere else configures a stranger
     settingsHost = hostKey(_host);
-    renderSettingsHosts();
+    $('host-settings-title').textContent =
+      knownHosts.find((h) => h.id === settingsHost)?.name ?? 'This computer';
     $('set-username').value = userName ?? '';
     $('set-root').value = projectsRoot ?? '';
     renderRelayStatus(relay);
     renderAuthProfiles(profiles ?? [], profile);
     renderClaudeAuth(claudeAuth);
     renderServerMode(serverMode);
-    $('settings').hidden = false;
+    $('host-settings').hidden = false;
   },
 
   claude_login_url({ url }) {
@@ -1108,6 +1109,14 @@ function renderSidebar() {
           'A guest can write into every chat on this machine, and chats run in bypass — that is command execution on your computer under your account. Share a host only with someone you trust that far.'
         );
       };
+      // ⚙ stays what it is on a project row — instructions. The machine's own
+      // settings are a different thing and get a button of their own.
+      const btnSettings = el('button', '', '🛠');
+      btnSettings.title = 'settings of this computer';
+      btnSettings.onclick = (e) => {
+        e.stopPropagation();
+        openHostSettings(hostId);
+      };
       const btnPrompt = el('button', '', '⚙');
       btnPrompt.title = 'instructions for every chat on this computer';
       btnPrompt.onclick = (e) => {
@@ -1119,7 +1128,7 @@ function renderSidebar() {
           hostState.hostPrompt ?? ''
         );
       };
-      actions.append(btnAdd, btnPrompt, btnShare);
+      actions.append(btnAdd, btnSettings, btnPrompt, btnShare);
       head.append(actions);
     }
     if (editMode && !hostState.guest && meta) {
@@ -2604,37 +2613,20 @@ $('effort-select').addEventListener('change', function () {
 });
 
 // ---------- settings ----------
-// Everything above the "this device" line lives on one computer: its name on
-// messages, where its projects are, which Claude account it runs as. With more
-// than one connected, the dialog has to say which one it is talking to.
+// A computer's settings belong to that computer: its name on messages, where its
+// projects are, which Claude account it runs as, whether it is a server. They are
+// opened from its row in the sidebar, next to its instructions and its sharing,
+// which is the one place in the app where a machine is already identified. What
+// the header's ⚙ keeps is what belongs to the browser instead.
 
 let settingsHost = null;
 const settingsTarget = () => settingsHost ?? ownHostId();
 
-function ownHosts() {
-  return [...hostStates.entries()]
-    .filter(([, st]) => !st.guest)
-    .map(([id]) => ({ id, name: knownHosts.find((h) => h.id === id)?.name ?? 'this computer' }));
+/** The panel is filled by that host's answer, so opening it is asking. */
+function openHostSettings(hostId) {
+  settingsHost = hostId;
+  sendTo(hostId, { type: 'get_settings' });
 }
-
-function renderSettingsHosts() {
-  const hosts = ownHosts();
-  const select = $('set-host');
-  $('set-host-label').hidden = hosts.length < 2;
-  select.innerHTML = '';
-  for (const host of hosts) {
-    const option = document.createElement('option');
-    option.value = host.id;
-    option.textContent = host.name;
-    option.selected = host.id === settingsTarget();
-    select.append(option);
-  }
-}
-
-$('set-host').addEventListener('change', function () {
-  settingsHost = this.value; // ask that computer about itself
-  sendTo(settingsHost, { type: 'get_settings' });
-});
 
 // Which account the auth block is talking about. Several may be signed in on one
 // machine; a project picks between them in its own settings.
@@ -2720,7 +2712,7 @@ $('doc-close').onclick = () => ($('doc-viewer').hidden = true);
 // On a phone the backdrop around a full-screen panel is a few pixels wide, and
 // the system back gesture would otherwise close the whole app. Every open panel
 // takes a history entry, so "back" closes it instead.
-const PANELS = ['attachments-panel', 'doc-viewer', 'share-panel', 'picker', 'settings', 'lightbox', 'thread-panel'];
+const PANELS = ['attachments-panel', 'doc-viewer', 'share-panel', 'picker', 'settings', 'host-settings', 'lightbox', 'thread-panel'];
 for (const id of PANELS) {
   const node = $(id);
   if (!node) continue;
@@ -2740,18 +2732,24 @@ $('doc-viewer').addEventListener('click', (e) => {
 
 $('edit-btn').onclick = () => setEditMode(!editMode);
 
-$('settings-btn').onclick = () => sendTo(settingsTarget(), { type: 'get_settings' });
-$('settings-cancel').onclick = () => ($('settings').hidden = true);
+// nothing in here needs a host to answer, so it opens with every machine offline
+$('settings-btn').onclick = () => ($('settings').hidden = false);
+$('settings-close').onclick = () => ($('settings').hidden = true);
 $('settings').addEventListener('click', (e) => {
   if (e.target.id === 'settings') $('settings').hidden = true;
 });
-$('settings-save').onclick = () => {
+
+$('host-settings-cancel').onclick = () => ($('host-settings').hidden = true);
+$('host-settings').addEventListener('click', (e) => {
+  if (e.target.id === 'host-settings') $('host-settings').hidden = true;
+});
+$('host-settings-save').onclick = () => {
   sendTo(settingsTarget(), {
     type: 'set_settings',
     userName: $('set-username').value.trim(),
     projectsRoot: $('set-root').value.trim(),
   });
-  $('settings').hidden = true;
+  $('host-settings').hidden = true;
 };
 
 // chat search — filtering over the cached last state
@@ -2869,7 +2867,7 @@ $('notify-btn').onclick = async function () {
 $('restart-server').onclick = () => {
   // no confirmation: open chats reopen themselves, so a restart costs nothing
   sendTo(settingsTarget(), { type: 'restart_server' });
-  $('settings').hidden = true;
+  $('host-settings').hidden = true;
 };
 
 // Server mode: the host restarts outside the desktop session and the session ends,
@@ -2902,7 +2900,7 @@ $('server-mode').onclick = function () {
   if (serverModeArmed) {
     disarmServerMode();
     sendTo(settingsTarget(), { type: 'server_mode' });
-    $('settings').hidden = true;
+    $('host-settings').hidden = true;
     return;
   }
   this.textContent = 'Sign out of this computer? Press again';

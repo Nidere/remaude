@@ -254,10 +254,25 @@ const projRow = await page.evaluate(`(() => {
   const name = row.querySelector('.project-name').getBoundingClientRect();
   return { rowW: r.width, nameW: name.width, buttons: row.querySelectorAll('.project-actions button').length, overflow: row.scrollWidth > row.clientWidth + 1 };
 })()`);
-if (projRow.buttons !== 4) await fail(`the project row should now carry 4 buttons, has ${projRow.buttons}`);
+// The count is a tripwire, not the point: when a button is added here, the two
+// checks under it have to be looked at again on a phone rather than assumed.
+if (projRow.buttons !== 5) await fail(`the project row should now carry 5 buttons, has ${projRow.buttons}`);
 if (projRow.overflow) await fail(`the project row overflows on a phone: ${JSON.stringify(projRow)}`);
 if (projRow.nameW < 40) await fail(`the project name is squeezed to ${projRow.nameW}px by the buttons`);
-ok(`project row fits 4 buttons (name keeps ${Math.round(projRow.nameW)}px)`);
+ok(`project row fits 5 buttons (name keeps ${Math.round(projRow.nameW)}px)`);
+
+// the computer's own row, which carries one more since its settings moved onto it
+const hostRow = await page.evaluate(`(() => {
+  const row = document.querySelector('.host-head');
+  const r = row.getBoundingClientRect();
+  const name = row.querySelector('.host-name').getBoundingClientRect();
+  const acts = row.querySelector('.host-actions').getBoundingClientRect();
+  return { rowW: r.width, nameW: name.width, actionsW: acts.width, buttons: row.querySelectorAll('.host-actions button').length, overflow: row.scrollWidth > row.clientWidth + 1 };
+})()`);
+if (hostRow.buttons !== 4) await fail(`the computer row should now carry 4 buttons, has ${hostRow.buttons}`);
+if (hostRow.overflow) await fail(`the computer row overflows on a phone: ${JSON.stringify(hostRow)}`);
+if (hostRow.nameW < 40) await fail(`the computer name is squeezed to ${hostRow.nameW}px by the buttons`);
+ok(`computer row fits 4 buttons (name keeps ${Math.round(hostRow.nameW)}px)`);
 
 const filesBtn = '.project-actions button:nth-child(3)';
 await mustTap(filesBtn, 'the 📁 explorer button');

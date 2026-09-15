@@ -151,11 +151,11 @@
 
   <div id="lightbox" hidden><img alt="" /></div>
 
-  <div id="settings" hidden>
-    <div id="settings-box">
-      <div id="settings-title">Settings</div>
-      <label id="set-host-label" hidden>Computer<select id="set-host"></select></label>
-      <div class="settings-scope">Settings of this computer</div>
+  <!-- One computer's own settings, opened from its row in the sidebar — which is
+       where it is already named, so nothing here has to ask which machine it means. -->
+  <div id="host-settings" hidden>
+    <div class="settings-box">
+      <div id="host-settings-title" class="settings-title">This computer</div>
       <label>Name (message signature)<input id="set-username" spellcheck="false" /></label>
       <label>Projects root<input id="set-root" spellcheck="false" /></label>
       <div id="auth-block">
@@ -180,13 +180,23 @@
       <button id="restart-server" title="Open chats reopen automatically">⟳ Restart server</button>
       <button id="server-mode" title="Restart the host outside the desktop session and sign out — the machine keeps answering from anywhere">🖥 Server mode</button>
       <div id="server-mode-status"></div>
-      <div class="settings-scope">This device</div>
+      <div class="settings-actions">
+        <button id="host-settings-save" class="settings-save">Save</button>
+        <button id="host-settings-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The browser this is being read in, and nothing else. It needs no host to
+       answer, so it opens even with every machine offline. -->
+  <div id="settings" hidden>
+    <div class="settings-box">
+      <div class="settings-title">This device</div>
       <label id="wake-label" title="Hold the screen on while this app is open"><input type="checkbox" id="wake-lock" /> Keep the screen awake</label>
       <button id="notify-btn" title="Push on permission requests and finished tasks (works via relay, not on localhost)">🔔 Enable notifications</button>
       <div id="notify-status"></div>
-      <div id="settings-actions">
-        <button id="settings-save">Save</button>
-        <button id="settings-cancel">Cancel</button>
+      <div class="settings-actions">
+        <button id="settings-close">Close</button>
       </div>
     </div>
   </div>
