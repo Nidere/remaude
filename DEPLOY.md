@@ -70,6 +70,37 @@ child of a shell dies with it, silently. The script hands the launch to the task
 The task runs through `scripts/start-host.vbs`, so no console window flashes on
 every check; each start the watchdog had to make is noted in `~/.remaude/watchdog.log`.
 
+#### Starting before anyone logs in
+
+A task registered that way runs "only when the user is logged on", so after a
+reboot nothing happens — not the logon trigger, not the minute-by-minute
+watchdog — until somebody walks up to the machine and types a password. To have
+the host come up at boot instead, register the task with a stored password:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-host.ps1 -Install -AtBoot
+```
+
+It asks for the Windows password of the account it is registering for and hands
+it to the Task Scheduler's own credential store; it is not written to disk here.
+Windows then gives the task a batch logon, which loads the profile and with it
+DPAPI and Credential Manager — where `gh` keeps its GitHub tokens, so sessions
+can still push. The "do not store password" variant (S4U) has neither, and is
+not worth the reboot it survives. A blank-password account cannot do this at
+all: Windows refuses batch logon to those.
+
+The script checks the password by running the task once and reading
+`LastTaskResult`; if Windows rejects it, the previous logon-only arrangement is
+put back rather than left broken.
+
+This is also what ⚙ → **Server mode** in the UI requires. That button restarts
+the host through the task, so the new one comes up in session 0, and then signs
+the owner out — leaving a machine with nobody logged into it that still answers
+through the relay. It refuses to sign anyone out until it can see the new host
+listening from session 0; what it decided is in `~/.remaude/server-mode.log`.
+Getting back to a desktop is just logging in as usual, but the host stays in
+session 0 until something starts it from an interactive session again.
+
 ### 2. Google OAuth client
 
 Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID →
@@ -318,6 +349,7 @@ touch devices.
 # host
 ~/.remaude/server.log, server.err.log  (the run before: *.prev.log)
 ~/.remaude/watchdog.log                  (every time the scheduler found the host dead)
+~/.remaude/server-mode.log               (going headless: what it waited for, and whether it signed out)
 # relay
 ssh -i <pem> ubuntu@<ip> 'journalctl -u remaude-relay -n 50 --no-pager'
 ssh -i <pem> ubuntu@<ip> 'systemctl is-active remaude-relay caddy'

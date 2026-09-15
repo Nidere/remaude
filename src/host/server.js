@@ -21,7 +21,7 @@ import { homedir, userInfo, hostname } from 'node:os';
 import { join, dirname, extname, resolve, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { HostAgent } from './agent.js';
 import {
@@ -1524,6 +1524,62 @@ async function claudeAuthStatus(profile) {
   return st ? { loggedIn: st.loggedIn, email: st.email, subscriptionType: st.subscriptionType } : null;
 }
 
+// ---------- server mode: the machine keeps answering with nobody logged into it ----------
+
+const HOST_TASK = 'remaude host'; // the Task Scheduler entry that owns the host on Windows
+
+function powerShell(script) {
+  return new Promise((done, fail) => {
+    execFile(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { windowsHide: true, timeout: 20e3 },
+      (e, stdout) => (e ? fail(e) : done(stdout))
+    );
+  });
+}
+
+/**
+ * Whether this computer can become a server — and if not, why not, in words the
+ * settings panel can show. Signing the owner out is only safe when something is
+ * able to start the host again with nobody at the keyboard; otherwise the machine
+ * goes silent until a person walks up to it, which is the one outcome remote
+ * access exists to prevent.
+ */
+async function serverModeStatus() {
+  if (process.platform !== 'win32')
+    return { ready: false, reason: 'server mode is a Windows arrangement — this host runs elsewhere' };
+
+  const install = 'run scripts/start-host.ps1 -Install -AtBoot on the machine';
+  let info;
+  try {
+    info = JSON.parse(
+      await powerShell(`
+        $t = Get-ScheduledTask -TaskName '${HOST_TASK}' -ErrorAction SilentlyContinue
+        $out = [ordered]@{ task = [bool]$t; logon = ''; boot = $false; session = -1 }
+        if ($t) {
+          $out.logon = [string]$t.Principal.LogonType
+          $out.boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })
+        }
+        $p = Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue
+        if ($p) { $out.session = $p.SessionId }
+        [pscustomobject]$out | ConvertTo-Json -Compress
+      `)
+    );
+  } catch (e) {
+    return { ready: false, reason: `could not ask the task scheduler: ${e.message}` };
+  }
+
+  // Session 0 is where a batch logon lands, and no desktop ever does: finding
+  // ourselves there means this already happened, and there is nothing to sign out of.
+  if (info.session === 0) return { ready: false, already: true, reason: 'already running with no desktop session' };
+  if (!info.task) return { ready: false, reason: `the "${HOST_TASK}" task is not registered — ${install}` };
+  if (info.logon !== 'Password')
+    return { ready: false, reason: `the "${HOST_TASK}" task only runs while you are signed in — ${install}` };
+  if (!info.boot) return { ready: false, reason: `the "${HOST_TASK}" task has no "at startup" trigger — ${install}` };
+  return { ready: true, reason: '' };
+}
+
 // ---------- WebSocket ----------
 
 function broadcast(obj) {
@@ -2488,6 +2544,7 @@ const handlers = {
       profiles: allProfiles(),
       profile: profile ?? DEFAULT_PROFILE,
       claudeAuth: await claudeAuthStatus(profile),
+      serverMode: await serverModeStatus(),
     });
   },
 
@@ -2570,6 +2627,37 @@ const handlers = {
     child.unref();
     console.log(`restart: spawned pid ${child.pid}`);
     setTimeout(() => process.exit(0), 300);
+  },
+
+  /**
+   * Server mode: restart the host outside the desktop session, then end that
+   * session. The computer stops being a computer somebody sits at and becomes one
+   * that answers — through the relay, from anywhere, across reboots nobody is
+   * there for.
+   *
+   * We do not do the signing out ourselves: the script that does it has to outlive
+   * this process, since this process is what it kills first. It also refuses to
+   * sign anyone out until it can see the new host in session 0 — the check that
+   * keeps a mistake here from costing the machine its remote access entirely.
+   */
+  async server_mode() {
+    const status = await serverModeStatus();
+    if (!status.ready) throw new Error(status.reason);
+    console.log('server mode requested');
+    broadcast({ type: 'server_restarting' });
+
+    const logDir = join(homedir(), '.remaude');
+    mkdirSync(logDir, { recursive: true });
+    const log = openSync(join(logDir, 'server-mode.err.log'), 'a');
+    const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+    const child = spawn(
+      'powershell',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'scripts', 'server-mode.ps1')],
+      { detached: true, stdio: ['ignore', log, log], windowsHide: true }
+    );
+    child.on('error', (e) => console.error('server mode spawn failed:', e));
+    child.unref();
+    console.log(`server mode: spawned pid ${child.pid}`);
   },
 };
 

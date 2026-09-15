@@ -69,6 +69,7 @@ remaude **replaces the VS Code chat UI** rather than mirroring it. VS Code stays
 - Claude usage limits (5-hour / weekly / per-model windows) and context fill shown in the header;
 - signing in to Claude straight from the UI when OAuth expires — the link opens on any device;
 - host autostart (Task Scheduler on Windows, launchd on macOS) and a restart button in settings;
+- server mode: one button moves the host out of the desktop session and signs the owner out, so the machine keeps answering with nobody logged into it, across reboots nobody is there for;
 - one-command macOS installer: the relay serves `install.sh` with its own address baked in.
 
 ## Access model

@@ -573,7 +573,7 @@ const handlers = {
     $('conn-dot').classList.remove('on');
   },
 
-  settings({ userName, projectsRoot, relay, claudeAuth, profiles, profile, _host }) {
+  settings({ userName, projectsRoot, relay, claudeAuth, profiles, profile, serverMode, _host }) {
     // these belong to the computer that answered, not to the app: with several
     // hosts connected, saving them anywhere else configures a stranger
     settingsHost = hostKey(_host);
@@ -583,6 +583,7 @@ const handlers = {
     renderRelayStatus(relay);
     renderAuthProfiles(profiles ?? [], profile);
     renderClaudeAuth(claudeAuth);
+    renderServerMode(serverMode);
     $('settings').hidden = false;
   },
 
@@ -623,6 +624,12 @@ const handlers = {
     // modal alert(), which reads as the whole app freezing
     if (inResponseTo?.includes('comment') || inResponseTo === 'read_artifact' || inResponseTo === 'open_doc_link') {
       docComments.showError(message);
+      return;
+    }
+    // the refusal to sign out belongs next to the button that offered to
+    // — the settings panel is open and covering any banner behind it
+    if (inResponseTo === 'server_mode') {
+      renderServerMode({ ready: false, reason: message });
       return;
     }
     if (activeChatId) appendTo(activeChatId, el('div', 'error-banner', `error: ${message}`));
@@ -2863,6 +2870,44 @@ $('restart-server').onclick = () => {
   // no confirmation: open chats reopen themselves, so a restart costs nothing
   sendTo(settingsTarget(), { type: 'restart_server' });
   $('settings').hidden = true;
+};
+
+// Server mode: the host restarts outside the desktop session and the session ends,
+// leaving a machine nobody is logged into that still answers from anywhere. The
+// chats come back like any restart, but everything else open on that desktop does
+// not — so unlike the restart above, this one asks. The host refuses outright
+// unless it can be started again with nobody at the keyboard; when it refuses, the
+// reason is already on the line under the button.
+let serverModeArmed = null;
+
+function renderServerMode(state) {
+  disarmServerMode();
+  const status = $('server-mode-status');
+  // a host from before this existed says nothing about it: offering the button
+  // there would promise something nobody on that end knows how to do
+  $('server-mode').hidden = !state;
+  $('server-mode').disabled = !state?.ready;
+  status.textContent = state?.reason ?? '';
+  status.className = state?.already ? 'ok' : state?.reason ? 'warn' : '';
+}
+
+function disarmServerMode() {
+  clearTimeout(serverModeArmed);
+  serverModeArmed = null;
+  $('server-mode').textContent = '🖥 Server mode';
+  $('server-mode').classList.remove('armed');
+}
+
+$('server-mode').onclick = function () {
+  if (serverModeArmed) {
+    disarmServerMode();
+    sendTo(settingsTarget(), { type: 'server_mode' });
+    $('settings').hidden = true;
+    return;
+  }
+  this.textContent = 'Sign out of this computer? Press again';
+  this.classList.add('armed');
+  serverModeArmed = setTimeout(disarmServerMode, 6000);
 };
 
 setModeSelect($('permission-mode').value); // highlight bypass on startup

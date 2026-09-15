@@ -895,7 +895,8 @@ body.guest .chat-actions { display: none !important; }
 #notify-status.ok { color: var(--green); }
 #notify-status.warn { color: var(--yellow); }
 
-#restart-server {
+#restart-server,
+#server-mode {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -908,7 +909,22 @@ body.guest .chat-actions { display: none !important; }
   font: inherit;
   font-size: 13px;
 }
-#restart-server:hover { border-color: var(--red); color: var(--red); }
+#restart-server:hover,
+#server-mode:enabled:hover { border-color: var(--red); color: var(--red); }
+/* asked once, and the second press is the answer — it should look like one */
+#server-mode.armed { border-color: var(--red); color: var(--red); }
+#server-mode:disabled { opacity: 0.5; cursor: default; }
+#server-mode[hidden] { display: none; }
+
+#server-mode-status:empty { display: none; }
+#server-mode-status {
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 6px 2px 0;
+  color: var(--dim);
+}
+#server-mode-status.ok { color: var(--green); }
+#server-mode-status.warn { color: var(--yellow); }
 
 #conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); }
 #conn-dot.on { background: var(--green); }

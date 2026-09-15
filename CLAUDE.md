@@ -30,6 +30,26 @@ the key's ACL has been widened. See the note about the Codex sandbox in this
 machine's own instructions (⚙ beside the host in the sidebar) — the fix is two
 `icacls` lines.
 
+## An em dash inside a PowerShell string breaks the script
+
+The `.ps1` files here are UTF-8 without a BOM, and Windows PowerShell 5.1 reads
+BOM-less files as Windows-1252. An em dash decodes into `â€”`, whose last
+character is a typographic right quote — which PowerShell accepts as a string
+delimiter. The string ends early, the braces stop matching, and the script dies
+with `Missing closing '}'` pointing at a line where nothing is wrong.
+
+In comments none of this matters. So keep prose in `.ps1` comments as it is, and
+keep everything inside quotes plain ASCII. Before trusting a script you edited:
+
+```powershell
+$e = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts\x.ps1).Path, [ref]$null, [ref]$e)
+$e | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }
+```
+
+`ParseFile` decodes the file the same way the interpreter will, so it sees the
+problem. Reading the file yourself as UTF-8 and parsing the string does not.
+
 ## Probes
 
 `experiments/test-*.mjs` are offline and free to run in a loop.
