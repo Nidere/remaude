@@ -21,6 +21,7 @@ node experiments/browser/run.mjs
 | `run-mobile.mjs` | a phone: the stop button, the wake lock, markup while typing, the scroll |
 | `run-mobile-full.mjs` | a phone, everything else: explorer, viewer, comments, escape |
 | `run-settings.mjs` | settings belong to one computer of several |
+| `run-guest.mjs` | what an invited person sees before clicking anything, and what an owner keeps |
 | `smoke-comments.mjs` | the protocol against a real host, in an isolated home |
 | `smoke-threads.mjs` | what the host refuses, and writes nothing for |
 

@@ -192,6 +192,25 @@ function activeIsGuest() {
   return Boolean(hostStates.get(hostId)?.guest);
 }
 
+/**
+ * Should the window wear the guest restrictions?
+ *
+ * Reading the open chat alone was not enough: an invited person lands on "pick
+ * or start a chat" with nothing open, and until they clicked something the
+ * window offered them the owner's controls — bypass, model, limits, add host.
+ * Someone with no machine of their own never has a use for those, whatever is
+ * on screen; someone who owns one loses them only while reading a guest chat.
+ */
+function guestView() {
+  if (!hostStates.size) return false; // nothing has arrived yet — do not flash the restrictions at an owner
+  const ownsAHost = [...hostStates.values()].some((st) => !st.guest);
+  return !ownsAHost || activeIsGuest();
+}
+
+function applyGuestView() {
+  document.body.classList.toggle('guest', guestView());
+}
+
 // ---------- WS ----------
 
 const outbox = []; // messages sent before the WS opened
@@ -714,7 +733,7 @@ function selectChat(chatId) {
   document.querySelectorAll('.chat-item').forEach((n) => n.classList.toggle('active', n.dataset.chatId === chatId));
   const cur = chats.get(chatId);
   // host controls stay hidden while we are looking at someone else's chat
-  document.body.classList.toggle('guest', activeIsGuest());
+  applyGuestView();
   reportFocus();
   chatThreads.chatSwitched(chatId);
   cur.unread = 0;
@@ -1078,6 +1097,7 @@ function openModal(title, items, input = null) {
 // ---------- sidebar ----------
 
 function renderSidebar() {
+  applyGuestView(); // hosts come and go — with them the answer to "is this window a guest's"
   const root = $('projects');
   root.innerHTML = '';
   // own hosts first, then other people's, each as its own section
@@ -1221,6 +1241,19 @@ function renderHostProjects(root, hostId, hostState) {
       head.append(name, actions);
     } else {
       head.append(name);
+      // Someone else's project, and the host has said this guest may start chats
+      // in it. It sends that permission in the snapshot and has always honoured
+      // it; the sidebar simply never drew the button, so a whole shared project
+      // was read-only for no reason.
+      if (p.canCreate) {
+        const actions = el('span', 'project-actions guest-ok', '');
+        const btnNew = el('button', '', '+');
+        btnNew.title = 'new chat';
+        // no permission mode from here: the host pins a guest's chats to "ask"
+        btnNew.onclick = () => sendTo(hostId, { type: 'create_chat', projectPath: p.path });
+        actions.append(btnNew);
+        head.append(actions);
+      }
     }
 
     const filter = $('search').value.trim().toLowerCase();

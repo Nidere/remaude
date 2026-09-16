@@ -861,6 +861,12 @@ body.guest #limits,
 body.guest .new-chat,
 body.guest .project-actions,
 body.guest .chat-actions { display: none !important; }
+/* ✎ rearranges hosts, projects and chats — every one of those affordances is
+   drawn for own hosts only, so for a guest the mode turns on and shows nothing */
+body.guest #edit-btn { display: none; }
+/* …except the one button a guest is allowed: a new chat in a project whose
+   owner shared the whole thing with them */
+body.guest .project-actions.guest-ok { display: flex !important; }
 
 #chat-meta { white-space: nowrap; font-variant-numeric: tabular-nums; }
 #chat-meta .warn { color: var(--yellow); }
