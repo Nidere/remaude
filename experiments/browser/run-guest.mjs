@@ -28,6 +28,15 @@ const OWNER_PROJECT = 'C:\\Users\\Nidere\\Documents\\Projects\\mine';
 const SHARED_PROJECT = 'C:\\Users\\Nikita\\wiki';
 const CLOSED_PROJECT = 'C:\\Users\\Nikita\\secrets'; // a single chat shared out of it, nothing more
 
+// The host's own list, copied from src/host/server.js. Anything else a guest
+// sends comes back as an error in their feed — so the UI must not send it.
+const GUEST_TYPES = new Set([
+  'send', 'history', 'focus', 'create_chat', 'list_sessions', 'open_session', 'attachments', 'image',
+  'tool_result', 'upload_file', 'save_draft', 'create_thread', 'open_doc_link', 'list_dir', 'add_artifact',
+  'read_artifact', 'list_comments', 'add_comment', 'reply_comment', 'edit_comment', 'delete_comment',
+  'resolve_comment', 'mark_thread_seen', 'ask_llm_comment',
+]);
+
 const READER = 'me@nidere.com'; // whoever is looking, on whichever machine
 const THEM = 'ostapcove@nidere.com';
 
@@ -90,6 +99,11 @@ wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
     const m = JSON.parse(raw);
     asked.push({ type: m.type, host: m._host ?? null, body: m });
+    // someone else's machine refuses everything a guest has no business asking
+    if ((m._host ?? 'host-them') === 'host-them' && !GUEST_TYPES.has(m.type)) {
+      say({ type: 'error', message: 'only the host owner can do that', inResponseTo: m.type });
+      return;
+    }
     if (m.type === 'history') say({ type: 'history', chatId: m.chatId, messages: HISTORY });
   });
 });
@@ -197,6 +211,16 @@ await checkSides('in a shared chat', {
   'от владельца машины': 'left',
   'от другого гостя': 'left',
 });
+
+// Opening a chat is not an act of administration. Whatever the window asks the
+// host on the way in has to be something a guest is allowed to ask — otherwise
+// the refusal lands in their feed as a red banner about nothing they did.
+await page.type('#input', 'печатаю');
+await wait(800);
+const refusals = asked.filter((a) => (a.host ?? 'host-them') === 'host-them' && !GUEST_TYPES.has(a.type));
+if (refusals.length) await fail(`a guest's window asked for: ${[...new Set(refusals.map((r) => r.type))].join(', ')}`);
+if (await visible('.error-banner')) await fail('a guest opening a chat is shown an error');
+ok('opening a chat asks the host for nothing a guest may not ask');
 
 // ---------- 2. an owner who also reads someone else's chats ----------
 mode = 'mixed';

@@ -736,10 +736,15 @@ function selectChat(chatId) {
   if (chat.mode) setModeSelect(chat.mode);
   renderMeta(chat);
   renderLimits(); // the account changes with the project, and with it the numbers
-  // nothing known about this account yet — ask, instead of showing an empty widget
+  // Nothing known about this account yet — ask, instead of showing an empty
+  // widget. Never on someone else's machine: how much of the owner's allowance
+  // is left is not a guest's business, the host says so, and the refusal landed
+  // in the guest's feed as a red banner the moment they opened a chat —
+  // "only the host owner can do that", about something they never did.
   {
     const { hostId, profile } = activeAccount();
-    if (!limitsByHost.get(hostId)?.[profile]) sendTo(hostId, { type: 'get_limits' });
+    const theirs = hostStates.get(hostKey(hostId))?.guest;
+    if (!theirs && !limitsByHost.get(hostId)?.[profile]) sendTo(hostId, { type: 'get_limits' });
   }
   updateComposerButtons(chat.status);
   renderActivity(chat); // the strip belongs to this chat, not to the one we left
