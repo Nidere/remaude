@@ -103,6 +103,12 @@ guest.send({ type: 'history', chatId });
 const history = await waitFor(guest.inbox, 'history');
 console.log(`[guest] history: ${history.messages.length} messages — ${history.messages.map((m) => m.type).join(', ')}`);
 
+// the feed puts a message on one side or the other by this, so it has to say
+// whose it is — and on this machine the guest is not the one who wrote it
+const written = history.messages.find((m) => m.type === 'user' && m.author);
+console.log(`[guest] the owner's message is signed ${written?.author} / ${written?.authorId}, and we are ${state.me}`);
+const signed = state.me === GUEST && written?.authorId === '@owner';
+
 guest.send({ type: 'create_chat', projectPath: projectDir });
 const made = await waitFor(guest.inbox, 'chat_created');
 console.log(`[guest] started a chat of their own: ${made.chatId.slice(0, 8)}`);
@@ -112,7 +118,7 @@ guest.send({ type: 'create_chat', projectPath: tmpdir() });
 const refused = await waitFor(guest.inbox, 'error');
 console.log(`[guest] elsewhere: ${refused.message}`);
 
-const ok = state.guest === true && project?.canCreate === true && history.messages.length > 0;
+const ok = state.guest === true && project?.canCreate === true && history.messages.length > 0 && signed;
 console.log(ok ? '\nOK' : '\nFAILED');
 
 host.stop();

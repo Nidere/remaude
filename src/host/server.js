@@ -1406,6 +1406,7 @@ function guestState(guest) {
   return {
     ...snapshot,
     guest: true,
+    me: guest.email, // the same identity their messages are signed with
     projects: snapshot.projects
       .map((p) => ({ ...p, chats: p.chats.filter((c) => allowed.has(c.id)), canCreate: openable.has(p.path) }))
       // a shared project stays visible even with no chats yet — the guest may start one
@@ -1605,6 +1606,10 @@ function broadcast(obj) {
 function stateSnapshot() {
   return {
     type: 'state',
+    // who the reader is on this machine — the feed puts their own messages on
+    // one side and everybody else's on the other, and names are too weak to
+    // decide that: two people called Nikita are still two people
+    me: '@owner',
     // the owner's two editable prompt levels, so the settings popups open filled in
     hostPrompt: config.hostPrompt ?? '',
     profiles: allProfiles(),
@@ -1717,7 +1722,8 @@ const handlers = {
       parent_tool_use_id: null,
       message: { role: 'user', content },
       timestamp: new Date().toISOString(),
-      author: ws.guest ? ws.guest.email.split('@')[0] : userName,
+      author: authorNameOf(ws),
+      authorId: identityOf(ws), // the name is for reading, this is for deciding whose it is
       localId, // lets the sender skip the echo of the bubble it already drew
       ...(thread ? { chatThread: thread.id } : {}),
     };

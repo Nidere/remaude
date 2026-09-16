@@ -960,6 +960,14 @@ body.guest .project-actions.guest-ok { display: flex !important; }
   overflow-wrap: break-word;
 }
 
+/* Another person in the same chat. The same bubble as one's own — a human is a
+   human, and Claude's answers are the ones without a bubble — moved to the side
+   the reader does not speak from, with the tail turned to match. */
+.msg-user.msg-them {
+  align-self: flex-start;
+  border-radius: 12px 12px 12px 2px;
+}
+
 .msg-assistant {
   align-self: flex-start;
   white-space: pre-wrap;

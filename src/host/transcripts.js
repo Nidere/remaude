@@ -236,7 +236,7 @@ export function isCliCommandNoise(content) {
  * One raw transcript entry → a feed message the web client can render
  * (type/message/parent_tool_use_id), or null for entries the feed skips.
  */
-export function mapEntry(entry, { defaultAuthor = null } = {}) {
+export function mapEntry(entry, { defaultAuthor = null, defaultAuthorId = '@owner' } = {}) {
   if ((entry.type !== 'user' && entry.type !== 'assistant') || !entry.message || entry.isMeta) return null;
   // the harness's system injections (task notifications and the like) are written as
   // user messages, but carry origin.kind — real user input has no origin
@@ -264,8 +264,13 @@ export function mapEntry(entry, { defaultAuthor = null } = {}) {
     message: entry.message,
     parent_tool_use_id: entry.isSidechain ? (entry.parentToolUseId ?? 'past-sidechain') : null,
     timestamp: entry.timestamp ?? null,
-    // the transcript has no author — we sign historical messages with the host owner
+    // The transcript has no author: it belongs to the machine, so what it holds
+    // is the owner's unless something live told us otherwise. The id goes with
+    // the name — the feed decides which side a message sits on by the id, and a
+    // message signed with the owner's name that reads as nobody's would sit on
+    // the guest's own side.
     author: isPlainUserText ? defaultAuthor : undefined,
+    authorId: isPlainUserText ? defaultAuthorId : undefined,
     uuid: entry.uuid ?? null,
   };
 }
@@ -274,7 +279,7 @@ export function mapEntry(entry, { defaultAuthor = null } = {}) {
  * Session history as pseudo-SDK messages — exactly what the web client knows how
  * to render.
  */
-export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
+export function loadHistory(cwd, sessionId, { defaultAuthor = null, defaultAuthorId = '@owner' } = {}) {
   const file = sessionFile(cwd, sessionId); // validates the id
 
   if (!file) return [];
@@ -287,7 +292,7 @@ export function loadHistory(cwd, sessionId, { defaultAuthor = null } = {}) {
     } catch {
       continue;
     }
-    const msg = mapEntry(entry, { defaultAuthor });
+    const msg = mapEntry(entry, { defaultAuthor, defaultAuthorId });
     if (msg) messages.push(msg);
   }
   return messages;

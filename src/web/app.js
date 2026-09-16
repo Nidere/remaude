@@ -193,6 +193,18 @@ function activeIsGuest() {
 }
 
 /**
+ * Whose message is this — the reader's, or one of the other people in the chat?
+ *
+ * Decided by identity, not by the name on the bubble: two people can be called
+ * the same thing. A message with no identity is one we have just typed and not
+ * heard back about, or one from a host too old to say — ours, as it always was.
+ */
+function messageIsMine(msg, hostId) {
+  if (!msg.authorId) return true;
+  return msg.authorId === (hostStates.get(hostKey(hostId))?.me ?? '@owner');
+}
+
+/**
  * Should the window wear the guest restrictions?
  *
  * Reading the open chat alone was not enough: an invited person lands on "pick
@@ -254,10 +266,11 @@ const handlers = {
     renderSidebar();
   },
 
-  state({ projects, guest, hostPrompt, profiles, defaultProfile, _host }) {
+  state({ projects, guest, me, hostPrompt, profiles, defaultProfile, _host }) {
     hostStates.set(hostKey(_host), {
       projects,
       guest: Boolean(guest),
+      me: me ?? null, // who we are on that machine; an older host does not say
       hostPrompt: hostPrompt ?? '',
       profiles: profiles ?? [],
       defaultProfile: defaultProfile ?? 'personal',
@@ -879,7 +892,8 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
         return;
       }
     }
-    const bubble = el('div', 'msg msg-user', '');
+    // somebody else in the same chat: the same bubble, the other side
+    const bubble = el('div', `msg msg-user${messageIsMine(msg, chat.hostId) ? '' : ' msg-them'}`, '');
     if (msg.localId) bubble.dataset.localId = msg.localId;
     // ours until the echo confirms it; the echo then matches by this text
     if (msg.localId && !msg.author && plainText) bubble.dataset.pendingText = plainText;

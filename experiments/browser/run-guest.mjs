@@ -8,6 +8,11 @@
 //
 // The second half checks the other direction: an owner who also has shared
 // chats keeps everything, and loses it only while reading someone else's chat.
+//
+// And a chat with two people in it has to read like one: the reader's own
+// messages down the right, everybody else's down the left. Who "the reader" is
+// depends on the machine — the same person is the owner of one and a guest of
+// another — so the side is decided by the identity that machine gave them.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
@@ -23,8 +28,25 @@ const OWNER_PROJECT = 'C:\\Users\\Nidere\\Documents\\Projects\\mine';
 const SHARED_PROJECT = 'C:\\Users\\Nikita\\wiki';
 const CLOSED_PROJECT = 'C:\\Users\\Nikita\\secrets'; // a single chat shared out of it, nothing more
 
+const READER = 'me@nidere.com'; // whoever is looking, on whichever machine
+const THEM = 'ostapcove@nidere.com';
+
 let mode = 'guest'; // or 'mixed' — flipped between page loads
 const asked = [];
+
+// the same two people in every chat, so the side is the only thing that changes
+const said = (author, authorId, text) => ({
+  type: 'user',
+  author,
+  authorId,
+  message: { role: 'user', content: text },
+  timestamp: new Date().toISOString(),
+});
+const HISTORY = [
+  said('Никита', '@owner', 'от владельца машины'),
+  said('me', READER, 'от того, кто смотрит'),
+  said('ostapcove', THEM, 'от другого гостя'),
+];
 
 const server = createServer(async (req, res) => {
   const path = req.url === '/' ? '/index.html' : req.url.split('?')[0];
@@ -48,6 +70,7 @@ wss.on('connection', (ws) => {
     say({
       type: 'state',
       _host: 'host-mine',
+      me: '@owner', // on our own machine we are the owner
       projects: [{ path: OWNER_PROJECT, name: null, chats: [guestChat('chat-mine', 'мой чат')] }],
     });
 
@@ -56,6 +79,8 @@ wss.on('connection', (ws) => {
     type: 'state',
     _host: 'host-them',
     guest: true,
+    me: READER, // on theirs we are one of the guests
+
     projects: [
       { path: SHARED_PROJECT, name: null, canCreate: true, chats: [guestChat('chat-shared', 'общий чат')] },
       { path: CLOSED_PROJECT, name: null, canCreate: false, chats: [guestChat('chat-single', 'один чат')] },
@@ -65,12 +90,7 @@ wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
     const m = JSON.parse(raw);
     asked.push({ type: m.type, host: m._host ?? null, body: m });
-    if (m.type === 'history')
-      say({
-        type: 'history',
-        chatId: m.chatId,
-        messages: [{ type: 'user', content: 'привет' }, { type: 'assistant', content: 'и тебе' }],
-      });
+    if (m.type === 'history') say({ type: 'history', chatId: m.chatId, messages: HISTORY });
   });
 });
 await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
@@ -96,6 +116,25 @@ const visible = (sel) =>
   page.evaluate(
     `(() => { const n = document.querySelector(${JSON.stringify(sel)}); return Boolean(n && n.offsetParent !== null); })()`
   );
+/** Which side a message sits on, found by what it says. */
+const sideOf = (text) =>
+  page.evaluate(
+    `(() => {
+      const b = [...document.querySelectorAll('.msg-user')].find((n) => n.textContent.includes(${JSON.stringify(text)}));
+      if (!b) return 'missing';
+      return b.classList.contains('msg-them') ? 'left' : 'right';
+    })()`
+  );
+
+/** Everyone in the chat, and where they ended up. */
+async function checkSides(where, expected) {
+  for (const [text, side] of Object.entries(expected)) {
+    const got = await sideOf(text);
+    if (got !== side) await fail(`${where}: "${text}" is ${got}, expected ${side}`);
+  }
+  ok(`${where}: ${Object.entries(expected).map(([t, s]) => `${t} ${s}`).join(', ')}`);
+}
+
 /** The "+" on the row of a project, whoever drew it. */
 const plusOf = (path) =>
   page.evaluate(
@@ -153,6 +192,12 @@ if (!asked.some((a) => a.type === 'history' && a.body.chatId === 'chat-shared'))
   await fail('opening the chat never asked for its history');
 ok('a shared chat opens and its history is asked for and shown');
 
+await checkSides('in a shared chat', {
+  'от того, кто смотрит': 'right',
+  'от владельца машины': 'left',
+  'от другого гостя': 'left',
+});
+
 // ---------- 2. an owner who also reads someone else's chats ----------
 mode = 'mixed';
 await page.reload({ waitUntil: 'networkidle2' });
@@ -171,11 +216,27 @@ await page
   .catch(() => fail("reading someone else's chat left the owner's controls up"));
 ok("reading someone else's chat puts the window in guest mode");
 
+// on that machine we are a guest like any other: nothing there is ours
+await checkSides("in someone else's chat", {
+  'от того, кто смотрит': 'right',
+  'от владельца машины': 'left',
+  'от другого гостя': 'left',
+});
+
 await page.evaluate(`document.querySelector('[data-chat-id="chat-mine"]').click()`);
 await page
   .waitForFunction(`!document.body.classList.contains('guest')`, { timeout: 3000 })
   .catch(() => fail('coming back to their own chat did not restore the controls'));
 ok('coming back to their own chat restores them');
+
+// the same three messages on our own machine, where we are the owner: the
+// sides turn over, because the identity did
+await page.waitForFunction(`document.querySelectorAll('.msg-user').length === 3`, { timeout: 4000 }).catch(() => {});
+await checkSides('in our own chat', {
+  'от владельца машины': 'right',
+  'от того, кто смотрит': 'left',
+  'от другого гостя': 'left',
+});
 
 if (problems.length) await fail(problems.join('; '));
 console.log('\nGUEST OK');
