@@ -713,13 +713,20 @@ function attachHost(ws, info, ip) {
     } else if (msg.t === 'push') {
       pushToUser(info.email, { url: BASE_URL, ...msg.payload });
     } else if (msg.t === 'approve_device') {
-      // a code from an untrusted device entered on a trusted one → we approve it
+      // a code from an untrusted device entered on a trusted one → we approve it.
+      // The host vouches for the device, and it may vouch for two kinds: its owner's
+      // next phone, and a guest's very first one. The guest owns no host, so nobody
+      // else on the relay could ever approve them — demanding that the code and the
+      // approver share an email left every invited person stuck on the code page.
       const code = String(msg.code ?? '').trim();
       const entry = devicePendings.get(code);
-      const ok = Boolean(entry && entry.email === info.email && entry.exp > Date.now());
+      const guests = link.shareEmails ?? state.shareEmails[link.hostId] ?? [];
+      const mayVouch = Boolean(entry && (entry.email === info.email || guests.includes(entry.email)));
+      const ok = Boolean(mayVouch && entry.exp > Date.now());
       if (ok) {
         devicePendings.delete(code);
-        deviceApproved.set(entry.pendingId, { email: info.email, exp: Date.now() + 600e3 });
+        // the cookie goes to whoever is waiting on the code page, not to whoever approved
+        deviceApproved.set(entry.pendingId, { email: entry.email, exp: Date.now() + 600e3 });
       }
       ws.send(JSON.stringify({ t: 'device_approved', code, ok }));
     }
