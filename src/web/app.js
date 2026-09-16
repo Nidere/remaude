@@ -1426,9 +1426,15 @@ function openMentionedDoc(path) {
   sendTo(chatHostId(activeChatId), { type: 'open_doc_link', projectPath: chat.projectPath, href: path });
 }
 
+// A file named in a message is the same file whichever shape the naming took —
+// a path in backticks or a markdown link pointing at it. Only the first of the
+// two was ever wired up here, so a link the chat had just underlined in blue
+// did nothing at all when it was tapped.
 feedHost.addEventListener('click', (e) => {
-  const mention = e.target.closest?.('code.md-path');
-  if (mention) openMentionedDoc(mention.dataset.path);
+  const mention = e.target.closest?.('code.md-path, a.md-doclink');
+  if (!mention) return;
+  e.preventDefault();
+  openMentionedDoc(mention.dataset.path ?? mention.dataset.href);
 });
 
 function scrollToAnchor(anchor) {
@@ -2966,7 +2972,10 @@ $('hide-tools').addEventListener('change', function () {
 
 // inline comments in the document viewer; requests go to the host that owns the active chat
 // threads inside a chat: replies hang off a message and answers land there
-chatThreads.initThreads({ request: (obj, chatId) => sendTo(chatHostId(chatId), obj) });
+chatThreads.initThreads({
+  request: (obj, chatId) => sendTo(chatHostId(chatId), obj),
+  openDoc: openMentionedDoc, // a thread hangs off this chat, so its files resolve the same way
+});
 
 docComments.initDocComments({
   request: (obj, hostId) =>

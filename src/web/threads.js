@@ -13,6 +13,7 @@ function el(tag, className, text) {
 }
 
 let request = () => {}; // wired to the hosts by app.js
+let openDoc = () => {}; // likewise: opening a file named in a reply
 
 // chatId -> { threads: Map(threadId -> {id, anchorUuid, msgs}), anchors: Map(uuid -> text) }
 const perChat = new Map();
@@ -28,6 +29,7 @@ const threadOf = (chatId, threadId) => stateOf(chatId).threads.get(threadId) ?? 
 
 export function initThreads(ctx) {
   request = ctx.request;
+  if (ctx.openDoc) openDoc = ctx.openDoc;
   buildUi();
 }
 
@@ -235,6 +237,13 @@ function buildUi() {
     open = null;
   };
   $('thread-send').onclick = sendToThread;
+  // a file named in a reply opens like one named in the feed
+  $('thread-body').addEventListener('click', (e) => {
+    const mention = e.target.closest?.('code.md-path, a.md-doclink');
+    if (!mention) return;
+    e.preventDefault();
+    openDoc(mention.dataset.path ?? mention.dataset.href);
+  });
   $('thread-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && matchMedia('(hover: hover)').matches) {
       e.preventDefault();
