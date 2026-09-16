@@ -9,7 +9,9 @@
 // as it starts working, and that replay is how the answer is routed. So the
 // quote inside it must never break the line — brackets and line breaks come out.
 
-const MARK = /^\[remaude: thread ([0-9a-f-]{8,})/i;
+// A message from a guest carries their line ahead of this one — who is speaking
+// comes before what the message is part of — so the tag may be the second line.
+const MARK = /^(?:\[remaude: from [^\]\n]*\]\n)?\[remaude: thread ([0-9a-f-]{8,})/i;
 
 export function threadMark(id, quote = null) {
   const said = clean(quote);

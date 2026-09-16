@@ -17,20 +17,27 @@ const RELAY_PORT = 7880 + Math.floor(process.pid % 100);
 // ---- the relay, as far as the host is concerned ----
 const wss = new WebSocketServer({ port: RELAY_PORT });
 let hostWs = null;
+let dialled = 0; // a restarted host dials again — that is how we know it is back
 const inboxes = new Map(); // client id -> [parsed messages]
-const hostUp = new Promise((resolve) => {
-  wss.on('connection', (ws) => {
-    hostWs = ws;
-    ws.on('message', (raw) => {
-      const msg = JSON.parse(raw);
-      // 'msg' goes to one tunnelled client, 'cast' to all of them
-      if (msg.t === 'msg') inboxes.get(msg.id)?.push(JSON.parse(msg.data));
-      else if (msg.t === 'cast') for (const box of inboxes.values()) box.push(JSON.parse(msg.data));
-      else if (msg.t === 'shares') console.log(`[shares] host announces: ${JSON.stringify(msg.emails)}`);
-    });
-    resolve();
+wss.on('connection', (ws) => {
+  hostWs = ws;
+  dialled++;
+  ws.on('message', (raw) => {
+    const msg = JSON.parse(raw);
+    // 'msg' goes to one tunnelled client, 'cast' to all of them
+    if (msg.t === 'msg') inboxes.get(msg.id)?.push(JSON.parse(msg.data));
+    else if (msg.t === 'cast') for (const box of inboxes.values()) box.push(JSON.parse(msg.data));
+    else if (msg.t === 'shares') console.log(`[shares] host announces: ${JSON.stringify(msg.emails)}`);
   });
 });
+
+async function hostDialledUs(nth, ms = 60_000) {
+  const deadline = Date.now() + ms;
+  while (dialled < nth) {
+    if (Date.now() > deadline) throw new Error(`the host never dialled the relay (${nth})`);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
 
 /** Open a tunnelled browser and return its inbox plus a way to talk. */
 function openGuest(id) {
@@ -69,7 +76,7 @@ writeFileSync(
 );
 
 const host = await startHost({ configPath: cfgPath });
-await hostUp;
+await hostDialledUs(1);
 console.log(`[relay] host connected on :${RELAY_PORT}`);
 
 // ---- the owner: a chat with something in it, and the project shared ----
@@ -118,9 +125,42 @@ guest.send({ type: 'create_chat', projectPath: tmpdir() });
 const refused = await waitFor(guest.inbox, 'error');
 console.log(`[guest] elsewhere: ${refused.message}`);
 
-const ok = state.guest === true && project?.canCreate === true && history.messages.length > 0 && signed;
-console.log(ok ? '\nOK' : '\nFAILED');
+// ---- and the half of it that only a restart can show ----
+// The host signs a live message as it broadcasts it; after a restart there is
+// nothing left but the transcript, and a transcript records no author. So a
+// guest's message carries its sender written into the text — the test is that
+// it comes back theirs, and comes back clean.
+const SAID = 'Ответь одним словом: ага.';
+guest.send({ type: 'send', chatId, content: SAID });
+const spoke = Date.now() + 120_000;
+while (!guest.inbox.some((m) => m.type === 'chat_message' && m.msg?.type === 'result')) {
+  if (Date.now() > spoke) throw new Error('the guest never got a result');
+  await new Promise((r) => setTimeout(r, 200));
+}
+console.log('[guest] said something into the shared chat');
 
 host.stop();
+const again = await startHost({ configPath: cfgPath, port: host.port });
+await hostDialledUs(2);
+console.log('[relay] the host is back');
+
+const guest2 = openGuest('guest-2');
+const state2 = await waitFor(guest2.inbox, 'state');
+// a reopened chat is a new chat with an old conversation in it
+const reopened = state2.projects.find((p) => p.path === projectDir)?.chats.find((c) => c.title);
+guest2.send({ type: 'history', chatId: reopened?.id });
+const history2 = await waitFor(guest2.inbox, 'history');
+const mine = history2.messages.find((m) => m.type === 'user' && JSON.stringify(m.message.content).includes('ага'));
+console.log(`[guest] after the restart their own message reads back as ${mine?.author} / ${mine?.authorId}`);
+console.log(`[guest] and its text is ${JSON.stringify(mine?.message?.content)}`);
+
+const survived =
+  mine?.authorId === GUEST && mine?.author === 'guest' && !JSON.stringify(mine.message.content).includes('remaude:');
+
+const ok =
+  state.guest === true && project?.canCreate === true && history.messages.length > 0 && signed && survived;
+console.log(ok ? '\nOK' : '\nFAILED');
+
+again.stop();
 wss.close();
 process.exit(ok ? 0 : 1);

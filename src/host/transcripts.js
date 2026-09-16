@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { takeSenderMark, stripSenderMark } from './sender-mark.js';
 
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 
@@ -93,7 +94,8 @@ export function searchSessionFile(file, needle) {
     if (!title && entry.type === 'ai-title' && typeof entry.title === 'string') title = entry.title;
     if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta || entry.isSidechain) continue;
     if (entry.type === 'user' && entry.origin?.kind) continue;
-    const body = plainText(entry.message?.content);
+    // a guest's line is machine talk: findable text, not text anyone looks for
+    const body = stripSenderMark(plainText(entry.message?.content));
     if (!body) continue;
     const idx = body.toLowerCase().indexOf(needle);
     if (idx === -1) continue;
@@ -259,18 +261,21 @@ export function mapEntry(entry, { defaultAuthor = null, defaultAuthorId = '@owne
     entry.type === 'user' &&
     !entry.isSidechain &&
     !(Array.isArray(entry.message.content) && entry.message.content.some((b) => b.type === 'tool_result'));
+  // A guest's message was signed as it was written — that line is the only
+  // record of authorship a transcript keeps. It comes off here, so the feed
+  // never sees it; what is left unsigned belongs to the machine's owner, who is
+  // whoever sits at the keyboard.
+  const signed = isPlainUserText ? takeSenderMark(entry.message.content) : { email: null, content: null };
   return {
     type: entry.type,
-    message: entry.message,
+    message: signed.email ? { ...entry.message, content: signed.content } : entry.message,
     parent_tool_use_id: entry.isSidechain ? (entry.parentToolUseId ?? 'past-sidechain') : null,
     timestamp: entry.timestamp ?? null,
-    // The transcript has no author: it belongs to the machine, so what it holds
-    // is the owner's unless something live told us otherwise. The id goes with
-    // the name — the feed decides which side a message sits on by the id, and a
-    // message signed with the owner's name that reads as nobody's would sit on
-    // the guest's own side.
-    author: isPlainUserText ? defaultAuthor : undefined,
-    authorId: isPlainUserText ? defaultAuthorId : undefined,
+    // The name is for reading, the id decides which side of the feed a message
+    // sits on. They have to agree: a message wearing somebody else's name but
+    // reading as nobody's would sit on the reader's own side.
+    author: isPlainUserText ? (signed.email ? signed.email.split('@')[0] : defaultAuthor) : undefined,
+    authorId: isPlainUserText ? (signed.email ?? defaultAuthorId) : undefined,
     uuid: entry.uuid ?? null,
   };
 }

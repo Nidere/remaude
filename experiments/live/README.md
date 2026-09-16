@@ -29,7 +29,7 @@ node experiments/live/ws-client.mjs
 | `restart.mjs` | the host restarts itself and comes back |
 | `sleep.mjs` | an idle chat lets its session go, a message brings it back, a restart starts none |
 | `guard.mjs` | foreign origin, path traversal, bare `/connect` |
-| `guest.mjs` | a guest behind a stand-in relay: the state, the history of a chat they did not start, a chat of their own, and the fence around the rest |
+| `guest.mjs` | a guest behind a stand-in relay: the state, the history of a chat they did not start, a chat of their own, the fence around the rest — and, after a restart, that their own words are still theirs |
 | `startup.mjs` | the process boots and reopens its chats |
 | `search.mjs` | transcript search, including the second page |
 | `ctx.mjs` | how slow the context count is, and that the header goes out without waiting for it |

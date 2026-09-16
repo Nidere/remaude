@@ -40,6 +40,7 @@ import { RelayLink } from './relay-link.js';
 import { TurnTags } from './turn-tags.js';
 import { chatToMarkdown, exportFileName } from './export-md.js';
 import { threadMark, threadIdInText } from './thread-mark.js';
+import { withSenderMark } from './sender-mark.js';
 import { AgentRows } from './agent-rows.js';
 import { agentNoticeText } from './agent-notice.js';
 import {
@@ -1707,7 +1708,12 @@ const handlers = {
 
     // the turn is tagged when the session takes this message into work, not
     // here: it may sit in the queue behind whatever is running
-    chat.send(content);
+    //
+    // Only the session's copy is signed. The live one goes out with `author`
+    // and `authorId` beside it and needs no line in its text; the transcript
+    // has nowhere else to keep the sender, and after a restart it is the whole
+    // of what is known about who said what.
+    chat.send(ws.guest ? withSenderMark(content, ws.guest.email) : content);
     // a thread message must never become the chat's name — it is a side remark
     if (!chat.title && !thread) {
       const text = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;
