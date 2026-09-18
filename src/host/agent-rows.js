@@ -64,6 +64,25 @@ export class AgentRows {
     return ended;
   }
 
+  /**
+   * Nothing can report back any more — the turn was cancelled, or the session
+   * that held the agents is gone.
+   *
+   * Cancelling takes the background agents with it: measured on 2026-09-17,
+   * five of ten stopped writing their files in the very second the turn was
+   * interrupted, never sent a notification, and `TaskStop` answered "No task
+   * found" twenty minutes later. Their rows waited for word that could no
+   * longer come, and waited through the next thirty-two hours — holding the
+   * chat awake, because a chat with an agent out does not sleep.
+   *
+   * @returns the ids that were aborted.
+   */
+  abortAll(now = Date.now()) {
+    const ended = [];
+    for (const row of this.#rows.values()) if (this.finish(row.id, 'aborted', now)) ended.push(row.id);
+    return ended;
+  }
+
   finish(id, status, now = Date.now()) {
     const row = this.#rows.get(id);
     if (!row || row.status !== 'running') return false;
@@ -75,6 +94,13 @@ export class AgentRows {
   /** How many rows exist — the reconnect path asks before broadcasting. */
   get size() {
     return this.#rows.size;
+  }
+
+  /** How many are still out there — this, not `size`, is what keeps a chat awake. */
+  get running() {
+    let n = 0;
+    for (const row of this.#rows.values()) if (row.status === 'running') n++;
+    return n;
   }
 
   drop(id) {

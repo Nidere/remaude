@@ -401,7 +401,9 @@ setInterval(() => {
   for (const chat of agent.allChats()) {
     if (chat.status !== 'idle') continue; // thinking, or waiting to be let through
     if (Date.now() - chat.lastActiveAt < IDLE_SLEEP_MS) continue;
-    if (agentsOf(chat.id).size) continue; // a background agent is still out there
+    // a background agent is still out there. Only a running one counts: a row
+    // that has finished is merely burning down its half-minute on screen
+    if (agentsOf(chat.id).running) continue;
     if (!chat.sleep()) continue;
     changed = true;
     console.log(`asleep: ${chat.title ?? chat.id}`);
@@ -466,7 +468,12 @@ try {
 } catch {
   /* no such file — we stay on high */
 }
-agent.on('chat_status', ({ chatId, status }) => broadcast({ type: 'chat_status', chatId, status }));
+agent.on('chat_status', ({ chatId, status }) => {
+  // The session is over — put to sleep, fallen over, or closed. Whatever it had
+  // out there died with it, and nothing will ever report back.
+  if (status === 'sleeping' || status === 'closed') endAgents(chatId);
+  broadcast({ type: 'chat_status', chatId, status });
+});
 agent.on('chat_error', ({ chatId, error }) =>
   broadcast({ type: 'chat_error', chatId, error: String(error?.message ?? error) })
 );
@@ -1029,9 +1036,24 @@ function broadcastAgents(chatId) {
   broadcast({ type: 'agents', chatId, agents: agentsOf(chatId).list() });
 }
 
+/**
+ * End every agent this chat still shows running.
+ *
+ * Called where no report can arrive any more: the turn was cancelled, or the
+ * session that was running the agents is gone. Both take the background agents
+ * with them, and a row that goes on waiting keeps the chat out of its sleep.
+ */
+function endAgents(chatId) {
+  const ended = chatAgents.get(chatId)?.abortAll() ?? []; // a chat that never had one keeps no rows at all
+  if (!ended.length) return;
+  for (const id of ended) retireAgent(chatId, id);
+  broadcastAgents(chatId);
+}
+
 /** A finished row stays on screen for a moment, then goes. */
 function retireAgent(chatId, id) {
   setTimeout(() => {
+    if (!chatAgents.has(chatId)) return; // the chat was closed in the meantime
     agentsOf(chatId).drop(id);
     broadcastAgents(chatId);
   }, AGENT_LINGER_MS).unref?.();
@@ -1779,6 +1801,7 @@ const handlers = {
 
   interrupt(ws, { chatId }) {
     findChat(chatId).interrupt();
+    endAgents(chatId); // the cancelled turn took its subagents with it
   },
 
   set_permission_mode(ws, { chatId, mode }) {
@@ -2534,6 +2557,7 @@ const handlers = {
     chatHistories.delete(chatId);
     turnTags.forget(chatId);
     lastContext.delete(chatId);
+    chatAgents.delete(chatId); // close() has already ended them; the rows go with the chat
     stopTail(chatId);
     saveOpenChats();
     broadcast(stateSnapshot());

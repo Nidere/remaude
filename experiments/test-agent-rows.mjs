@@ -76,6 +76,20 @@ rows.start('tool-4', { label: 'потеряшка', type: null });
 eq([rows.abortForeground(), statuses(rows)], [['tool-4'], ['aborted']], 'a silent foreground agent is aborted');
 eq(rows.abortForeground(), [], 'aborting twice changes nothing');
 
+// The cancelled turn. Measured on 2026-09-17: of ten background agents, the
+// five that had not yet reported stopped writing in the second the turn was
+// interrupted and never sent a notification — TaskStop found no such task
+// twenty minutes later. Cancelling takes the background ones too.
+rows = new AgentRows();
+rows.start('fore', { label: 'передний', type: null });
+rows.start('back', { label: 'фоновый', type: null });
+rows.onToolResult('back', { text: LAUNCH, token: 'launch' });
+rows.start('done-already', { label: 'успевший', type: null });
+rows.onToolResult('done-already', { text: 'готово', token: 'msg-5' });
+eq([rows.abortAll().sort(), statuses(rows)], [['back', 'fore'], ['aborted', 'aborted', 'done']], 'cancelling ends the background agents as well as the foreground ones');
+eq(rows.abortAll(), [], 'and there is nothing left to end');
+eq(rows.list().find((r) => r.id === 'done-already').status, 'done', 'an agent that had already reported keeps what it reported');
+
 // two agents at once, only the named one ends
 rows = new AgentRows();
 rows.start('a', { label: 'первый', type: null });
@@ -94,6 +108,14 @@ eq([row.id, row.label, row.type, row.status, row.startedAt, row.endedAt], ['x', 
 // the reconnect path asks `size` before re-broadcasting — a fresh client must
 // learn about agents that were already running (this being absent hid them)
 eq(rows.size, 1, 'size counts the rows for the reconnect broadcast');
+
+// sleep, on the other hand, waits for the agents that are actually out there —
+// a chat held awake by a row burning down its half-minute pays for it in a
+// third of a gigabyte
+eq(rows.running, 1, 'a running agent keeps the chat awake');
+rows.finish('x', 'done');
+eq([rows.size, rows.running], [1, 0], 'a finished one still shows, but no longer holds the chat');
+
 rows.drop('x');
 eq(rows.size, 0, 'and follows drops');
 
@@ -144,6 +166,17 @@ eq(
 const tail = server.slice(server.indexOf('function drainTail'), server.indexOf('// ---------- limits'));
 eq(tail.indexOf('trackAgents(chatId, {') < tail.indexOf('if (!msg) continue'), true, 'and so does the transcript tail');
 eq(tail.includes('trackAgentNotice(chatId, entry)'), true, 'and the tail offers everything else to the notice path — the completion is not a message');
+
+// Where no completion will ever come: the cancelled turn and the ended session.
+// Without these two the rows wait for word that cannot arrive — measured at
+// thirty-two hours, the chat awake for all of them.
+const interrupt = server.slice(server.indexOf('  interrupt(ws, { chatId })'), server.indexOf('  set_permission_mode(ws'));
+eq(interrupt.includes('endAgents(chatId)'), true, 'cancelling the turn ends its agents');
+const statusHandler = server.slice(server.indexOf("agent.on('chat_status'"), server.indexOf("agent.on('chat_error'"));
+eq(statusHandler.includes('endAgents(chatId)'), true, 'and so does the end of the session that was running them');
+eq(/status === 'sleeping' \|\| status === 'closed'/.test(statusHandler), true, 'asleep and closed both mean the session is gone');
+const sweeper = server.slice(server.indexOf('setInterval(() => {'), server.indexOf('const lastContext'));
+eq(sweeper.includes('agentsOf(chat.id).running'), true, 'and sleep waits only for the agents still running');
 
 console.log(failed ? `AGENT ROWS: ${failed} failed` : 'AGENT ROWS OK');
 process.exit(failed ? 1 : 0);
