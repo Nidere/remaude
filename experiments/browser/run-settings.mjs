@@ -15,8 +15,8 @@ const PORT = 7780;
 
 // two computers behind one socket, exactly as the relay presents them
 const HOSTS = {
-  'host-a': { name: 'NIDERE-PC', userName: 'Nidere', projectsRoot: 'C:\\Users\\Nidere\\Documents\\Projects' },
-  'host-b': { name: 'LAPTOP', userName: 'Nid', projectsRoot: 'D:\\work' },
+  'host-a': { name: 'NIDERE-PC', userName: 'Nidere', projectsRoot: 'C:\\Users\\Nidere\\Documents\\Projects', hostPrompt: 'Владелец: Nidere.' },
+  'host-b': { name: 'LAPTOP', userName: 'Nid', projectsRoot: 'D:\\work', hostPrompt: '' },
 };
 
 const server = createServer(async (req, res) => {
@@ -37,6 +37,7 @@ wss.on('connection', (ws) => {
     say({
       type: 'state',
       _host: id,
+      hostPrompt: h.hostPrompt,
       projects: [{ path: h.projectsRoot, name: null, chats: [{ id: `chat-${id}`, sessionId: `s-${id}`, status: 'idle', title: `чат ${h.name}`, model: 'opus', effort: 'high', permissionMode: 'bypassPermissions' }] }],
     });
   }
@@ -67,7 +68,7 @@ const fail = async (why) => {
 const ok = (n) => console.log('ok:', n);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// the row of a named computer, and the 🛠 on it
+// the row of a named computer, and the ⚙ on it
 const openSettingsOf = (name) =>
   page.evaluate(
     `(() => {
@@ -88,18 +89,26 @@ const problem = await openSettingsOf(HOSTS['host-a'].name);
 if (problem) await fail(problem);
 await page.waitForFunction(`!document.getElementById('host-settings').hidden`, { timeout: 3000 }).catch(() => fail('the settings of that computer did not open'));
 await wait(200);
-ok('the 🛠 on a computer opens that computer');
+ok('the ⚙ on a computer opens that computer');
 
 // 2. the panel says whose settings these are, and shows theirs
 const shown = await page.evaluate(`(() => ({
   title: document.getElementById('host-settings-title').textContent,
   root: document.getElementById('set-root').value,
+  prompt: document.getElementById('set-prompt').value,
+  loneGear: [...document.querySelectorAll('.host-actions button')].filter((b) => b.textContent === '⚙').length,
 }))()`);
 if (shown.title !== HOSTS['host-a'].name) await fail(`the panel is titled "${shown.title}" and not "${HOSTS['host-a'].name}"`);
 if (shown.root !== HOSTS['host-a'].projectsRoot) await fail(`showing ${shown.root} while host-a has ${HOSTS['host-a'].projectsRoot}`);
 ok(`it names the computer (${shown.title}) and shows its own settings`);
 
-// 3. the other computer's row asks the other computer
+// 3. the instructions of that machine are in the same panel — they used to have
+// a button, and a panel, of their own beside it
+if (shown.prompt !== HOSTS['host-a'].hostPrompt) await fail(`the instructions read "${shown.prompt}" and not "${HOSTS['host-a'].hostPrompt}"`);
+if (shown.loneGear !== 2) await fail(`each computer's row should carry one ⚙, and there are ${shown.loneGear} over two rows`);
+ok('the machine\'s instructions open with its settings, behind the one gear');
+
+// 4. the other computer's row asks the other computer
 await page.click('#host-settings-cancel');
 await wait(100);
 await openSettingsOf(HOSTS['host-b'].name);
@@ -107,7 +116,7 @@ await page.waitForFunction(`document.getElementById('set-root').value === ${JSON
 if (!asked.some((a) => a.type === 'get_settings' && a.host === 'host-b')) await fail('the other computer was never asked about itself');
 ok('the other row loads the other computer, from that one');
 
-// 4. and saving goes back to it — not to whichever host answers first
+// 5. and saving goes back to it — not to whichever host answers first
 await page.evaluate(`document.getElementById('set-root').value = 'E:\\\\новое место'`);
 await page.click('#host-settings-save');
 await wait(300);
@@ -118,7 +127,22 @@ if (last.host !== 'host-b') await fail(`BUG: the settings of host-b were sent to
 if (last.body.projectsRoot !== 'E:\\новое место') await fail(`what was saved is not what was typed: ${last.body.projectsRoot}`);
 ok('what you change is saved on the computer you were looking at');
 
-// 5. restarting from there restarts that computer, too
+// 6. the instructions ride on that same Save — and only when they changed, since
+// rewriting them is what every session on the machine reads at its next start
+if (asked.some((a) => a.type === 'set_host_prompt'))
+  await fail('untouched instructions were rewritten by a save that was about something else');
+await openSettingsOf(HOSTS['host-b'].name);
+await wait(300);
+await page.evaluate(`document.getElementById('set-prompt').value = 'Пуш только через gh.'`);
+await page.click('#host-settings-save');
+await wait(300);
+const prompted = asked.filter((a) => a.type === 'set_host_prompt').pop();
+if (!prompted) await fail('the instructions were not saved at all');
+if (prompted.host !== 'host-b') await fail(`the instructions of host-b went to ${prompted.host ?? 'nobody in particular'}`);
+if (prompted.body.text !== 'Пуш только через gh.') await fail(`what was saved is not what was typed: ${prompted.body.text}`);
+ok('and so do the instructions, to the same computer');
+
+// 7. restarting from there restarts that computer, too
 await openSettingsOf(HOSTS['host-b'].name);
 await wait(300);
 await page.click('#restart-server');
@@ -127,7 +151,7 @@ const restart = asked.filter((a) => a.type === 'restart_server').pop();
 if (!restart || restart.host !== 'host-b') await fail(`restart went to ${restart?.host ?? 'nobody in particular'}`);
 ok('and so does restarting it');
 
-// 6. the header's gear is the browser's own, and asks no computer anything
+// 8. the header's gear is the browser's own, and asks no computer anything
 const before = asked.length;
 await page.click('#settings-btn');
 await page.waitForFunction(`!document.getElementById('settings').hidden`, { timeout: 3000 }).catch(() => fail('the device settings did not open'));

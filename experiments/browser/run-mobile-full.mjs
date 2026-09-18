@@ -261,7 +261,7 @@ if (projRow.overflow) await fail(`the project row overflows on a phone: ${JSON.s
 if (projRow.nameW < 40) await fail(`the project name is squeezed to ${projRow.nameW}px by the buttons`);
 ok(`project row fits 5 buttons (name keeps ${Math.round(projRow.nameW)}px)`);
 
-// the computer's own row, which carries one more since its settings moved onto it
+// the computer's own row: fewer, since its instructions moved inside its settings
 const hostRow = await page.evaluate(`(() => {
   const row = document.querySelector('.host-head');
   const r = row.getBoundingClientRect();
@@ -269,10 +269,10 @@ const hostRow = await page.evaluate(`(() => {
   const acts = row.querySelector('.host-actions').getBoundingClientRect();
   return { rowW: r.width, nameW: name.width, actionsW: acts.width, buttons: row.querySelectorAll('.host-actions button').length, overflow: row.scrollWidth > row.clientWidth + 1 };
 })()`);
-if (hostRow.buttons !== 4) await fail(`the computer row should now carry 4 buttons, has ${hostRow.buttons}`);
+if (hostRow.buttons !== 3) await fail(`the computer row should now carry 3 buttons, has ${hostRow.buttons}`);
 if (hostRow.overflow) await fail(`the computer row overflows on a phone: ${JSON.stringify(hostRow)}`);
 if (hostRow.nameW < 40) await fail(`the computer name is squeezed to ${hostRow.nameW}px by the buttons`);
-ok(`computer row fits 4 buttons (name keeps ${Math.round(hostRow.nameW)}px)`);
+ok(`computer row fits 3 buttons (name keeps ${Math.round(hostRow.nameW)}px)`);
 
 const filesBtn = '.project-actions button:nth-child(3)';
 await mustTap(filesBtn, 'the 📁 explorer button');

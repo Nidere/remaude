@@ -613,6 +613,10 @@ const handlers = {
       knownHosts.find((h) => h.id === settingsHost)?.name ?? 'This computer';
     $('set-username').value = userName ?? '';
     $('set-root').value = projectsRoot ?? '';
+    // Switching accounts asks the host all over again, and the answer comes back
+    // here — into a panel that is already open and may have half an instruction
+    // typed into it. Only an opening refills the text.
+    if ($('host-settings').hidden) $('set-prompt').value = hostStates.get(settingsHost)?.hostPrompt ?? '';
     renderRelayStatus(relay);
     renderAuthProfiles(profiles ?? [], profile);
     renderClaudeAuth(claudeAuth);
@@ -1148,26 +1152,16 @@ function renderSidebar() {
           'A guest can write into every chat on this machine, and chats run in bypass — that is command execution on your computer under your account. Share a host only with someone you trust that far.'
         );
       };
-      // ⚙ stays what it is on a project row — instructions. The machine's own
-      // settings are a different thing and get a button of their own.
-      const btnSettings = el('button', '', '🛠');
+      // ⚙ is settings at both levels: a project's on its row, a machine's here —
+      // and a machine's instructions are part of its settings, not a panel of
+      // their own next to them.
+      const btnSettings = el('button', '', '⚙');
       btnSettings.title = 'settings of this computer';
       btnSettings.onclick = (e) => {
         e.stopPropagation();
         openHostSettings(hostId);
       };
-      const btnPrompt = el('button', '', '⚙');
-      btnPrompt.title = 'instructions for every chat on this computer';
-      btnPrompt.onclick = (e) => {
-        e.stopPropagation();
-        openPrompt(
-          { host: true, hostId },
-          meta?.name ? `This computer · ${meta.name}` : 'This computer',
-          'Added to the prompt of every chat on this machine, whatever the project: the tools it has, the accounts it uses, the things about it that catch people out. Guests working here get it too.',
-          hostState.hostPrompt ?? ''
-        );
-      };
-      actions.append(btnAdd, btnSettings, btnPrompt, btnShare);
+      actions.append(btnAdd, btnSettings, btnShare);
       head.append(actions);
     }
     if (editMode && !hostState.guest && meta) {
@@ -2545,11 +2539,13 @@ $('share-panel').addEventListener('click', (e) => {
   if (e.target.id === 'share-panel') $('share-panel').hidden = true;
 });
 
-// ---------- instructions: the host and project levels of the system prompt ----------
-// The third level, remaude's own, is not here: it describes the product and
-// lives with the code that makes the product true.
+// ---------- instructions: the project level of the system prompt ----------
+// The machine's level is edited in that machine's settings, where the rest of
+// what is true of the whole machine already is. The third level, remaude's own,
+// is nowhere here: it describes the product and lives with the code that makes
+// the product true.
 
-let promptScope = null; // {host:true, hostId} | {projectPath, hostId}
+let promptScope = null; // {projectPath, hostId, profile}
 
 function openPrompt(scope, title, hint, text, hostState) {
   promptScope = scope;
@@ -2582,15 +2578,11 @@ function closePrompt() {
 function savePrompt() {
   if (!promptScope) return;
   const text = $('prompt-text').value;
-  if (promptScope.host) {
-    sendTo(promptScope.hostId, { type: 'set_host_prompt', text });
-  } else {
-    sendTo(promptScope.hostId, { type: 'set_project_prompt', path: promptScope.projectPath, text });
-    const profile = $('prompt-profile').value;
-    // switching accounts restarts sessions, so only say so when it actually changed
-    if (profile !== (promptScope.profile ?? ''))
-      sendTo(promptScope.hostId, { type: 'set_project_profile', path: promptScope.projectPath, profile });
-  }
+  sendTo(promptScope.hostId, { type: 'set_project_prompt', path: promptScope.projectPath, text });
+  const profile = $('prompt-profile').value;
+  // switching accounts restarts sessions, so only say so when it actually changed
+  if (profile !== (promptScope.profile ?? ''))
+    sendTo(promptScope.hostId, { type: 'set_project_profile', path: promptScope.projectPath, profile });
   closePrompt();
 }
 
@@ -2672,10 +2664,10 @@ $('effort-select').addEventListener('change', function () {
 
 // ---------- settings ----------
 // A computer's settings belong to that computer: its name on messages, where its
-// projects are, which Claude account it runs as, whether it is a server. They are
-// opened from its row in the sidebar, next to its instructions and its sharing,
-// which is the one place in the app where a machine is already identified. What
-// the header's ⚙ keeps is what belongs to the browser instead.
+// projects are, which Claude account it runs as, whether it is a server, and what
+// every chat on it is told. They are opened from its row in the sidebar, which is
+// the one place in the app where a machine is already identified. What the
+// header's ⚙ keeps is what belongs to the browser instead.
 
 let settingsHost = null;
 const settingsTarget = () => settingsHost ?? ownHostId();
@@ -2802,11 +2794,15 @@ $('host-settings').addEventListener('click', (e) => {
   if (e.target.id === 'host-settings') $('host-settings').hidden = true;
 });
 $('host-settings-save').onclick = () => {
-  sendTo(settingsTarget(), {
+  const hostId = settingsTarget();
+  sendTo(hostId, {
     type: 'set_settings',
     userName: $('set-username').value.trim(),
     projectsRoot: $('set-root').value.trim(),
   });
+  // the instructions live on the same Save, and are only sent when they changed
+  const text = $('set-prompt').value;
+  if (text !== (hostStates.get(hostId)?.hostPrompt ?? '')) sendTo(hostId, { type: 'set_host_prompt', text });
   $('host-settings').hidden = true;
 };
 

@@ -179,6 +179,10 @@ body {
   border-radius: 12px;
   width: min(420px, 92vw);
   padding: 16px;
+  /* the instructions live in here now, and a long machine's worth of them must
+     not push Save off the bottom of a phone */
+  max-height: 90dvh;
+  overflow: auto;
 }
 .settings-title { font-weight: 600; margin-bottom: 12px; }
 .settings-box label {
@@ -210,6 +214,23 @@ body {
   padding: 7px 10px;
   font: inherit;
 }
+/* the machine's instructions: the one field here that is written in, not filled in */
+.settings-box textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  min-height: 140px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.settings-box textarea:focus, .settings-box input:focus { outline: none; border-color: var(--accent); }
+#set-prompt-hint { font-size: 11px; color: var(--dim); line-height: 1.5; margin: -4px 0 10px; }
+
 #relay-block, #auth-block { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
 #relay-status, #claude-auth-status { font-size: 12px; color: var(--dim); margin-bottom: 6px; }
 #relay-status.ok, #claude-auth-status.ok { color: var(--green); }
@@ -249,7 +270,19 @@ body {
 }
 #claude-login-btn:hover { border-color: var(--accent); color: var(--text); }
 
-.settings-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+/* the box scrolls now, and a phone shows about half of it — Save stays on the
+   bottom edge instead of waiting at the end of the scroll */
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: 14px -16px -16px;
+  padding: 10px 16px 16px;
+  position: sticky;
+  bottom: -16px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border); /* so what scrolls under it is seen to be under it */
+}
 .settings-actions button {
   border: 1px solid var(--border);
   border-radius: 6px;
