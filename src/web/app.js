@@ -2161,6 +2161,17 @@ function renderAttachments() {
       img.src = a.url;
       wrap.append(img);
     }
+    // only a picture can change paths, and only once its upload has landed:
+    // pulling the chip out mid-flight would leave the arriving file with no chip
+    // to come home to, and it would reappear on its own when it finished
+    if (a.src && (!a.file || a.path)) {
+      const swap = el('button', 'att-swap', a.file ? '🖼' : '📄');
+      swap.title = a.file
+        ? 'send it inside the message instead, scaled down'
+        : 'send the file itself instead: the original, full size, on disk';
+      swap.onclick = () => (a.file ? sendAsImage(i) : sendAsFile(i));
+      wrap.append(swap);
+    }
     const del = el('button', '', '×');
     del.title = a.file ? 'do not send this file (it stays on disk)' : 'remove';
     del.onclick = () => {
@@ -2296,7 +2307,9 @@ async function addImageAttachment(file) {
     canvas.height = Math.round(bmp.height * scale);
     canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
     const url = canvas.toDataURL('image/png');
-    attachments.push({ mediaType: 'image/png', data: url.split(',')[1], url });
+    // the original is kept beside the scaled copy: sendAsFile needs the bytes
+    // themselves, and asking for the file again is not something we can do
+    attachments.push({ mediaType: 'image/png', data: url.split(',')[1], url, src: file });
     renderAttachments();
   } catch {
     /* the clipboard holds something other than an image — ignore it */
@@ -2318,7 +2331,7 @@ const base64Of = (blob) =>
     reader.readAsDataURL(blob);
   });
 
-async function addFileAttachment(file) {
+async function addFileAttachment(file, extra = {}) {
   if (!activeChatId) return;
   if (file.size > 1024 * 1024 * 1024) {
     docComments.showError(`${file.name} is over a gigabyte — put it in the project and name it instead`);
@@ -2327,7 +2340,7 @@ async function addFileAttachment(file) {
   const uploadId = crypto.randomUUID();
   const hostId = chatHostId(activeChatId);
   // a big file goes in pieces: nothing holds it whole, and no frame is oversized
-  const waiting = { file: true, name: file.name, uploadId, sending: 0 };
+  const waiting = { file: true, name: file.name, uploadId, sending: 0, ...extra };
   attachments.push(waiting);
   renderAttachments();
   for (let at = 0, seq = 0; at < file.size || seq === 0; at += UPLOAD_CHUNK, seq++) {
@@ -2338,6 +2351,32 @@ async function addFileAttachment(file) {
     renderAttachments();
     if (last) break;
   }
+}
+
+/**
+ * A picture travels inside the message, scaled to what the vision model reads.
+ * Sometimes the pixels themselves are the point — a png to commit, a screenshot
+ * to crop — and that path loses them: it rescales, re-encodes and hands the
+ * session no file to open. These two move one attachment to the other path and
+ * back, without making anyone find the picture in the picker a second time.
+ */
+function sendAsFile(i) {
+  const a = attachments[i];
+  if (!a?.src) return;
+  // a pasted screenshot often arrives nameless, and the host needs something to call it
+  const src = a.src.name ? a.src : new File([a.src], `pasted.${a.src.type.split('/')[1] || 'png'}`, { type: a.src.type });
+  attachments.splice(i, 1);
+  renderAttachments();
+  addFileAttachment(src, { src, image: true });
+}
+
+function sendAsImage(i) {
+  const a = attachments[i];
+  if (!a?.src) return;
+  const src = a.src;
+  attachments.splice(i, 1);
+  renderAttachments();
+  addImageAttachment(src);
 }
 
 const attachAny = (file) => (file.type.startsWith('image/') ? addImageAttachment(file) : addFileAttachment(file));

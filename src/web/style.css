@@ -2125,3 +2125,29 @@ body.guest #export-btn { display: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* the switch between the two ways a picture can reach the session. On a
+   thumbnail it sits inside the corner rather than over the edge, so that the
+   red × above it stays the only thing that removes anything. */
+#attachments .att-swap {
+  position: absolute;
+  inset: auto auto 3px 3px;
+  width: auto;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 9px;
+}
+/* on a file chip there is no picture to sit on: it joins the row */
+#attachments .att-file .att-swap {
+  position: static;
+  height: 18px;
+  margin-left: 6px;
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+#attachments .att-swap:hover { background: var(--accent); color: #10141f; }
