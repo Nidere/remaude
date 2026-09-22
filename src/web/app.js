@@ -379,11 +379,14 @@ const handlers = {
     if (chatId === activeChatId) setModeSelect(mode);
   },
 
-  chat_meta({ chatId, model, permissionMode, effort, context }) {
+  chat_meta({ chatId, model, permissionMode, effort, context, models }) {
     const chat = getChat(chatId);
     chat.model = model;
     chat.mode = permissionMode;
     chat.effort = effort;
+    // the list needs a live session to be read from, so it can be missing for a
+    // while; missing means "not known yet", never "there are none"
+    if (models) chat.models = models;
     // the count arrives after the header it belongs to, so a message without one
     // means "not counted yet", never "the number you are looking at is wrong"
     if (context) chat.context = context;
@@ -767,9 +770,59 @@ function selectChat(chatId) {
   scrollToBottomSettled();
 }
 
+/** 'claude-opus-5-5' -> 'opus'. The family, which is what the selector offers. */
+function modelFamily(model) {
+  return (model ?? '').replace(/^claude-/, '').replace(/-[\d.]+.*$/, '');
+}
+
+/** Which row of the offered list the chat is currently running, if any of them. */
+function modelRowFor(models, model) {
+  if (!model) return null;
+  const family = modelFamily(model);
+  return (
+    models.find((m) => m.value === model || m.resolvedModel === model) ??
+    models.find((m) => m.value === family) ??
+    null
+  );
+}
+
+// The list of models comes from the host, which asks the CLI, which asks the
+// account — so a model released this morning appears on its own, and one this
+// account cannot reach is not offered. The four written into the page are what
+// shows until that answer arrives.
+let modelOptionsKey = '';
+
+function fillModelOptions(rows) {
+  const key = rows.map((m) => `${m.value} ${m.displayName}`).join('|');
+  if (key === modelOptionsKey) return;
+  modelOptionsKey = key;
+  const select = $('model-select');
+  select.innerHTML = '';
+  for (const m of [{ value: '', displayName: 'model' }, ...rows]) {
+    const option = el('option', '', m.displayName || m.value);
+    option.value = m.value;
+    select.append(option);
+  }
+}
+
 function syncHeaderSelects(chat) {
-  const shortModel = (chat.model ?? '').replace(/^claude-/, '').replace(/-[\d.]+.*$/, '');
-  $('model-select').value = ['fable', 'opus', 'sonnet', 'haiku'].includes(shortModel) ? shortModel : '';
+  const select = $('model-select');
+  const models = chat.models ?? null;
+  if (models) {
+    const row = modelRowFor(models, chat.model);
+    // A resumed chat can be running something the list no longer offers. Naming
+    // it anyway beats an empty selector, which would say nothing at all about
+    // what the chat is answering with.
+    const stray = chat.model && !row ? [{ value: chat.model, displayName: modelFamily(chat.model) || chat.model }] : [];
+    fillModelOptions([...stray, ...models]);
+    select.value = row ? row.value : (chat.model ?? '');
+  } else {
+    const family = modelFamily(chat.model);
+    select.value = ['fable', 'opus', 'sonnet', 'haiku'].includes(family) ? family : '';
+  }
+  // The selector names a family; the version behind it is the thing that changes
+  // under you, so it is spelled out here rather than left to be guessed.
+  select.title = chat.model ? `Chat model: ${chat.model}` : 'Chat model';
   // the effective effort comes from the server in chat_meta (override or host default)
   $('effort-select').value = ['low', 'medium', 'high', 'xhigh', 'max'].includes(chat.effort) ? chat.effort : '';
 }
@@ -2023,10 +2076,25 @@ function updateStatusDot(chatId, status) {
 
 // ---------- chat meta in the header ----------
 
+/** 'claude-opus-5-5' -> 'opus 5.5'. The version, which the selector's family name hides. */
+function modelLabel(model) {
+  const short = (model ?? '').replace(/^claude-/, '');
+  const named = /^([a-z]+)-(\d+(?:-\d+)?)/.exec(short);
+  return named ? `${named[1]} ${named[2].replace('-', '.')}` : short;
+}
+
 function renderMeta(chat) {
   const root = $('chat-meta');
   root.innerHTML = '';
   if (!chat) return;
+  // Which version is behind "opus" changes without warning, and a tooltip is no
+  // answer on a phone — so it is written out, next to the other two numbers a
+  // chat is judged by.
+  if (chat.model) {
+    const modelSpan = el('span', 'model', modelLabel(chat.model));
+    modelSpan.title = chat.model;
+    root.append(modelSpan);
+  }
   const pct = chat.context?.percentage;
   const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
   const ctxSpan = el('span', cls, `ctx ${pct != null ? pct + '%' : '—'}`);

@@ -122,6 +122,11 @@ export class Chat extends EventEmitter {
   status = 'idle';
   lastActiveAt = Date.now(); // when anything last happened here — the sleep clock
   model = null; // the actual model reported by system:init
+  // What was *asked* for, which is usually a family alias ('opus') rather than a
+  // version. The two are worth keeping apart: the header wants the version that
+  // actually ran, and the next session wants the alias — resuming on the resolved
+  // id would pin a chat to whichever Opus was current the day it was opened.
+  requested = null;
   permissionMode = 'default';
 
   constructor({
@@ -139,6 +144,7 @@ export class Chat extends EventEmitter {
     this.permissionMode = permissionMode;
     this.resumeId = resume ?? null;
     this.#model = model;
+    this.requested = model ?? null;
     this.#onPermissionRequest = onPermissionRequest;
     this.#extraPrompt = extraPrompt ?? null;
     this.#env = env ?? null;
@@ -307,8 +313,19 @@ export class Chat extends EventEmitter {
 
   async setModel(model) {
     this.#model = model ?? undefined;
+    this.requested = model ?? null;
     this.model = model ?? null; // the actual name will be clarified by the next init/usage
     if (this.#query) await this.#query.setModel(model);
+  }
+
+  /**
+   * The models this session may use — ids, display names, what each supports.
+   * It is the CLI that answers, and the answer depends on the account: a list
+   * read from one chat is only true for chats signed in as the same one.
+   */
+  async supportedModels() {
+    if (!this.#query) throw new Error('the session is asleep');
+    return this.#query.supportedModels();
   }
 
   async setEffort(level) {

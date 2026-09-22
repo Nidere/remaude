@@ -902,6 +902,8 @@ body.guest #edit-btn { display: none; }
 body.guest .project-actions.guest-ok { display: flex !important; }
 
 #chat-meta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* the version behind the selector's family name — said quietly, but said */
+#chat-meta .model { color: var(--dim); margin-right: 6px; }
 #chat-meta .warn { color: var(--yellow); }
 #chat-meta .crit { color: var(--red); }
 

@@ -102,6 +102,36 @@ export class HostAgent extends EventEmitter {
     return found;
   }
 
+  /**
+   * Which models one account may pick from. Per profile for the same reason the
+   * limits are: a plan that reaches Fable and one that does not are different
+   * lists, and showing a chat the other account's list offers it a model its own
+   * session would refuse. One awake chat of each account is enough to ask.
+   *
+   * @param profileOf (projectPath) => string — which account a project runs under
+   * @returns {Promise<Record<string, object[]>>} profile name → the model rows
+   */
+  async modelsByProfile(profileOf) {
+    const found = {};
+    for (const project of this.projects.values()) {
+      const profile = profileOf(project.path);
+      if (found[profile]) continue;
+      for (const chat of project.chats.values()) {
+        if (!chat.awake) continue;
+        try {
+          const models = await chat.supportedModels();
+          if (models?.length) {
+            found[profile] = models;
+            break;
+          }
+        } catch {
+          continue; // the session could have died between the check and the call — try the next one
+        }
+      }
+    }
+    return found;
+  }
+
   closeAll() {
     for (const chat of this.allChats()) chat.close();
   }

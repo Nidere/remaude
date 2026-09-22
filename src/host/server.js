@@ -234,9 +234,31 @@ function saveOpenChats() {
       // a reopened session says nothing about itself until it is spoken to, so
       // the header would sit empty; what it ran as is remembered here instead
       model: c.model ?? null,
+      // and separately, what to ask the next session for — see modelRequestOf
+      modelRequest: c.requested ?? null,
       effort: c.effort ?? null,
     }));
   saveConfig(config);
+}
+
+// Anthropic releases a new Opus and every chat should be on it the next time it
+// opens. That only happens if the alias is what gets resumed: a chat reopened on
+// the `claude-opus-5` its session happened to report stays on that version for
+// ever, however many have come out since.
+const MODEL_FAMILIES = ['fable', 'mythos', 'opus', 'sonnet', 'haiku'];
+
+/**
+ * What to ask the next session for. `modelRequest` is what the person picked;
+ * chats saved before it existed have only the version their session resolved to,
+ * and collapsing that back to its family is how a chat deliberately set to fable
+ * survives the upgrade instead of quietly becoming an opus one.
+ */
+function modelRequestOf({ modelRequest, model } = {}) {
+  if (modelRequest) return modelRequest;
+  const short = String(model ?? '')
+    .replace(/^claude-/, '')
+    .replace(/-[\d.]+.*$/, '');
+  return MODEL_FAMILIES.includes(short) ? short : null;
 }
 
 /**
@@ -252,17 +274,22 @@ function nameSession(chat) {
 }
 
 /** The shared path for opening a saved session (open_session and the auto-restore at startup). */
-function openSavedSession(projectPath, sessionId, { permissionMode, title, pastIds, model, effort, asleep } = {}) {
+function openSavedSession(
+  projectPath,
+  sessionId,
+  { permissionMode, title, pastIds, model, modelRequest, effort, asleep } = {},
+) {
   if (!isSessionId(sessionId)) throw new Error('bad session id');
   for (const chat of agent.allChats()) {
     if (chat.sessionId === sessionId || chat.resumeId === sessionId || chat.pastIds?.has(sessionId)) return chat;
   }
   const abs = resolve(projectPath);
-  const chat = agent.createChat(abs, { resume: sessionId, permissionMode, model: model || defaultModel(), asleep });
+  const wanted = modelRequestOf({ modelRequest, model }) || defaultModel();
+  const chat = agent.createChat(abs, { resume: sessionId, permissionMode, model: wanted, asleep });
   chat.resumeId = sessionId;
   chat.pastIds = new Set(pastIds ?? []);
   chat.title = title ?? null;
-  chat.model = model ?? defaultModel(); // what the header shows until the session speaks for itself
+  chat.model = model ?? wanted; // what the header shows until the session speaks for itself
   if (effort) chat.effort = effort;
   chatHistories.set(chat.id, loadHistory(abs, sessionId, { defaultAuthor: userName }));
   startTail(chat);
@@ -414,6 +441,33 @@ setInterval(() => {
 const lastContext = new Map(); // chatId -> the last count that came back
 const countingContext = new Set(); // chats with a count already on the way
 
+// Which models the header may offer. The four names used to be written into the
+// page, which meant a model released on Tuesday was invisible until someone
+// edited the HTML — and a model the account cannot reach was offered anyway.
+// The CLI knows both, so it is asked.
+const modelsCache = new Map(); // profile -> the model rows
+let modelsAt = 0;
+let modelsFetching = false;
+const MODELS_TTL = 30 * 60 * 1000;
+
+/** @returns {Promise<boolean>} whether anything new arrived and the header is worth resending */
+async function refreshModels(force = false) {
+  if (modelsFetching) return false;
+  if (!force && modelsAt && Date.now() - modelsAt < MODELS_TTL) return false;
+  modelsFetching = true;
+  try {
+    const fresh = await agent.modelsByProfile(profileOf);
+    if (!Object.keys(fresh).length) return false; // nothing awake to ask — try again next time
+    modelsAt = Date.now();
+    for (const [profile, models] of Object.entries(fresh)) modelsCache.set(profile, models);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    modelsFetching = false;
+  }
+}
+
 /**
  * Chat metadata for the header: model, mode, how full the context is, effort.
  *
@@ -438,8 +492,12 @@ async function sendChatMeta(chatId) {
     permissionMode: chat.permissionMode,
     effort: chat.effort ?? hostEffort,
     context: lastContext.get(chatId) ?? null,
+    models: modelsCache.get(profileOf(chat.cwd)) ?? null,
   });
   broadcast(meta());
+  refreshModels()
+    .then((ok) => ok && broadcast(meta()))
+    .catch(() => {});
   if (countingContext.has(chatId)) return; // one count at a time, however often the header is asked for
   countingContext.add(chatId);
   try {
@@ -2565,6 +2623,7 @@ const handlers = {
 
   async set_model(ws, { chatId, model }) {
     await findChat(chatId).setModel(model);
+    saveOpenChats(); // the choice is a family, and the next session must start on it too
     sendChatMeta(chatId);
   },
 
