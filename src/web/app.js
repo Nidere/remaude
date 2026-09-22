@@ -608,7 +608,7 @@ const handlers = {
     $('conn-dot').classList.remove('on');
   },
 
-  settings({ userName, projectsRoot, relay, claudeAuth, profiles, profile, serverMode, _host }) {
+  settings({ userName, projectsRoot, relay, claudeAuth, profiles, profile, serverMode, cli, _host }) {
     // these belong to the computer that answered, not to the app: with several
     // hosts connected, saving them anywhere else configures a stranger
     settingsHost = hostKey(_host);
@@ -624,7 +624,30 @@ const handlers = {
     renderAuthProfiles(profiles ?? [], profile);
     renderClaudeAuth(claudeAuth);
     renderServerMode(serverMode);
+    renderCli(cli);
     $('host-settings').hidden = false;
+  },
+
+  cli_update({ state, text }) {
+    const line = $('cli-status');
+    const button = $('cli-update');
+    if (state === 'running') {
+      button.disabled = true;
+      button.textContent = 'Updating…';
+      line.className = '';
+      line.textContent = text;
+      return;
+    }
+    if (state === 'done') {
+      button.hidden = true;
+      line.className = 'ok';
+      line.textContent = `CLI ${text}`;
+      return;
+    }
+    button.disabled = false;
+    button.textContent = 'Retry';
+    line.className = 'warn';
+    line.textContent = text;
   },
 
   claude_login_url({ url }) {
@@ -3029,6 +3052,36 @@ $('restart-server').onclick = () => {
   // no confirmation: open chats reopen themselves, so a restart costs nothing
   sendTo(settingsTarget(), { type: 'restart_server' });
   $('host-settings').hidden = true;
+};
+
+// The CLI the sessions here are. Its version is shown whether or not anything can
+// be done about it: a model released today can be held back by a CLI from July,
+// and that is invisible from anywhere else in the app.
+function renderCli(state) {
+  const line = $('cli-status');
+  const button = $('cli-update');
+  // a host from before this existed says nothing about its CLI, and a row that
+  // reads "unknown" for ever is worse than no row
+  $('cli-block').hidden = !state;
+  if (!state) return;
+  button.hidden = !state.stale;
+  button.disabled = false;
+  // Claude Code and the npm package it ships in are numbered differently (2.1.220
+  // against 0.3.220), and the two side by side read as unrelated. So the line is
+  // the version people know and the button is the package pair, where an arrow
+  // between them says they belong together.
+  button.textContent = `⬆ Update (${state.pkg} → ${state.latest})`;
+  line.className = state.stale ? 'warn' : '';
+  if (!state.cli && !state.pkg) line.textContent = 'CLI: not installed in this folder';
+  else if (state.stale) line.textContent = `CLI ${state.cli ?? state.pkg} — an update is available`;
+  else if (state.latest) line.textContent = `CLI ${state.cli ?? state.pkg} — up to date`;
+  else line.textContent = `CLI ${state.cli ?? state.pkg} — npm did not answer`;
+}
+
+$('cli-update').onclick = () => {
+  // no confirmation either: it ends in the restart above, which costs nothing.
+  // The panel stays open — the install takes a while and says so on its own line.
+  sendTo(settingsTarget(), { type: 'update_cli' });
 };
 
 // Server mode: the host restarts outside the desktop session and the session ends,

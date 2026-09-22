@@ -938,6 +938,17 @@ body.guest .project-actions.guest-ok { display: flex !important; }
 #notify-status.ok { color: var(--green); }
 #notify-status.warn { color: var(--yellow); }
 
+/* the CLI row sits above the two restart buttons, and reads as their heading */
+#cli-block { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
+#cli-block[hidden] { display: none; }
+#cli-status { font-size: 12px; line-height: 1.4; color: var(--dim); margin: 0 2px 6px; }
+#cli-status.ok { color: var(--green); }
+#cli-status.warn { color: var(--yellow); }
+#cli-update[hidden] { display: none; }
+#cli-update:enabled:hover { border-color: var(--green); color: var(--green); }
+#cli-update:disabled { opacity: 0.5; cursor: default; }
+
+#cli-update,
 #restart-server,
 #server-mode {
   display: block;

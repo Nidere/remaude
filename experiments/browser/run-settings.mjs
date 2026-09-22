@@ -47,7 +47,13 @@ wss.on('connection', (ws) => {
     if (m.type === 'history') say({ type: 'history', chatId: m.chatId, messages: [] });
     if (m.type === 'get_settings') {
       const h = HOSTS[m._host] ?? HOSTS['host-a'];
-      say({ type: 'settings', _host: m._host ?? 'host-a', userName: h.userName, projectsRoot: h.projectsRoot, relay: { paired: true, connected: true }, claudeAuth: { loggedIn: true, email: 'a@b.c', subscriptionType: 'max' }, serverMode: { ready: true, reason: '' } });
+      // one machine is current and the other is behind, so the panel has to get
+      // both right: the offer belongs where there is something to install
+      const cli =
+        m._host === 'host-b'
+          ? { cli: '2.1.220', pkg: '0.3.220', latest: '0.3.280', stale: true }
+          : { cli: '2.1.280', pkg: '0.3.280', latest: '0.3.280', stale: false };
+      say({ type: 'settings', _host: m._host ?? 'host-a', userName: h.userName, projectsRoot: h.projectsRoot, relay: { paired: true, connected: true }, claudeAuth: { loggedIn: true, email: 'a@b.c', subscriptionType: 'max' }, serverMode: { ready: true, reason: '' }, cli });
     }
   });
 });
@@ -151,7 +157,32 @@ const restart = asked.filter((a) => a.type === 'restart_server').pop();
 if (!restart || restart.host !== 'host-b') await fail(`restart went to ${restart?.host ?? 'nobody in particular'}`);
 ok('and so does restarting it');
 
-// 8. the header's gear is the browser's own, and asks no computer anything
+// 8. the CLI belongs to that computer as much as the rest: the offer appears
+// where there is something to install, and installing it asks that machine
+await openSettingsOf(HOSTS['host-b'].name); // the restart above closed the panel
+await wait(300);
+const behind = await page.evaluate(`(() => ({
+  line: document.getElementById('cli-status').textContent,
+  offered: !document.getElementById('cli-block').hidden && !document.getElementById('cli-update').hidden,
+}))()`);
+if (!behind.offered) await fail(`host-b is behind and was offered nothing: "${behind.line}"`);
+await page.click('#cli-update');
+await wait(200);
+const update = asked.filter((a) => a.type === 'update_cli').pop();
+if (!update || update.host !== 'host-b') await fail(`the update went to ${update?.host ?? 'nobody in particular'}`);
+await page.click('#host-settings-cancel');
+await wait(100);
+await openSettingsOf(HOSTS['host-a'].name);
+await page
+  .waitForFunction(`document.getElementById('cli-status').textContent.includes('2.1.280')`, { timeout: 3000 })
+  .catch(() => fail('the other computer kept showing the first one\'s CLI'));
+if (await page.evaluate(`!document.getElementById('cli-update').hidden`))
+  await fail('a computer already up to date was offered an update anyway');
+ok('the CLI row is that computer\'s, and offers only what it needs');
+await page.click('#host-settings-cancel'); // the panel covers the header, gear and all
+await wait(100);
+
+// 9. the header's gear is the browser's own, and asks no computer anything
 const before = asked.length;
 await page.click('#settings-btn');
 await page.waitForFunction(`!document.getElementById('settings').hidden`, { timeout: 3000 }).catch(() => fail('the device settings did not open'));

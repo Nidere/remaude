@@ -1668,6 +1668,52 @@ async function serverModeStatus() {
   return { ready: true, reason: '' };
 }
 
+// ---------- the CLI every session here runs ----------
+
+// Sessions are Claude Code, and this is the copy of it they are. Its age is not
+// cosmetic: the model catalogue comes down from Anthropic, but its rows carry a
+// minimum CLI version, so a model released this morning stays invisible to an
+// old install however fresh the catalogue is. That is a thing worth being told
+// about rather than discovering by wondering where the new model went.
+const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const CLI_PACKAGE = '@anthropic-ai/claude-agent-sdk';
+let cliUpdating = false;
+
+/** What is installed: the Claude Code version people know, and the npm package it came in. */
+function installedCli() {
+  const dir = join(REPO_ROOT, 'node_modules', ...CLI_PACKAGE.split('/'));
+  const read = (file, key) => {
+    try {
+      return JSON.parse(readFileSync(join(dir, file), 'utf-8'))[key] ?? null;
+    } catch {
+      return null; // installed elsewhere, or a layout we do not know
+    }
+  };
+  return { cli: read('manifest.json', 'version'), pkg: read('package.json', 'version') };
+}
+
+/**
+ * What npm has. It is a network call on the way to a settings panel, so it is
+ * given a short leash: not knowing is a row that says so, while waiting would be
+ * a panel that does not open.
+ */
+async function latestCli() {
+  const ask = new Promise((done) => {
+    const child = spawn('npm', ['view', CLI_PACKAGE, 'version'], { cwd: REPO_ROOT, shell: true });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.on('error', () => done(null));
+    child.on('close', (code) => done(code === 0 ? out.trim().split(/\s+/).pop() || null : null));
+  });
+  return Promise.race([ask, new Promise((r) => setTimeout(() => r(null), 15_000))]);
+}
+
+async function cliStatus() {
+  const installed = installedCli();
+  const latest = await latestCli();
+  return { ...installed, latest, stale: Boolean(latest && installed.pkg && latest !== installed.pkg) };
+}
+
 // ---------- WebSocket ----------
 
 function broadcast(obj) {
@@ -2646,6 +2692,47 @@ const handlers = {
       profile: profile ?? DEFAULT_PROFILE,
       claudeAuth: await claudeAuthStatus(profile),
       serverMode: await serverModeStatus(),
+      cli: await cliStatus(),
+    });
+  },
+
+  /**
+   * Install the current Claude Code and restart into it.
+   *
+   * The restart is part of the update rather than a second button: the sessions
+   * running right now hold the old one, so stopping after the install leaves the
+   * machine half-updated and looking done. Open chats reopen by themselves, which
+   * is what makes that affordable.
+   *
+   * npm also rewrites package.json and the lockfile — that is the point, the bump
+   * belongs in the repository, and it will be waiting in git status afterwards.
+   */
+  update_cli() {
+    if (cliUpdating) throw new Error('an update is already running');
+    cliUpdating = true;
+    broadcast({ type: 'cli_update', state: 'running', text: 'installing…' });
+    const child = spawn('npm', ['install', '--no-audit', '--no-fund', `${CLI_PACKAGE}@latest`], {
+      cwd: REPO_ROOT,
+      shell: true,
+    });
+    let out = '';
+    const collect = (d) => (out = (out + d).slice(-4000)); // the tail is where npm says what went wrong
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    child.on('error', (e) => {
+      cliUpdating = false;
+      broadcast({ type: 'cli_update', state: 'failed', text: `could not start npm: ${e.message}` });
+    });
+    child.on('close', (code) => {
+      cliUpdating = false;
+      if (code !== 0) {
+        const tail = out.trim().split('\n').slice(-3).join(' ').slice(0, 300);
+        broadcast({ type: 'cli_update', state: 'failed', text: tail || `npm exited with ${code}` });
+        return;
+      }
+      const now = installedCli();
+      broadcast({ type: 'cli_update', state: 'done', text: `now ${now.cli ?? now.pkg ?? '?'} — restarting` });
+      setTimeout(() => handlers.restart_server(), 1500); // long enough for the line to be read
     });
   },
 

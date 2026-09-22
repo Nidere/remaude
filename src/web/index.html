@@ -179,6 +179,13 @@
           <button id="pair-btn">Approve</button>
         </div>
       </div>
+      <!-- Which Claude Code every session on this machine is. A new model can be
+           held back by an old one, so the version is shown whether or not there
+           is anything to do about it. -->
+      <div id="cli-block">
+        <div id="cli-status">CLI: …</div>
+        <button id="cli-update" hidden title="Install it and restart — open chats reopen automatically"></button>
+      </div>
       <button id="restart-server" title="Open chats reopen automatically">⟳ Restart server</button>
       <button id="server-mode" title="Restart the host outside the desktop session and sign out — the machine keeps answering from anywhere">🖥 Server mode</button>
       <div id="server-mode-status"></div>
