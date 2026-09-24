@@ -1764,9 +1764,15 @@ function stateSnapshot() {
 }
 
 const handlers = {
+  /** A bare name means a folder in the projects root; a folder that does not exist yet is created. */
   add_project(ws, { path }) {
-    agent.addProject(path);
+    if (!/[\\/]/.test(path)) {
+      if (path === '.' || path === '..' || path.includes(':')) throw new Error('bad name');
+      path = join(projectsRoot, path);
+    }
     const abs = resolve(path);
+    mkdirSync(abs, { recursive: true });
+    agent.addProject(abs);
     if (!config.projects.includes(abs)) {
       config.projects.push(abs);
       saveConfig(config);

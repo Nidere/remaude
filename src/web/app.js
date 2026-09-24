@@ -573,8 +573,8 @@ const handlers = {
               onclick: isAdded ? null : () => sendTo(hostKey(_host), { type: 'add_from_root', name }),
             };
           }),
-      // a folder outside the projects root is still reachable — by full path
-      { placeholder: '…or type a full path', onSubmit: (path) => sendTo(hostKey(_host), { type: 'add_project', path }) }
+      // a bare name makes a new folder in the root; a full path reaches anywhere — both are created if missing
+      { placeholder: '…or new folder name / full path',onSubmit: (path) => sendTo(hostKey(_host), { type: 'add_project', path }) }
     );
   },
 
