@@ -754,6 +754,54 @@ function canReadDoc(ws, path) {
   return hasHostAccess(ws.guest.email) || projectSharedWith(project, ws.guest.email);
 }
 
+/**
+ * Where a link written in a document (or a file named in a chat) actually
+ * leads. Resolved here rather than in the browser: only this side knows where a
+ * project ends, and a link that walks out of it must not open anything.
+ */
+function resolveDocHref(ws, { from, href, projectPath }) {
+  // a link inside a document counts from that document; a file named in a
+  // chat message counts from the project the chat lives in
+  let baseDir;
+  let project;
+  if (from) {
+    const base = resolve(String(from));
+    if (!canReadDoc(ws, base)) throw new Error('no access to this document');
+    baseDir = dirname(base);
+    project = projectOf(base);
+  } else {
+    project = agent.findProject(resolve(String(projectPath ?? '')))?.path;
+    if (!project) throw new Error('no such project');
+    baseDir = project;
+  }
+  const [rawPath, anchor] = String(href ?? '').split('#');
+  if (!rawPath) throw new Error('nothing to open');
+  let target = decodeURI(rawPath).replace(/\//g, sep);
+  // a link starting at the root means the project's root, not the disk's
+  if (target.startsWith(sep)) {
+    if (!project) throw new Error('this document is not inside a project');
+    target = join(project, target);
+  } else if (!/^[a-z]:[\\/]/i.test(target)) {
+    target = join(baseDir, target);
+  }
+  target = resolve(target);
+  if (!canReadDoc(ws, target)) throw new Error('that link leads outside this project');
+  if (!existsSync(target) || !statSync(target).isFile()) throw new Error('no such file');
+  return { target, anchor };
+}
+
+/** The pictures a document may show, by extension. */
+const IMAGE_TYPES = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+};
+
 /** Only markdown opens in the viewer, and only what this client may read. */
 function requireDoc(ws, path) {
   const abs = resolve(String(path ?? ''));
@@ -1536,6 +1584,7 @@ const GUEST_TYPES = new Set([
   'save_draft',
   'create_thread',
   'open_doc_link', // both ends checked against the share grants inside the handler
+  'doc_image', // likewise
   'list_dir', // only inside projects shared with them — dispatch() checks projectPath
   'add_artifact',
   ...DOC_TYPES, // documents and their comment threads — gated per document in dispatch()
@@ -2294,39 +2343,9 @@ const handlers = {
     });
   },
 
-  /**
-   * A link from one document to another, resolved here rather than in the
-   * browser: only this side knows where a project ends, and a link that walks
-   * out of it must not open anything.
-   */
+  /** A link from one document to another — see resolveDocHref for where it leads. */
   open_doc_link(ws, { from, href, projectPath }) {
-    // a link inside a document counts from that document; a file named in a
-    // chat message counts from the project the chat lives in
-    let baseDir;
-    let project;
-    if (from) {
-      const base = resolve(String(from));
-      if (!canReadDoc(ws, base)) throw new Error('no access to this document');
-      baseDir = dirname(base);
-      project = projectOf(base);
-    } else {
-      project = agent.findProject(resolve(String(projectPath ?? '')))?.path;
-      if (!project) throw new Error('no such project');
-      baseDir = project;
-    }
-    const [rawPath, anchor] = String(href ?? '').split('#');
-    if (!rawPath) throw new Error('nothing to open');
-    let target = decodeURI(rawPath).replace(/\//g, sep);
-    // a link starting at the root means the project's root, not the disk's
-    if (target.startsWith(sep)) {
-      if (!project) throw new Error('this document is not inside a project');
-      target = join(project, target);
-    } else if (!/^[a-z]:[\\/]/i.test(target)) {
-      target = join(baseDir, target);
-    }
-    target = resolve(target);
-    if (!canReadDoc(ws, target)) throw new Error('that link leads outside this project');
-    if (!existsSync(target) || !statSync(target).isFile()) throw new Error('no such file');
+    const { target, anchor } = resolveDocHref(ws, { from, href, projectPath });
     const buf = readFileSync(target);
     if (buf.length > 12 * 1024 * 1024) throw new Error('file too large to send');
     const asText = readableAsText(target);
@@ -2339,6 +2358,24 @@ const handlers = {
       anchor: anchor ? decodeURIComponent(anchor) : null,
       inInbox: Boolean(artifactByPath(target)),
     });
+  },
+
+  /**
+   * A picture a document shows, ![like this](pics/map.png) — found the way a
+   * link from that document is found, and under the same rules. A picture that
+   * is not there is not worth an error toast: the viewer keeps its alt text.
+   */
+  doc_image(ws, { from, href, projectPath }) {
+    try {
+      const { target } = resolveDocHref(ws, { from, href, projectPath });
+      const mediaType = IMAGE_TYPES[extname(target).slice(1).toLowerCase()];
+      if (!mediaType) throw new Error('not a picture');
+      const buf = readFileSync(target);
+      if (buf.length > 12 * 1024 * 1024) throw new Error('picture too large to send');
+      send(ws, { type: 'doc_image', from, projectPath, href, mediaType, data: buf.toString('base64') });
+    } catch (e) {
+      send(ws, { type: 'doc_image', from, projectPath, href, error: String(e.message ?? e) });
+    }
   },
 
   /**

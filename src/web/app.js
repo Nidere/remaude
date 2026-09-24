@@ -507,6 +507,7 @@ const handlers = {
         : isChat
           ? chatExportHtml(mdToHtml(text))
           : mdToHtml(text);
+      docImages.clear(); // a picture edited since it was last shown is shown as it is now
       $('doc-body').innerHTML = html;
       $('doc-body').scrollTop = 0; // do not land mid-way through the previous document
       $('doc-viewer').hidden = false;
@@ -524,6 +525,13 @@ const handlers = {
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
+
+  doc_image({ from, projectPath, href, mediaType, data, _host }) {
+    const key = docImageKey(hostKey(_host), from ?? projectPath, href);
+    docImages.set(key, data ? `data:${mediaType};base64,${data}` : null);
+    for (const img of document.querySelectorAll('img.md-img[data-key]:not([src])'))
+      if (img.dataset.key === key) showDocImage(img);
   },
 
   artifact_added({ artifact }) {
@@ -1510,6 +1518,61 @@ feedHost.addEventListener('click', (e) => {
   if (!mention) return;
   e.preventDefault();
   openMentionedDoc(mention.dataset.path ?? mention.dataset.href);
+});
+
+// A picture in markdown, ![map](pics/map.png), names a file the browser cannot
+// reach — it lives on the host, maybe behind the relay. So the host sends it,
+// found from the document the way a link would be (or from the chat's project,
+// for a picture in a message). The comments layer rebuilds the document's html
+// from scratch whenever a thread changes, so the pictures are kept here and put
+// back each time the markup is replaced.
+const docImages = new Map(); // host + base + href -> data URL, or null: not there
+
+function docImageKey(hostId, base, href) {
+  return `${hostId}\n${base}\n${href}`;
+}
+
+function showDocImage(img) {
+  const url = docImages.get(img.dataset.key);
+  if (url) {
+    img.src = url;
+    return;
+  }
+  // a broken-image icon says nothing; the alt text and the path say what is missing
+  const note = document.createElement('span');
+  note.className = 'md-img-missing';
+  note.textContent = `🖼 ${img.alt || img.dataset.src} — ${img.dataset.src}`;
+  img.replaceWith(note);
+}
+
+function loadDocImages(root, hostId, base) {
+  const [baseKey] = Object.values(base);
+  if (!baseKey) return;
+  for (const img of root.querySelectorAll('img.md-img[data-src]:not([src])')) {
+    const key = docImageKey(hostId, baseKey, img.dataset.src);
+    if (img.dataset.key === key) continue; // already asked for
+    img.dataset.key = key;
+    if (docImages.has(key)) showDocImage(img);
+    else sendTo(hostId, { type: 'doc_image', ...base, href: img.dataset.src });
+  }
+}
+
+new MutationObserver(() => {
+  if (openDoc.path) loadDocImages($('doc-body'), openDoc.hostId, { from: openDoc.path });
+}).observe($('doc-body'), { childList: true, subtree: true });
+
+new MutationObserver(() => {
+  const chat = chats.get(activeChatId);
+  if (chat) loadDocImages(feedHost, chatHostId(activeChatId), { projectPath: chat.projectPath });
+}).observe(feedHost, { childList: true, subtree: true });
+
+// a picture in a document opens full-screen, the same as one in the feed
+$('doc-body').addEventListener('click', (e) => {
+  if (!e.target.matches?.('img.md-img[src]')) return;
+  lightboxWant = null;
+  resetZoom();
+  $('lightbox').querySelector('img').src = e.target.src;
+  $('lightbox').hidden = false;
 });
 
 function scrollToAnchor(anchor) {

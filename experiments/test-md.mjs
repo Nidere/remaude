@@ -2,6 +2,14 @@
 import { mdToHtml } from '../src/web/md.js';
 
 const cases = [
+  // a picture is a picture, not a link with a stray "!" in front of it
+  ['![Семья растёт вширь](art/05_exp.jpg)', ['<img class="md-img" data-src="art/05_exp.jpg" alt="Семья растёт вширь"']],
+  ['![карта](https://x.io/map.png)', ['<img class="md-img" src="https://x.io/map.png" alt="карта"']],
+  // an underscore in the file name is not italics
+  ['*до* ![a](p/my_pic_.png) *после*', ['data-src="p/my_pic_.png"', '<i>до</i>', '<i>после</i>']],
+  // quoted in backticks, it is quoted, not shown — and code is not emphasised
+  ['`![no](a.png)` и `__init__`', ['<code>![no](a.png)</code>', '<code>__init__</code>']],
+  ['![x](javascript:alert(1)) ![y](data:image/svg+xml,abc)', ['![x](javascript:alert(1))']],
   ['**жирный** и *курсив* и `код`', ['<b>жирный</b>', '<i>курсив</i>', '<code>код</code>']],
   // emphasis a writer wrapped across a line still reads as emphasis
   ['начало **перед тем как задать\nвопрос, найдите место** конец', ['<b>перед тем как задать<br>вопрос, найдите место</b>']],
@@ -113,6 +121,10 @@ for (const [src, expects] of cases) {
   }
   if (src.includes('<script>') && html.includes('<script>')) {
     console.error(`FAIL: html injection: ${html}`);
+    failed++;
+  }
+  if (/javascript:|data:/.test(src) && html.includes('<img')) {
+    console.error(`FAIL: a picture with a scheme we do not trust got through: ${html}`);
     failed++;
   }
   if (src.includes('onerror') && html.includes('<img')) {

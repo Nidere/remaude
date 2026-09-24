@@ -2025,6 +2025,19 @@ body > .cmt-error {
 /* a moment of highlight, so the eye finds where the link landed */
 .md-anchor-hit { background: rgba(122, 162, 247, 0.18); border-radius: 4px; transition: background 0.8s; }
 
+/* a picture in markdown: as wide as the column allows, never wider than itself */
+img.md-img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 8px 0;
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+/* still on its way from the host: hold a little room so the text does not jump twice */
+img.md-img:not([src]) { min-height: 120px; width: 100%; background: rgba(255, 255, 255, 0.04); }
+.md-img-missing { color: var(--dim); font-size: 0.9em; }
+
 /* a document named in passing: clickable, without looking like a link */
 code.md-path { cursor: pointer; border-bottom: 1px dotted var(--accent); }
 code.md-path:hover { color: var(--accent); border-bottom-style: solid; }
