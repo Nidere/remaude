@@ -71,9 +71,20 @@ function Ensure-Bucket {
 $stateExcludes = @('--exclude', '*.pem', '--exclude', '*oauth*', '--exclude', '*.log', '--exclude', 'uploads/*')
 
 if ($Restore) {
+  # Not a straight `aws s3 sync` into the live folders: sync overwrites any file
+  # whose size differs, and every transcript still being written differs from its
+  # copy in the bucket -- a restore would roll live conversations back to the last
+  # backup. So the bucket goes to a scratch folder first, and robocopy brings over
+  # only what is missing (/XC /XN /XO skip every file that already exists).
   Write-Host "restoring from s3://$Bucket -- existing files are kept, missing ones come back"
-  aws s3 sync "s3://$Bucket/claude-projects" $transcripts
-  aws s3 sync "s3://$Bucket/remaude" $state
+  $scratch = Join-Path $env:TEMP 'remaude-restore'
+  foreach ($pair in @(@('claude-projects', $transcripts), @('remaude', $state))) {
+    $from = Join-Path $scratch $pair[0]
+    aws s3 sync "s3://$Bucket/$($pair[0])" $from --only-show-errors
+    robocopy $from $pair[1] /E /XC /XN /XO /NP /NFL /NDL /NJH | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $($pair[0]) with code $LASTEXITCODE" }
+  }
+  Remove-Item -Recurse -Force $scratch
   Write-Host 'done -- restart the host to pick it up'
   return
 }
