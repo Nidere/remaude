@@ -235,7 +235,10 @@ function connect() {
     $('conn-dot').classList.add('on');
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
     // history may have drifted after a reconnect — re-request it for the active chat
-    for (const chat of chats.values()) chat.historyRequested = false;
+    for (const chat of chats.values()) {
+      chat.historyRequested = false;
+      chat.historyLoaded = false;
+    }
     if (activeChatId) {
       requestHistory(activeChatId);
       reportFocus(); // the host forgot we are watching; otherwise it pushes at us
@@ -261,6 +264,16 @@ function send(obj) {
 
 const handlers = {
   hosts({ hosts }) {
+    // The host of the open chat has just come back through the relay: whatever
+    // it said while its tunnel was down never reached us, so the feed re-reads.
+    const before = new Set(knownHosts.map((h) => h.id));
+    const activeHost = activeChatId && chats.get(activeChatId)?.hostId;
+    if (activeHost && !before.has(activeHost) && hosts.some((h) => h.id === activeHost)) {
+      const chat = chats.get(activeChatId);
+      chat.historyRequested = false;
+      chat.historyLoaded = false;
+      requestHistory(activeChatId);
+    }
     knownHosts = hosts;
     // hosts that went away take their chats with them
     const alive = new Set(hosts.map((h) => h.id));
@@ -432,6 +445,8 @@ const handlers = {
     chat.subagents.clear();
     chat.msgs = [];
     chat.fromCache = false;
+    chat.historyLoaded = true;
+    clearTimeout(chat.historyRetry);
     chatThreads.resetChat(chatId); // threads refill from the same messages
     for (const m of messages) renderSdkMessage(chatId, m);
     if (chatId === activeChatId) {
@@ -737,6 +752,16 @@ function requestHistory(chatId) {
   const chat = getChat(chatId);
   if (chat.historyRequested) return;
   chat.historyRequested = true;
+  // A request can be lost without a word: the relay drops whatever is addressed
+  // to a host whose tunnel is reconnecting at that moment. Asked once and never
+  // again, the chat then showed only what arrived live after it — one message on
+  // an empty screen. So until the history is here, keep asking.
+  clearTimeout(chat.historyRetry);
+  chat.historyRetry = setTimeout(() => {
+    if (chat.historyLoaded || chatId !== activeChatId) return;
+    chat.historyRequested = false;
+    requestHistory(chatId);
+  }, 4000);
   // paint the cached transcript while the real one travels from the host
   if (!chat.feedEl.childElementCount && !chat.fromCache) {
     const cached = cachedTranscript(chatId);
