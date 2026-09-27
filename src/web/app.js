@@ -30,6 +30,8 @@ const hostKey = (id) => id ?? LOCAL_HOST;
 // widget shows the account the chat on screen is worked on under
 const limitsByHost = new Map();
 
+let secretMode = false; // 🔒 in the composer: see setSecretMode
+
 // Drafts survive the tab being evicted (iOS kills backgrounded PWAs at will),
 // so they live in localStorage keyed by session id — chat ids change when the
 // host restarts. Attachments stay in memory: base64 images would blow the quota.
@@ -751,9 +753,11 @@ function selectChat(chatId) {
   // the draft belongs to the chat: save the current one, restore the new one
   if (activeChatId && chats.has(activeChatId)) {
     const prev = chats.get(activeChatId);
-    prev.draftText = $('input').value;
+    // a half-typed secret is not a draft: it would come back as ordinary text
+    prev.draftText = secretMode ? '' : $('input').value;
     prev.draftAtt = attachments.slice();
   }
+  setSecretMode(false);
   activeChatId = chatId;
   localStorage.setItem('lastChat', chatId);
   const chat = getChat(chatId);
@@ -2230,8 +2234,7 @@ function renderLimits() {
 
 // ---------- composer ----------
 
-function currentContent() {
-  let text = $('input').value.trim();
+function currentContent(text = $('input').value.trim()) {
   // files travel as paths: the session opens them itself
   const files = attachments.filter((a) => a.file && a.path); // one still on its way is not there yet
   if (files.length)
@@ -2246,8 +2249,57 @@ function currentContent() {
   return blocks;
 }
 
+// ---------- secret messages ----------
+// With 🔒 on, what is typed is not said in the chat: the host puts it in a file
+// under the project's .remaude/secrets and the session is only told the path.
+// For keys and passwords — kept out of the feed and the drafts, nothing more.
+
+function setSecretMode(on) {
+  secretMode = on;
+  $('composer').classList.toggle('secret', on);
+  $('input').placeholder = on ? 'Secret — goes to a file, the chat gets only its path' : 'Message…';
+  if (on && activeChatId) {
+    // whatever was typed before the lock was pressed may already sit in a draft
+    saveDraft(activeChatId, '');
+    pushDraft(activeChatId, '', { now: true });
+  }
+}
+
+$('secret-btn').onclick = () => {
+  setSecretMode(!secretMode);
+  $('input').focus();
+};
+
+function sendSecret() {
+  const secret = $('input').value;
+  if (!secret.trim()) return;
+  if (!liveChats.has(activeChatId)) {
+    appendTo(activeChatId, el('div', 'error-banner', 'not connected to this chat yet — the secret was not sent'));
+    return;
+  }
+  stickToBottom();
+  // no optimistic bubble: only the host knows the path, and its echo shows it
+  sendTo(chatHostId(activeChatId), {
+    type: 'send',
+    chatId: activeChatId,
+    content: currentContent('') ?? '',
+    secret,
+  });
+  $('input').value = '';
+  autoGrowInput($('input'));
+  attachments.length = 0;
+  renderAttachments();
+  const chat = chats.get(activeChatId);
+  if (chat) {
+    chat.draftText = '';
+    chat.draftAtt = [];
+  }
+  setSecretMode(false);
+}
+
 function sendMessage() {
   if (!activeChatId) return;
+  if (secretMode) return sendSecret();
   const content = currentContent();
   if (!content) return;
   // Never swallow a message: if this chat is not one the host currently reports
@@ -2436,6 +2488,7 @@ function autoGrowInput(el) {
 $('input').addEventListener('input', function (e) {
   autoGrowInput(this);
   if (e && !e.isTrusted) return; // only a person typing counts as a draft
+  if (secretMode) return; // a secret is never kept as a draft
   const at = saveDraft(activeChatId, this.value);
   if (activeChatId) {
     getChat(activeChatId).draftAt = at; // what we know is newest, so a stale copy cannot win

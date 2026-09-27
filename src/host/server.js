@@ -594,6 +594,30 @@ function ensureInboxIgnored(path) {
   }
 }
 
+// A secret message — a key, a password — goes to a file, and the chat only
+// learns where it is. This is for tidiness, not safety: the text stays out of
+// the feed, the drafts and the chat's title, and a session that uses it through
+// the path keeps it out of its transcript as well.
+function saveSecret(cwd, text) {
+  const dir = join(cwd, '.remaude', 'secrets');
+  mkdirSync(dir, { recursive: true });
+  ensureInboxIgnored(dir);
+  const stamp = new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+  let target = join(dir, `secret-${stamp}.txt`);
+  for (let n = 2; existsSync(target); n++) target = join(dir, `secret-${stamp} (${n}).txt`);
+  writeFileSync(target, text);
+  return target;
+}
+
+/** What the session is told instead of the secret, in front of whatever else came with it. */
+function withSecretPointer(content, path) {
+  const note =
+    `🔒 Секрет сохранён в файл: ${path}\n` +
+    'Пользуйся им через файл (подставляй в команду, передавай путь) и не выводи содержимое в ответ, код или коммиты.';
+  if (Array.isArray(content)) return [{ type: 'text', text: note }, ...content];
+  return content ? `${note}\n\n${content}` : note;
+}
+
 /** First heading or first non-empty line — a human label for the list. */
 function docTitle(file) {
   try {
@@ -1873,8 +1897,9 @@ const handlers = {
     send(ws, { type: 'chat_created', chatId: chat.id, projectPath: chat.cwd });
   },
 
-  send(ws, { chatId, content, localId, threadId }) {
+  send(ws, { chatId, content, localId, threadId, secret }) {
     const chat = wakeChat(findChat(chatId));
+    if (typeof secret === 'string' && secret.trim()) content = withSecretPointer(content, saveSecret(chat.cwd, secret));
     ws.watching = chatId; // whoever is typing here is plainly watching it
     // a human message lands mid-service-turn: the turn is a shared one now, so
     // stop hiding it (a thread answer still gets copied; a title is dropped)

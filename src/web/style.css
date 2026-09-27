@@ -1392,7 +1392,7 @@ body.editing .agent-item { display: none; } /* agents are not editable */
 }
 #stop-btn { background: var(--red); }
 
-#attach-btn {
+#attach-btn, #secret-btn {
   background: var(--bg-3);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1403,7 +1403,10 @@ body.editing .agent-item { display: none; } /* agents are not editable */
   cursor: pointer;
   flex-shrink: 0;
 }
-#attach-btn:hover { border-color: var(--accent); }
+#attach-btn:hover, #secret-btn:hover { border-color: var(--accent); }
+/* 🔒 on: the box says plainly that what is typed will not be said in the chat */
+#composer.secret #secret-btn { background: #6b4e16; border-color: #e0a526; }
+#composer.secret #input { border-color: #e0a526; background: #1f1a10; }
 
 /* ---------- mobile (at the end of the file: media rules must beat the base ones) ---------- */
 
