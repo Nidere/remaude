@@ -247,6 +247,7 @@ function connect() {
   ws.onclose = () => {
     $('conn-dot').classList.remove('on');
     for (const chatId of chats.keys()) recoverPendingSend(chatId);
+    failUploads('the connection dropped'); // the host forgot the half-written file along with us
     setTimeout(connect, 1500);
   };
   ws.onmessage = (e) => {
@@ -500,9 +501,23 @@ const handlers = {
   },
 
   /** The host put the file on disk; the message will carry its path. */
-  file_uploaded({ name, path, size }) {
+  upload_progress({ uploadId, seq }) {
+    const flight = uploadsInFlight.get(uploadId);
+    if (!flight) return;
+    flight.acked = Math.max(flight.acked, seq);
+    flight.wake?.();
+    const waiting = attachments.find((a) => a.uploadId === uploadId);
+    if (waiting?.size0) {
+      waiting.sending = Math.min(99, Math.round((((seq + 1) * UPLOAD_CHUNK) / waiting.size0) * 100));
+      renderAttachments();
+    }
+  },
+
+  file_uploaded({ uploadId, name, path, size }) {
     // the placeholder that was counting its way up becomes the file itself
-    const waiting = attachments.find((a) => a.file && a.sending !== undefined && !a.path);
+    const waiting =
+      attachments.find((a) => uploadId && a.uploadId === uploadId) ??
+      attachments.find((a) => a.file && a.sending !== undefined && !a.path);
     if (waiting) Object.assign(waiting, { name, path, size, sending: undefined });
     else attachments.push({ file: true, name, path, size });
     renderAttachments();
@@ -726,6 +741,7 @@ const handlers = {
   },
 
   error({ message, inResponseTo }) {
+    if (inResponseTo === 'upload_file') return failUploads(message); // the attachment reports it
     // an error for something done inside the document viewer must show up there,
     // not as a banner in a chat feed nobody is looking at — and never as a
     // modal alert(), which reads as the whole app freezing
@@ -2343,6 +2359,13 @@ function sendSecret() {
 
 function sendMessage() {
   if (!activeChatId) return;
+  // a file still on its way has no path yet, and the message used to leave
+  // without it — silently, with the attachment gone from the box as well
+  const uploading = attachments.find((a) => a.file && !a.path);
+  if (uploading) {
+    appendTo(activeChatId, el('div', 'error-banner', `${uploading.name} is still uploading (${uploading.sending ?? 0}%) — send once it is done`));
+    return;
+  }
   if (secretMode) return sendSecret();
   const content = currentContent();
   if (!content) return;
@@ -2591,16 +2614,55 @@ async function addFileAttachment(file, extra = {}) {
   const uploadId = crypto.randomUUID();
   const hostId = chatHostId(activeChatId);
   // a big file goes in pieces: nothing holds it whole, and no frame is oversized
-  const waiting = { file: true, name: file.name, uploadId, sending: 0, ...extra };
+  const waiting = { file: true, name: file.name, uploadId, sending: 0, size0: file.size, ...extra };
   attachments.push(waiting);
   renderAttachments();
-  for (let at = 0, seq = 0; at < file.size || seq === 0; at += UPLOAD_CHUNK, seq++) {
-    const data = await base64Of(file.slice(at, at + UPLOAD_CHUNK));
-    const last = at + UPLOAD_CHUNK >= file.size;
-    sendTo(hostId, { type: 'upload_file', chatId: activeChatId, uploadId, name: file.name, seq, data, last });
-    waiting.sending = Math.min(100, Math.round(((at + UPLOAD_CHUNK) / Math.max(file.size, 1)) * 100));
+  const chatId = activeChatId;
+  const flight = { acked: -1, failed: null, wake: null };
+  uploadsInFlight.set(uploadId, flight);
+  try {
+    for (let at = 0, seq = 0; at < file.size || seq === 0; at += UPLOAD_CHUNK, seq++) {
+      // at most UPLOAD_WINDOW pieces on the wire: the socket is the one every
+      // chat talks through, and a message typed now must not queue behind the file
+      await uploadAcked(flight, seq - UPLOAD_WINDOW);
+      const data = await base64Of(file.slice(at, at + UPLOAD_CHUNK));
+      const last = at + UPLOAD_CHUNK >= file.size;
+      sendTo(hostId, { type: 'upload_file', chatId, uploadId, name: file.name, seq, data, last });
+      if (last) break;
+    }
+  } catch (e) {
+    // the file did not get there: say so, instead of an hourglass for ever
+    const i = attachments.indexOf(waiting);
+    if (i !== -1) attachments.splice(i, 1);
     renderAttachments();
-    if (last) break;
+    appendTo(chatId, el('div', 'error-banner', `${file.name} was not uploaded: ${e.message} — attach it again`));
+  } finally {
+    uploadsInFlight.delete(uploadId);
+  }
+}
+
+const UPLOAD_WINDOW = 2;
+const uploadsInFlight = new Map(); // uploadId -> {acked, failed, wake}
+
+/** Wait until the host has confirmed piece `seq`; percentages follow what it has, not what we sent. */
+async function uploadAcked(flight, seq) {
+  let quiet = Date.now();
+  let seen = flight.acked;
+  while (flight.acked < seq) {
+    if (flight.failed) throw new Error(flight.failed);
+    if (flight.acked !== seen) [seen, quiet] = [flight.acked, Date.now()];
+    if (Date.now() - quiet > 60000) throw new Error('the host stopped answering');
+    await new Promise((wake) => {
+      flight.wake = wake;
+      setTimeout(wake, 1000);
+    });
+  }
+}
+
+function failUploads(reason) {
+  for (const flight of uploadsInFlight.values()) {
+    flight.failed = reason;
+    flight.wake?.();
   }
 }
 

@@ -2456,7 +2456,10 @@ const handlers = {
       }
     }
 
-    if (!last) return; // more is coming; nothing to announce yet
+    // More is coming. The browser waits for this before it sends the next piece:
+    // pushed all at once, a few hundred megabytes sat in the one socket every
+    // chat shares, and whatever was typed meanwhile queued behind them.
+    if (!last) return send(ws, { type: 'upload_progress', chatId, uploadId, seq });
     const done = arriving.get(key);
     arriving.delete(key);
     if (!done || !done.bytes) {
@@ -2464,7 +2467,7 @@ const handlers = {
       throw new Error('empty file');
     }
     rememberFileChat(done.path, chatId); // this chat is the one that was given it
-    send(ws, { type: 'file_uploaded', chatId, name: basename(done.path), path: done.path, size: done.bytes });
+    send(ws, { type: 'file_uploaded', chatId, uploadId, name: basename(done.path), path: done.path, size: done.bytes });
   },
 
   /** Manual "add to inbox" for a file that was written without a marker. */
