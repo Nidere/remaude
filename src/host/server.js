@@ -1998,16 +1998,24 @@ const handlers = {
     pendingPermissions.get(requestId)?.resolve(result);
   },
 
-  history(ws, { chatId }) {
+  history(ws, { chatId, before }) {
     // The full log with inline screenshots is tens of megabytes through the
-    // relay tunnel — that was the ~10s cold open. The feed gets the recent
-    // tail; in all but the freshest messages images collapse to placeholders
-    // (the gallery still serves the real ones) and huge payloads are clipped.
+    // relay tunnel — that was the ~10s cold open. The feed gets it a page at a
+    // time, newest first, and asks for the next one as it is scrolled up; in
+    // all but the freshest messages images collapse to placeholders (the
+    // gallery still serves the real ones) and tool results come on demand.
     const all = chatHistories.get(chatId) ?? [];
-    const tail = all.slice(-300);
+    if (Number.isInteger(before)) {
+      const start = historyPageStart(all, Math.min(before, all.length));
+      const messages = annotateThreads(chatId, all.slice(start, before).map((m) => lazyHistoryMessage(m, true)));
+      send(ws, { type: 'history_page', chatId, messages, start, before, hasMore: start > 0 });
+      return;
+    }
+    const start = historyPageStart(all, all.length);
+    const tail = all.slice(start);
     const keepRich = tail.length - 30;
     const messages = annotateThreads(chatId, tail.map((m, i) => lazyHistoryMessage(m, i < keepRich)));
-    send(ws, { type: 'history', chatId, messages });
+    send(ws, { type: 'history', chatId, messages, start, hasMore: start > 0 });
     send(ws, threadsPayload(chatId)); // the feed needs to know which tags are threads
     // A browser reconnecting after a restart asks about the chat it was reading,
     // whose id died with the old host. That is the browser catching up, not a
@@ -2927,6 +2935,31 @@ let searchCursor = null; // {needle, files, idx} — lets "load more" resume the
  * freshest messages inline images collapse to placeholders too (the gallery
  * still serves the real ones).
  */
+// A page is counted in what the feed actually shows, not in records: one long
+// turn is hundreds of tool calls and results, and with tools hidden three
+// hundred records came out as a single screen. The raw cap only keeps a page of
+// nothing but tool calls from running to the start of a huge transcript.
+const HISTORY_PAGE_SAID = 40;
+const HISTORY_PAGE_RAW = 3000;
+
+function isSaidInFeed(msg) {
+  if (msg.parent_tool_use_id || (msg.type !== 'user' && msg.type !== 'assistant')) return false;
+  const content = msg.message?.content;
+  if (typeof content === 'string') return Boolean(content.trim());
+  return (content ?? []).some((b) => b.type === 'text' && b.text?.trim());
+}
+
+/** Where the page that ends just before `before` begins. */
+function historyPageStart(all, before) {
+  let i = before;
+  let said = 0;
+  while (i > 0 && said < HISTORY_PAGE_SAID && before - i < HISTORY_PAGE_RAW) {
+    i--;
+    if (isSaidInFeed(all[i])) said++;
+  }
+  return i;
+}
+
 function lazyHistoryMessage(msg, slimImages) {
   const content = msg.message?.content;
   if (!Array.isArray(content)) return msg;

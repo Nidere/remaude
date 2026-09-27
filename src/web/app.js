@@ -438,7 +438,7 @@ const handlers = {
     chatThreads.onOpened(msg);
   },
 
-  history({ chatId, messages }) {
+  history({ chatId, messages, start, hasMore }) {
     const chat = getChat(chatId);
     chat.feedEl.innerHTML = '';
     chat.chips.clear();
@@ -447,12 +447,31 @@ const handlers = {
     chat.fromCache = false;
     chat.historyLoaded = true;
     clearTimeout(chat.historyRetry);
+    // where this page begins in the host's log; an older host says nothing and
+    // the feed is then all there is
+    chat.historyStart = start ?? 0;
+    chat.historyHasMore = Boolean(hasMore);
+    chat.pageLoading = false;
     chatThreads.resetChat(chatId); // threads refill from the same messages
+    chat.feedEl.append(historyTop(chat));
     for (const m of messages) renderSdkMessage(chatId, m);
     if (chatId === activeChatId) {
       scrollToBottomSettled();
       cacheTranscript(chatId);
+      setTimeout(() => maybeLoadOlder(chatId), 300); // a page that does not fill the screen asks for the next
     }
+  },
+
+  history_page({ chatId, messages, start, before, hasMore }) {
+    const chat = chats.get(chatId);
+    // a page for a feed that has since been re-read from scratch
+    if (!chat || before !== chat.historyStart) return;
+    chat.pageLoading = false;
+    chat.historyStart = start;
+    chat.historyHasMore = Boolean(hasMore);
+    prependMessages(chat, chatId, messages);
+    historyTop(chat);
+    if (chatId === activeChatId) setTimeout(() => maybeLoadOlder(chatId), 100);
   },
 
   search_results({ query, results, hasMore, scanned, total, _host }) {
@@ -2922,7 +2941,69 @@ $('sidebar-overlay').onclick = closeSidebar;
 feedHost.addEventListener('scroll', () => {
   stuck = fromBottom() < 80;
   updateScrollDown();
+  if (activeChatId) maybeLoadOlder(activeChatId);
 });
+
+// ---------- older history, a page at a time ----------
+// The host sends the newest page when a chat opens; scrolling near the top asks
+// for the page before it, for as long as there is one.
+
+/** The line above the first message: loading, or the start of the chat. Kept first in the feed. */
+function historyTop(chat) {
+  let top = chat.feedEl.querySelector(':scope > .history-top');
+  if (!top) {
+    top = el('div', 'history-top', '');
+    chat.feedEl.prepend(top);
+  }
+  top.textContent = chat.pageLoading ? 'loading earlier messages…' : chat.historyHasMore ? '' : 'beginning of the chat';
+  return top;
+}
+
+function maybeLoadOlder(chatId) {
+  const chat = chats.get(chatId);
+  if (!chat?.historyLoaded || !chat.historyHasMore || chat.pageLoading) return;
+  if (feedHost.scrollTop > 600) return; // not near the top yet
+  chat.pageLoading = true;
+  historyTop(chat);
+  const before = chat.historyStart;
+  sendTo(chatHostId(chatId), { type: 'history', chatId, before });
+  // a request lost on the way must not lock the feed: the next scroll asks again
+  clearTimeout(chat.pageTimer);
+  chat.pageTimer = setTimeout(() => {
+    if (!chat.pageLoading || chat.historyStart !== before) return;
+    chat.pageLoading = false;
+    historyTop(chat);
+  }, 8000);
+}
+
+/**
+ * Render a page of older messages above what is on screen. They are drawn by
+ * the same code as everything else, into a scratch container, and then moved
+ * in at the top — with the scroll shifted by exactly the height they added, so
+ * what you were reading stays where it was.
+ */
+function prependMessages(chat, chatId, messages) {
+  const real = chat.feedEl;
+  const { streamEl, streamKind } = chat;
+  const page = document.createElement('div');
+  page.style.display = 'contents';
+  chat.feedEl = page;
+  chat.streamEl = null; // a reply still being typed belongs to the bottom, not to this page
+  const wasStuck = stuck;
+  stuck = false; // drawing must not yank the scroll to the bottom
+  try {
+    for (const m of messages) renderSdkMessage(chatId, m, true);
+  } finally {
+    chat.feedEl = real;
+    chat.streamEl = streamEl;
+    chat.streamKind = streamKind;
+    stuck = wasStuck;
+  }
+  const heightBefore = feedHost.scrollHeight;
+  const scrolledBefore = feedHost.scrollTop;
+  historyTop(chat).after(...page.childNodes);
+  if (chatId === activeChatId) feedHost.scrollTop = scrolledBefore + (feedHost.scrollHeight - heightBefore);
+}
 $('scroll-down').onclick = stickToBottom;
 
 // model and effort of the active chat

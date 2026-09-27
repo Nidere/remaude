@@ -2180,3 +2180,7 @@ body.guest #export-btn { display: none; }
   flex-shrink: 0;
 }
 #attachments .att-swap:hover { background: var(--accent); color: #10141f; }
+
+/* above the first message of the feed: older pages loading, or the chat's very beginning */
+.history-top { color: var(--dim); font-size: 12px; text-align: center; padding: 6px 0; }
+.history-top:empty { display: none; }
