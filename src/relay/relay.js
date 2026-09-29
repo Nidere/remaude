@@ -731,14 +731,15 @@ function attachHost(ws, info, ip) {
       ws.send(JSON.stringify({ t: 'device_approved', code, ok }));
     }
   });
-  ws.on('close', () => {
+  ws.on('close', (code, reason) => {
     hostLinks.get(info.email)?.delete(link);
     // the browser stays connected: it simply loses this host's slot and chats
     for (const client of link.clients.values()) client.slots?.delete(link.hostId);
-    console.log(`host offline: ${info.name} (${info.email})`);
+    // the code says who ended it and why — without it a flapping tunnel is guesswork
+    console.log(`host offline: ${info.name} (${info.email}) code ${code} ${String(reason ?? '')}`);
     refreshBrowsers();
   });
-  ws.on('error', () => {});
+  ws.on('error', (e) => console.log(`host link error: ${info.name}: ${e.message}`));
 }
 
 process.on('uncaughtException', (e) => console.error('uncaught:', e));
