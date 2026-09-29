@@ -806,7 +806,7 @@ function requestHistory(chatId) {
       if (chatId === activeChatId) scrollToBottomSettled();
     }
   }
-  sendTo(chatHostId(chatId), { type: 'history', chatId });
+  sendTo(chatHostId(chatId), { type: 'history', chatId, tools: !$('hide-tools').checked });
 }
 
 function selectChat(chatId) {
@@ -3028,7 +3028,7 @@ function maybeLoadOlder(chatId) {
   chat.pageLoading = true;
   historyTop(chat);
   const before = chat.historyStart;
-  sendTo(chatHostId(chatId), { type: 'history', chatId, before });
+  sendTo(chatHostId(chatId), { type: 'history', chatId, before, tools: !$('hide-tools').checked });
   // a request lost on the way must not lock the feed: the next scroll asks again
   clearTimeout(chat.pageTimer);
   chat.pageTimer = setTimeout(() => {
@@ -3413,6 +3413,14 @@ feedHost.classList.toggle('hide-tools', $('hide-tools').checked);
 $('hide-tools').addEventListener('change', function () {
   localStorage.setItem('hideTools', this.checked ? '1' : '0');
   feedHost.classList.toggle('hide-tools', this.checked);
+  // with the box ticked the history came without tools at all: showing them
+  // means reading it again. Ticking it needs nothing — they are simply hidden.
+  const chat = !this.checked && activeChatId && chats.get(activeChatId);
+  if (chat) {
+    chat.historyRequested = false;
+    chat.historyLoaded = false;
+    requestHistory(activeChatId);
+  }
 });
 
 // inline comments in the document viewer; requests go to the host that owns the active chat

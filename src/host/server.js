@@ -2006,21 +2006,23 @@ const handlers = {
     pendingPermissions.get(requestId)?.resolve(result);
   },
 
-  history(ws, { chatId, before }) {
+  history(ws, { chatId, before, tools = true }) {
     // The full log with inline screenshots is tens of megabytes through the
     // relay tunnel — that was the ~10s cold open. The feed gets it a page at a
     // time, newest first, and asks for the next one as it is scrolled up; in
     // all but the freshest messages images collapse to placeholders (the
     // gallery still serves the real ones) and tool results come on demand.
     const all = chatHistories.get(chatId) ?? [];
+    // with tools hidden in the browser, the page leaves them out altogether
+    const shown = (list) => (tools === false ? list.map(withoutTools).filter(Boolean) : list);
     if (Number.isInteger(before)) {
       const start = historyPageStart(all, Math.min(before, all.length));
-      const messages = annotateThreads(chatId, all.slice(start, before).map((m) => lazyHistoryMessage(m, true)));
+      const messages = annotateThreads(chatId, shown(all.slice(start, before)).map((m) => lazyHistoryMessage(m, true)));
       send(ws, { type: 'history_page', chatId, messages, start, before, hasMore: start > 0 });
       return;
     }
     const start = historyPageStart(all, all.length);
-    const tail = all.slice(start);
+    const tail = shown(all.slice(start));
     const keepRich = tail.length - 30;
     const messages = annotateThreads(chatId, tail.map((m, i) => lazyHistoryMessage(m, i < keepRich)));
     send(ws, { type: 'history', chatId, messages, start, hasMore: start > 0 });
@@ -2958,6 +2960,21 @@ function isSaidInFeed(msg) {
   const content = msg.message?.content;
   if (typeof content === 'string') return Boolean(content.trim());
   return (content ?? []).some((b) => b.type === 'text' && b.text?.trim());
+}
+
+/**
+ * The message as a reader with tools hidden sees it: no calls, no results, no
+ * subagents — whatever text was said beside them stays. Null if nothing does.
+ */
+const TOOL_BLOCKS = new Set(['tool_use', 'tool_result', 'server_tool_use', 'web_search_tool_result']);
+function withoutTools(msg) {
+  if (msg.parent_tool_use_id) return null;
+  if (msg.type !== 'user' && msg.type !== 'assistant') return msg;
+  const content = msg.message?.content;
+  if (!Array.isArray(content) || !content.some((b) => TOOL_BLOCKS.has(b.type))) return msg;
+  const kept = content.filter((b) => !TOOL_BLOCKS.has(b.type));
+  if (!kept.some((b) => b.type === 'text' || b.type === 'image')) return null;
+  return { ...msg, message: { ...msg.message, content: kept } };
 }
 
 /** Where the page that ends just before `before` begins. */
