@@ -4,6 +4,18 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 
+// A frame over the relay's limit does not fail by itself: the relay drops the
+// whole tunnel, every chat on this machine with it, and the browser that asked
+// asks again the moment it is back. Such a frame is stopped here, and said.
+const MAX_FRAME = 24 * 1024 * 1024;
+const mb = (data) => (data.length / 1048576).toFixed(1);
+function tooBig(data) {
+  if (data.length <= MAX_FRAME) return false;
+  const kind = /"type":"([a-z_]+)"/.exec(data.slice(0, 200))?.[1] ?? '?';
+  console.error(`relay: not sending ${kind}, ${mb(data)} MB is over the limit`);
+  return true;
+}
+
 export class RelayLink extends EventEmitter {
   #ws = null;
   #stopped = false;
@@ -51,10 +63,12 @@ export class RelayLink extends EventEmitter {
   }
 
   sendTo(id, data) {
+    if (tooBig(data)) data = JSON.stringify({ type: 'error', message: `a reply of ${mb(data)} MB is too big to pass through the relay` });
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'msg', id, data }));
   }
 
   cast(data) {
+    if (tooBig(data)) return;
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ t: 'cast', data }));
   }
 

@@ -542,6 +542,8 @@ const httpServer = createServer(async (req, res) => {
 
 // files travel through here in pieces; a piece has to fit in a frame
 const wssBrowser = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
+// Not roomier than this: a 47 MB frame, let through once, ran this small box
+// out of memory while parsing it. The host holds its frames under the limit.
 const wssHost = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
 wssBrowser.on('error', () => {});
 wssHost.on('error', () => {});
@@ -689,6 +691,10 @@ function attachHost(ws, info, ip) {
       msg = JSON.parse(raw);
     } catch {
       return;
+    }
+    if (raw.length > 16 * 1024 * 1024) {
+      const kind = /"type\\?":\\?"([a-z_]+)/.exec(String(msg.data ?? '').slice(0, 300))?.[1];
+      console.log(`big frame from ${info.name}: ${msg.t} ${kind ?? '?'} ${(raw.length / 1048576).toFixed(1)} MB`);
     }
     if (msg.t === 'msg') {
       const client = link.clients.get(msg.id);

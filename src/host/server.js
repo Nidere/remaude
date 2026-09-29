@@ -310,6 +310,14 @@ for (const oc of config.openChats ?? []) {
 }
 
 agent.on('chat_message', ({ chatId, msg }) => {
+  // The SDK hangs a structured copy of every tool's output on the message —
+  // whole files, screenshots, command output — that the feed never reads. Kept,
+  // it swelled a busy chat's history to 47 MB in memory: a page too big for the
+  // relay, which dropped the tunnel and asked for it again, round and round.
+  if (msg.tool_use_result !== undefined) {
+    msg = { ...msg };
+    delete msg.tool_use_result;
+  }
   // a service turn (comment thread, chat naming): tag everything it says so the feed can hide it
   const serviceTurn = serviceTurns.get(chatId);
   if (serviceTurn && !serviceTurn.contested) msg.threadRef = serviceTurn.threadId ?? '@service';
