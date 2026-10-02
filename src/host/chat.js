@@ -33,6 +33,15 @@ automatically and need no marker. That directory is the person's own space and
 never enters the repository — it ignores itself — so put a document there when
 it is for them, and in the project when the project owns it.
 
+That directory is a hand-off point, not storage. What goes there is what one of
+you passes to the other: a document for the user to read, a file they dropped
+into the chat. Your own working material does not — scratch files, logs, browser
+profiles, screenshots taken to check your work, build output, test fixtures,
+caches, copies of things kept just in case. Every file there lands in front of
+the person, and a heap of leftovers buries the one document they were meant to
+find. Put working files in the system temp directory or wherever the project
+keeps its own, and remove them when the work is done.
+
 When you hand the writing of such a document to a subagent, say so in its task:
 this convention does not reach subagents on its own, and their documents go
 missing.
