@@ -282,13 +282,15 @@ export class Chat extends EventEmitter {
   }
 
   /** @param content string | array of Messages API content blocks (text/image) */
-  send(content) {
+  /** @param uuid stamped back on the reply as `user_message_uuid` — how an answer is matched to what it answers */
+  send(content, { uuid } = {}) {
     if (this.#closed) throw new Error('chat is closed');
     this.#spawn(); // a sleeping chat wakes to take the message
     this.#queue.push({
       type: 'user',
       parent_tool_use_id: null,
       message: { role: 'user', content },
+      ...(uuid ? { uuid } : {}),
     });
     this.#setStatus('thinking');
     this.#wake?.();

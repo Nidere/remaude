@@ -61,6 +61,22 @@ t = new TurnTags();
 t.end('fresh');
 eq(t.active('fresh'), null, 'ending an unknown turn is harmless');
 
+// A thread message folded into a running turn is never replayed; the reply's
+// user_message_uuid stamp is what moves the turn into the thread.
+t = new TurnTags();
+t.sent('u-feed', null);
+t.sent('u-thread', 'T');
+t.begin('c', null); // the ordinary turn already running
+t.answering('c', 'u-thread');
+eq(t.active('c'), 'T', 'a reply stamped with a thread message goes to that thread');
+t.answering('c', 'u-feed');
+eq(t.active('c'), null, 'a reply stamped with an ordinary message goes to the feed');
+t.begin('c', 'T');
+t.answering('c', 'someone-elses');
+eq(t.active('c'), 'T', 'a stamp we never sent changes nothing');
+t.answering('c', undefined);
+eq(t.active('c'), 'T', 'an unstamped frame changes nothing');
+
 // Wiring: the tag has to be set from the message the session replays back, and
 // tool results must not be mistaken for the start of a turn.
 const server = readFileSync(new URL('../src/host/server.js', import.meta.url), 'utf-8');
@@ -71,6 +87,8 @@ eq(
   'a turn is tagged from the message that starts it, tool results excluded'
 );
 eq(/turnTags\.end\(chatId\)/.test(wiring), true, 'and untagged when the turn reports back');
+eq(/turnTags\.answering\(chatId, msg\.user_message_uuid\)/.test(wiring), true, 'and re-tagged by the reply stamp');
+eq(/turnTags\.sent\(uuid, thread\?\.id \?\? null\)/.test(server), true, 'every sent message is remembered with its thread');
 
 console.log(failed ? `TURN TAGS: ${failed} failed` : 'TURN TAGS OK');
 process.exit(failed ? 1 : 0);

@@ -16,6 +16,25 @@
  */
 export class TurnTags {
   #active = new Map(); // chatId -> threadId | null
+  #sent = new Map(); // uuid of a message we sent -> threadId | null
+
+  /**
+   * The replay is not always there. A message written while the session is
+   * busy can be folded into the turn already running, and then nothing is
+   * replayed — the answer to a thread message went to the feed. What does come
+   * is the reply itself, stamped with the uuid of the message it answers; so
+   * every message goes out with one, and the stamp settles the turn.
+   */
+  sent(uuid, threadId = null) {
+    this.#sent.set(uuid, threadId ?? null);
+    if (this.#sent.size > 500) this.#sent.delete(this.#sent.keys().next().value);
+  }
+
+  /** A reply stamped with the uuid of something we sent: that message's thread is the turn's. */
+  answering(chatId, uuid) {
+    if (!uuid || !this.#sent.has(uuid)) return;
+    this.#active.set(chatId, this.#sent.get(uuid));
+  }
 
   /** The thread the running turn belongs to, if any. */
   active(chatId) {

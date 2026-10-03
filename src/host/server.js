@@ -318,6 +318,8 @@ agent.on('chat_message', ({ chatId, msg }) => {
     msg = { ...msg };
     delete msg.tool_use_result;
   }
+  // the reply names the message it answers — that decides whose turn it is
+  if (!msg.parent_tool_use_id) turnTags.answering(chatId, msg.user_message_uuid);
   // a service turn (comment thread, chat naming): tag everything it says so the feed can hide it
   const serviceTurn = serviceTurns.get(chatId);
   if (serviceTurn && !serviceTurn.contested) msg.threadRef = serviceTurn.threadId ?? '@service';
@@ -1927,7 +1929,9 @@ const handlers = {
     // and `authorId` beside it and needs no line in its text; the transcript
     // has nowhere else to keep the sender, and after a restart it is the whole
     // of what is known about who said what.
-    chat.send(ws.guest ? withSenderMark(content, ws.guest.email) : content);
+    const uuid = randomUUID();
+    turnTags.sent(uuid, thread?.id ?? null);
+    chat.send(ws.guest ? withSenderMark(content, ws.guest.email) : content, { uuid });
     // a thread message must never become the chat's name — it is a side remark
     if (!chat.title && !thread) {
       const text = typeof content === 'string' ? content : content.find?.((b) => b.type === 'text')?.text;
