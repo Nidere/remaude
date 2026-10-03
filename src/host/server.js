@@ -318,6 +318,13 @@ agent.on('chat_message', ({ chatId, msg }) => {
     msg = { ...msg };
     delete msg.tool_use_result;
   }
+  // The session's whole list of live background work, sent whenever it changes:
+  // workflows, background commands and agents alike. Only Agent calls used to
+  // keep a chat awake, so a workflow waited on for an hour died with the chat
+  // put to sleep under it. Ambient tasks are watchers, not work.
+  if (msg.type === 'system' && msg.subtype === 'background_tasks_changed') {
+    backgroundWork.set(chatId, (msg.tasks ?? []).filter((t) => !t.ambient).length);
+  }
   // the reply names the message it answers — that decides whose turn it is
   if (!msg.parent_tool_use_id) turnTags.answering(chatId, msg.user_message_uuid);
   // a service turn (comment thread, chat naming): tag everything it says so the feed can hide it
@@ -433,6 +440,8 @@ function wakeChat(chat) {
   return chat;
 }
 
+const backgroundWork = new Map(); // chatId -> live background tasks, as the session last reported
+
 setInterval(() => {
   let changed = false;
   for (const chat of agent.allChats()) {
@@ -441,7 +450,9 @@ setInterval(() => {
     // a background agent is still out there. Only a running one counts: a row
     // that has finished is merely burning down its half-minute on screen
     if (agentsOf(chat.id).running) continue;
+    if (backgroundWork.get(chat.id)) continue; // a workflow or a background command is still going
     if (!chat.sleep()) continue;
+    backgroundWork.delete(chat.id); // the process is gone, and its tasks with it
     changed = true;
     console.log(`asleep: ${chat.title ?? chat.id}`);
   }
