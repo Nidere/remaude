@@ -329,6 +329,11 @@ agent.on('chat_message', ({ chatId, msg }) => {
       (msg.tasks ?? []).filter((t) => !t.ambient).map((t) => ({ id: t.task_id, type: t.task_type, description: t.description })),
     );
   }
+  // That list lags behind: an agent that finished while the chat sat idle stays
+  // on it until the next turn picks up its report — an hour of "running" for
+  // work long done. The task's own status says it at once.
+  if (msg.type === 'system' && msg.subtype === 'task_updated' && ENDED_TASK.has(msg.patch?.status)) endBackgroundTask(chatId, msg.task_id);
+  if (msg.type === 'system' && msg.subtype === 'task_notification') endBackgroundTask(chatId, msg.task_id);
   // the reply names the message it answers — that decides whose turn it is
   if (!msg.parent_tool_use_id) turnTags.answering(chatId, msg.user_message_uuid);
   // a service turn (comment thread, chat naming): tag everything it says so the feed can hide it
@@ -446,9 +451,25 @@ function wakeChat(chat) {
 
 /** The list is shown too: a chat waiting on a workflow otherwise looks like one that hangs. */
 function setBackgroundWork(chatId, tasks) {
+  const ended = endedTasks.get(chatId);
+  if (ended) {
+    for (const id of ended) if (!tasks.some((t) => t.id === id)) ended.delete(id); // gone from the list too: nothing left to remember
+    tasks = tasks.filter((t) => !ended.has(t.id));
+  }
   if (tasks.length) backgroundWork.set(chatId, tasks);
   else backgroundWork.delete(chatId);
   broadcast({ type: 'background', chatId, tasks });
+}
+
+const ENDED_TASK = new Set(['completed', 'failed', 'killed']);
+const endedTasks = new Map(); // chatId -> ids of tasks that ended but may still be on the session's list
+
+function endBackgroundTask(chatId, taskId) {
+  if (!taskId) return;
+  if (!endedTasks.has(chatId)) endedTasks.set(chatId, new Set());
+  endedTasks.get(chatId).add(taskId);
+  const tasks = backgroundWork.get(chatId);
+  if (tasks?.some((t) => t.id === taskId)) setBackgroundWork(chatId, tasks);
 }
 
 setInterval(() => {
