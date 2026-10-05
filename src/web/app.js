@@ -1155,12 +1155,14 @@ function renderActivity(chat) {
 }
 
 /**
- * The session's background tasks worth a line of their own. Agents are in the
- * list too, but they already have their rows; what is left is what used to be
- * invisible — workflows and background commands.
+ * The session's background tasks worth a line of their own. An agent already
+ * shown as a subagent row is left out; one with no row — resumed by a message
+ * after a restart, when the host never saw it start — is shown here, or it is
+ * shown nowhere.
  */
 function backgroundShown(chat) {
-  return (chat?.background ?? []).filter((t) => !/agent/i.test(t.type ?? ''));
+  const rows = new Set((chat?.agents ?? []).filter((a) => a.status === 'running').map((a) => a.label));
+  return (chat?.background ?? []).filter((t) => !(/agent/i.test(t.type ?? '') && rows.has(t.description)));
 }
 
 /** Any background task at all keeps an idle chat from looking finished. */
@@ -1519,7 +1521,8 @@ function renderHostProjects(root, hostId, hostState) {
       for (const t of backgroundShown(chat)) {
         const row = el('div', 'agent-item', '');
         row.append(el('span', 'status-dot background', ''));
-        row.append(el('span', 'agent-label', `${/workflow/i.test(t.type ?? '') ? '⚙' : '▸'} ${t.description || t.type}`));
+        const icon = /workflow/i.test(t.type ?? '') ? '⚙' : /agent/i.test(t.type ?? '') ? '◆' : '▸';
+        row.append(el('span', 'agent-label', `${icon} ${t.description || t.type}`));
         row.title = t.type ?? '';
         proj.append(row);
       }
