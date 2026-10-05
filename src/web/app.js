@@ -616,6 +616,14 @@ const handlers = {
     renderSidebar();
   },
 
+  /** Workflows and background commands the session is still running. */
+  background({ chatId, tasks }) {
+    const chat = getChat(chatId);
+    chat.background = tasks ?? [];
+    renderSidebar();
+    if (chatId === activeChatId) renderActivity(chat);
+  },
+
   root_listing({ root, dirs, added, error, _host }) {
     const addedSet = new Set(added.map((p) => p.toLowerCase()));
     const sep = root.includes('\\') ? '\\' : '/';
@@ -1134,11 +1142,30 @@ function toolSummary(block) {
 
 function renderActivity(chat) {
   const busy = chat?.status === 'thinking' || chat?.status === 'waiting_permission';
+  // the chat's own work comes first; background work shows only while it is idle
+  const background = !busy && chat?.status === 'idle' ? backgroundShown(chat) : [];
   const strip = $('activity');
-  strip.hidden = !busy;
-  if (!busy) return;
-  $('activity-text').textContent =
-    chat.status === 'waiting_permission' ? 'waiting for your permission' : (chat.activity ?? 'thinking…');
+  strip.hidden = !busy && !background.length;
+  strip.classList.toggle('background', !busy && background.length > 0);
+  if (busy)
+    $('activity-text').textContent =
+      chat.status === 'waiting_permission' ? 'waiting for your permission' : (chat.activity ?? 'thinking…');
+  else if (background.length)
+    $('activity-text').textContent = `background: ${background.length} — ${background.map((t) => t.description || t.type).join(', ')}`;
+}
+
+/**
+ * The session's background tasks worth a line of their own. Agents are in the
+ * list too, but they already have their rows; what is left is what used to be
+ * invisible — workflows and background commands.
+ */
+function backgroundShown(chat) {
+  return (chat?.background ?? []).filter((t) => !/agent/i.test(t.type ?? ''));
+}
+
+/** Any background task at all keeps an idle chat from looking finished. */
+function hasBackground(chat) {
+  return (chat?.background ?? []).length > 0;
 }
 
 /**
@@ -1427,6 +1454,7 @@ function renderHostProjects(root, hostId, hostState) {
       if (c.model) chat.model = c.model;
       if (c.effort) chat.effort = c.effort; // a reload has only the snapshot to go on
       if (c.permissionMode) chat.mode = c.permissionMode;
+      if (c.background) chat.background = c.background;
       const labelText = c.title ?? (c.sessionId ? c.id.slice(0, 8) : 'new');
       if (filter && !labelText.toLowerCase().includes(filter) && !p.path.toLowerCase().includes(filter)) continue;
       visibleChats++;
@@ -1435,7 +1463,10 @@ function renderHostProjects(root, hostId, hostState) {
       item.dataset.chatId = c.id;
       const status = chat.status ?? c.status; // live status wins over the snapshot
       if (status === 'sleeping') item.classList.add('sleeping');
-      const dot = el('span', `status-dot ${status}`, '');
+      // idle with work still running in the background is not "done": its own
+      // colour. Thinking and waiting win — the chat's own work comes first.
+      const shownStatus = status === 'idle' && hasBackground(chat) ? 'background' : status;
+      const dot = el('span', `status-dot ${shownStatus}`, '');
       const label = el('span', 'chat-label', labelText);
       item.append(dot, label);
 
@@ -1482,6 +1513,14 @@ function renderHostProjects(root, hostId, hostState) {
         time.dataset.status = a.status;
         row.append(time);
         row.title = [a.type, a.status].filter(Boolean).join(' · ');
+        proj.append(row);
+      }
+      // workflows and background commands, the same way
+      for (const t of backgroundShown(chat)) {
+        const row = el('div', 'agent-item', '');
+        row.append(el('span', 'status-dot background', ''));
+        row.append(el('span', 'agent-label', `${/workflow/i.test(t.type ?? '') ? '⚙' : '▸'} ${t.description || t.type}`));
+        row.title = t.type ?? '';
         proj.append(row);
       }
     }

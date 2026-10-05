@@ -178,6 +178,7 @@ function accountPrompt(projectPath) {
 const clients = new Set();
 const pendingPermissions = new Map(); // requestId -> {resolve, chatId}
 const chatHistories = new Map(); // chatId -> messages to replay on reconnect
+const backgroundWork = new Map(); // chatId -> [{id, type, description}], live background tasks as the session last reported
 const tails = new Map(); // chatId -> {file, offset, restBuf, seen, ownTexts, listener}
 const tailWaits = new Map(); // chatId -> timer, while the transcript is still to appear
 
@@ -323,7 +324,10 @@ agent.on('chat_message', ({ chatId, msg }) => {
   // keep a chat awake, so a workflow waited on for an hour died with the chat
   // put to sleep under it. Ambient tasks are watchers, not work.
   if (msg.type === 'system' && msg.subtype === 'background_tasks_changed') {
-    backgroundWork.set(chatId, (msg.tasks ?? []).filter((t) => !t.ambient).length);
+    setBackgroundWork(
+      chatId,
+      (msg.tasks ?? []).filter((t) => !t.ambient).map((t) => ({ id: t.task_id, type: t.task_type, description: t.description })),
+    );
   }
   // the reply names the message it answers — that decides whose turn it is
   if (!msg.parent_tool_use_id) turnTags.answering(chatId, msg.user_message_uuid);
@@ -440,7 +444,12 @@ function wakeChat(chat) {
   return chat;
 }
 
-const backgroundWork = new Map(); // chatId -> live background tasks, as the session last reported
+/** The list is shown too: a chat waiting on a workflow otherwise looks like one that hangs. */
+function setBackgroundWork(chatId, tasks) {
+  if (tasks.length) backgroundWork.set(chatId, tasks);
+  else backgroundWork.delete(chatId);
+  broadcast({ type: 'background', chatId, tasks });
+}
 
 setInterval(() => {
   let changed = false;
@@ -450,9 +459,9 @@ setInterval(() => {
     // a background agent is still out there. Only a running one counts: a row
     // that has finished is merely burning down its half-minute on screen
     if (agentsOf(chat.id).running) continue;
-    if (backgroundWork.get(chat.id)) continue; // a workflow or a background command is still going
+    if (backgroundWork.get(chat.id)?.length) continue; // a workflow or a background command is still going
     if (!chat.sleep()) continue;
-    backgroundWork.delete(chat.id); // the process is gone, and its tasks with it
+    if (backgroundWork.has(chat.id)) setBackgroundWork(chat.id, []); // the process is gone, and its tasks with it
     changed = true;
     console.log(`asleep: ${chat.title ?? chat.id}`);
   }
@@ -1852,6 +1861,7 @@ function stateSnapshot() {
         model: c.model,
         effort: c.effort ?? hostEffort,
         permissionMode: c.permissionMode,
+        background: backgroundWork.get(c.id) ?? [],
       })),
     })),
   };
