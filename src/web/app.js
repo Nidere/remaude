@@ -620,6 +620,10 @@ const handlers = {
   background({ chatId, tasks }) {
     const chat = getChat(chatId);
     chat.background = tasks ?? [];
+    // the sidebar copies it from the last snapshot on every render — left stale
+    // there, the row came or went only with the next snapshot, minutes later
+    for (const state of hostStates.values())
+      for (const p of state.projects ?? []) for (const c of p.chats) if (c.id === chatId) c.background = chat.background;
     renderSidebar();
     if (chatId === activeChatId) renderActivity(chat);
   },
