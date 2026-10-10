@@ -329,9 +329,9 @@ agent.on('chat_message', ({ chatId, msg }) => {
       (msg.tasks ?? []).filter((t) => !t.ambient).map((t) => ({ id: t.task_id, type: t.task_type, description: t.description })),
     );
   }
-  // That list lags behind: an agent that finished while the chat sat idle stays
-  // on it until the next turn picks up its report — an hour of "running" for
-  // work long done. The task's own status says it at once.
+  // That list lags behind, both ways; the task's own events do not
+  if (msg.type === 'system' && msg.subtype === 'task_started') startBackgroundTask(chatId, msg);
+  if (msg.type === 'system' && msg.subtype === 'task_updated' && msg.patch?.is_backgrounded) backgroundTask(chatId, msg.task_id);
   if (msg.type === 'system' && msg.subtype === 'task_updated' && ENDED_TASK.has(msg.patch?.status)) endBackgroundTask(chatId, msg.task_id);
   if (msg.type === 'system' && msg.subtype === 'task_notification') endBackgroundTask(chatId, msg.task_id);
   // the reply names the message it answers — that decides whose turn it is
@@ -449,27 +449,72 @@ function wakeChat(chat) {
   return chat;
 }
 
+// The session's list lags both ways: an agent that finished stays on it until the
+// next turn picks up its report, and one resumed by a message joined it only a
+// minute after it was back at work. The task's own start and end come at once, so
+// they decide, and the list only fills in what they have not said. A resumed task
+// keeps its id: a start wipes out an earlier end, or the agent would stay hidden.
+const ENDED_TASK = new Set(['completed', 'failed', 'killed']);
+const taskEdges = new Map(); // chatId -> {listed, started: Map(id -> task), ended: Set(id)}
+
+function edgesOf(chatId) {
+  if (!taskEdges.has(chatId)) taskEdges.set(chatId, { listed: [], started: new Map(), ended: new Set() });
+  return taskEdges.get(chatId);
+}
+
 /** The list is shown too: a chat waiting on a workflow otherwise looks like one that hangs. */
-function setBackgroundWork(chatId, tasks) {
-  const ended = endedTasks.get(chatId);
-  if (ended) {
-    for (const id of ended) if (!tasks.some((t) => t.id === id)) ended.delete(id); // gone from the list too: nothing left to remember
-    tasks = tasks.filter((t) => !ended.has(t.id));
-  }
+function setBackgroundWork(chatId, listed) {
+  const edges = edgesOf(chatId);
+  edges.listed = listed;
+  for (const id of edges.ended) if (!listed.some((t) => t.id === id)) edges.ended.delete(id); // the list caught up
+  for (const id of edges.started.keys()) if (listed.some((t) => t.id === id)) edges.started.delete(id); // here too
+  showBackgroundWork(chatId);
+}
+
+function showBackgroundWork(chatId) {
+  const { listed, started, ended } = edgesOf(chatId);
+  const tasks = [
+    ...listed.filter((t) => !ended.has(t.id)),
+    ...[...started.values()].filter((t) => t.backgrounded).map(({ id, type, description }) => ({ id, type, description })),
+  ];
+  const before = backgroundWork.get(chatId) ?? [];
+  if (tasks.length === before.length && tasks.every((t, i) => t.id === before[i].id)) return;
   if (tasks.length) backgroundWork.set(chatId, tasks);
   else backgroundWork.delete(chatId);
   broadcast({ type: 'background', chatId, tasks });
 }
 
-const ENDED_TASK = new Set(['completed', 'failed', 'killed']);
-const endedTasks = new Map(); // chatId -> ids of tasks that ended but may still be on the session's list
+/** A foreground task is remembered too: moved to the background later, it has to be shown then. */
+function startBackgroundTask(chatId, msg) {
+  if (!msg.task_id || msg.ambient) return;
+  const edges = edgesOf(chatId);
+  edges.ended.delete(msg.task_id);
+  if (!edges.listed.some((t) => t.id === msg.task_id))
+    edges.started.set(msg.task_id, { id: msg.task_id, type: msg.task_type, description: msg.description, backgrounded: msg.is_backgrounded !== false });
+  showBackgroundWork(chatId);
+}
+
+function backgroundTask(chatId, taskId) {
+  const task = taskEdges.get(chatId)?.started.get(taskId);
+  if (!task || task.backgrounded) return;
+  task.backgrounded = true;
+  showBackgroundWork(chatId);
+}
 
 function endBackgroundTask(chatId, taskId) {
   if (!taskId) return;
-  if (!endedTasks.has(chatId)) endedTasks.set(chatId, new Set());
-  endedTasks.get(chatId).add(taskId);
-  const tasks = backgroundWork.get(chatId);
-  if (tasks?.some((t) => t.id === taskId)) setBackgroundWork(chatId, tasks);
+  const edges = edgesOf(chatId);
+  edges.started.delete(taskId);
+  edges.ended.add(taskId);
+  showBackgroundWork(chatId);
+}
+
+/** The process is gone, and its tasks with it; the next one starts with an empty list. */
+function forgetBackgroundWork(chatId) {
+  taskEdges.delete(chatId);
+  if (!backgroundWork.has(chatId)) return;
+  backgroundWork.delete(chatId);
+  broadcast({ type: 'background', chatId, tasks: [] });
 }
 
 setInterval(() => {
@@ -482,7 +527,7 @@ setInterval(() => {
     if (agentsOf(chat.id).running) continue;
     if (backgroundWork.get(chat.id)?.length) continue; // a workflow or a background command is still going
     if (!chat.sleep()) continue;
-    if (backgroundWork.has(chat.id)) setBackgroundWork(chat.id, []); // the process is gone, and its tasks with it
+    forgetBackgroundWork(chat.id);
     changed = true;
     console.log(`asleep: ${chat.title ?? chat.id}`);
   }
