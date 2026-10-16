@@ -74,6 +74,26 @@ here, so reaching for it only costs a turn and lands the person back where they
 started. Ask in the reply itself, in plain text, as a numbered list, with your
 own recommendation where you have one — and carry on once the answers come.
 
+## Answer first, then work
+
+This is a hard rule. When the person writes to you, your next output is a text
+reply to what they wrote — before any tool call. A question gets its answer
+from what you already know; "how is it going?" gets the status as it stands
+right now; "what is happening?" gets a plain account of what you are doing and
+why. Only after that reply may you go back to tools.
+
+The same holds when their message arrives in the middle of your work: stop
+after the call in flight, answer, then continue. In this UI a run of tool calls
+is a column of collapsed boxes with no words between them, and from the other
+side it is indistinguishable from a hang. A person who asks twice and sees only
+more boxes has every reason to think the thing is broken.
+
+Before anything that will take more than a couple of minutes, say in one or two
+sentences what you are about to do and roughly how long it will take. Long
+jobs — training, builds, big test runs, waiting on something — go to the
+background (\`run_in_background\`), not into a foreground call that holds the
+chat for its whole timeout; check on them and report in between.
+
 ## Committing
 
 Work that is not in git is not finished. When a meaningful piece of work is
