@@ -1431,7 +1431,7 @@ function renderHostProjects(root, hostId, hostState) {
       btnPrompt.onclick = (e) => {
         e.stopPropagation();
         openPrompt(
-          { projectPath: p.path, hostId, profile: p.profile ?? '' },
+          { projectPath: p.path, hostId, profile: p.profile ?? '', autoCloseHours: p.autoCloseHours ?? null },
           `Project · ${p.name ?? shortPath(p.path)}`,
           'Added to the prompt of every chat in this project. It is kept on the host, not in the folder — so put here only what cannot be committed. Anything the project owns belongs in its CLAUDE.md, where it is visible in git and works without remaude.',
           p.prompt ?? '',
@@ -1509,6 +1509,8 @@ function renderHostProjects(root, hostId, hostState) {
                 sendTo(hostId, { type: 'hide_chat', chatId: c.id });
             },
             deleteTitle: 'close chat (the session stays on disk)',
+            pinned: c.pinned,
+            onPin: (pinned) => sendTo(hostId, { type: 'pin_chat', chatId: c.id, pinned }),
           })
         );
       }
@@ -2197,8 +2199,18 @@ function makeDraggable(row, group, onDrop, onCopy) {
 }
 
 /** The rename/remove pair shown on a row in edit mode. */
-function editActions({ onRename, onDelete, deleteTitle }) {
+function editActions({ onRename, onDelete, deleteTitle, pinned, onPin }) {
   const box = el('span', 'edit-actions', '');
+  // only chats have it: a pinned chat is never closed for being idle
+  if (onPin) {
+    const pin = el('button', pinned ? 'pin on' : 'pin', '📌');
+    pin.title = pinned ? 'unpin (may close when idle)' : 'pin (never closes when idle)';
+    pin.onclick = (e) => {
+      e.stopPropagation();
+      onPin(!pinned);
+    };
+    box.append(pin);
+  }
   const rename = el('button', '', '✎');
   rename.title = 'rename';
   rename.onclick = (e) => {
@@ -2999,6 +3011,9 @@ function openPrompt(scope, title, hint, text, hostState) {
   $('prompt-hint').textContent = hint;
   $('prompt-text').value = text ?? '';
   // the account is a property of a project, not of the machine
+  // and so is how long its chats may sit idle before they close
+  $('prompt-autoclose-row').hidden = !scope.projectPath;
+  $('prompt-autoclose').value = scope.autoCloseHours ?? '';
   const row = $('prompt-profile-row');
   row.hidden = !scope.projectPath;
   if (!row.hidden) {
@@ -3029,6 +3044,9 @@ function savePrompt() {
   // switching accounts restarts sessions, so only say so when it actually changed
   if (profile !== (promptScope.profile ?? ''))
     sendTo(promptScope.hostId, { type: 'set_project_profile', path: promptScope.projectPath, profile });
+  const hours = Number($('prompt-autoclose').value) || null;
+  if (promptScope.projectPath && hours !== (promptScope.autoCloseHours ?? null))
+    sendTo(promptScope.hostId, { type: 'set_project_autoclose', path: promptScope.projectPath, hours });
   closePrompt();
 }
 

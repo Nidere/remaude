@@ -239,6 +239,7 @@ function saveOpenChats() {
       // and separately, what to ask the next session for — see modelRequestOf
       modelRequest: c.requested ?? null,
       effort: c.effort ?? null,
+      pinned: c.pinned || undefined,
     }));
   saveConfig(config);
 }
@@ -279,7 +280,7 @@ function nameSession(chat) {
 function openSavedSession(
   projectPath,
   sessionId,
-  { permissionMode, title, pastIds, model, modelRequest, effort, asleep } = {},
+  { permissionMode, title, pastIds, model, modelRequest, effort, asleep, pinned } = {},
 ) {
   if (!isSessionId(sessionId)) throw new Error('bad session id');
   for (const chat of agent.allChats()) {
@@ -293,6 +294,7 @@ function openSavedSession(
   chat.title = title ?? null;
   chat.model = model ?? wanted; // what the header shows until the session speaks for itself
   if (effort) chat.effort = effort;
+  if (pinned) chat.pinned = true;
   chatHistories.set(chat.id, loadHistory(abs, sessionId, { defaultAuthor: userName }));
   startTail(chat);
   return chat;
@@ -534,6 +536,46 @@ setInterval(() => {
   }
   if (changed) broadcast(stateSnapshot());
 }, SLEEP_SWEEP_MS).unref?.();
+
+/** What the ✕ on a chat does: the session ends, the transcript stays to be reopened. */
+function closeChat(chat) {
+  chat.close();
+  for (const p of agent.projects.values()) p.chats.delete(chat.id);
+  chatHistories.delete(chat.id);
+  turnTags.forget(chat.id);
+  lastContext.delete(chat.id);
+  chatAgents.delete(chat.id); // close() has already ended them; the rows go with the chat
+  stopTail(chat.id);
+}
+
+// Some projects are a stream of one-off questions, and closing them by hand was
+// a chore. Such a project can name a number of hours: a chat whose transcript
+// has not moved for that long closes the way ✕ closes it, and stays reachable
+// through "past chats". The transcript's mtime is the clock, not lastActiveAt —
+// that one restarts with the host, and every restart would buy a day of grace.
+// Pinned chats, busy ones and ones with work in the background are left alone.
+setInterval(() => {
+  let changed = false;
+  for (const project of agent.projects.values()) {
+    const hours = config.projectAutoClose?.[project.path];
+    if (!(hours > 0)) continue;
+    for (const chat of [...project.chats.values()]) {
+      if (chat.pinned) continue;
+      if (chat.status === 'thinking' || chat.status === 'waiting_permission') continue;
+      if (agentsOf(chat.id).running || backgroundWork.get(chat.id)?.length) continue;
+      const file = sessionFile(chat.cwd, chat.sessionId ?? chat.resumeId);
+      const last = file ? statSync(file).mtimeMs : chat.lastActiveAt;
+      if (!last || Date.now() - last < hours * 3600_000) continue;
+      closeChat(chat);
+      changed = true;
+      console.log(`auto-closed: ${chat.title ?? chat.id}`);
+    }
+  }
+  if (changed) {
+    saveOpenChats();
+    broadcast(stateSnapshot());
+  }
+}, 10 * 60_000).unref?.();
 
 const lastContext = new Map(); // chatId -> the last count that came back
 const countingContext = new Set(); // chats with a count already on the way
@@ -1917,6 +1959,7 @@ function stateSnapshot() {
       prompt: config.projectPrompts?.[p.path] ?? '',
       // null means "whatever the default is", so renaming the default never orphans a project
       profile: config.projectProfiles?.[p.path] ?? null,
+      autoCloseHours: config.projectAutoClose?.[p.path] ?? null,
       chats: [...p.chats.values()].map((c) => ({
         id: c.id,
         // A sleeping chat has no session running, but it is not anonymous: it is
@@ -1929,6 +1972,7 @@ function stateSnapshot() {
         effort: c.effort ?? hostEffort,
         permissionMode: c.permissionMode,
         background: backgroundWork.get(c.id) ?? [],
+        pinned: !!c.pinned,
       })),
     })),
   };
@@ -2871,15 +2915,27 @@ const handlers = {
 
   /** Close a chat and remove it from the sidebar; the transcript stays, we resume it via open_session. */
   hide_chat(ws, { chatId }) {
-    const chat = findChat(chatId);
-    chat.close();
-    for (const p of agent.projects.values()) p.chats.delete(chatId);
-    chatHistories.delete(chatId);
-    turnTags.forget(chatId);
-    lastContext.delete(chatId);
-    chatAgents.delete(chatId); // close() has already ended them; the rows go with the chat
-    stopTail(chatId);
+    closeChat(findChat(chatId));
     saveOpenChats();
+    broadcast(stateSnapshot());
+  },
+
+  /** A pinned chat is never closed for being idle; see the auto-close sweep. */
+  pin_chat(ws, { chatId, pinned }) {
+    findChat(chatId).pinned = !!pinned;
+    saveOpenChats();
+    broadcast(stateSnapshot());
+  },
+
+  /** Hours of quiet after which a project's chats close by themselves; empty turns it off. */
+  set_project_autoclose(ws, { path, hours }) {
+    const project = agent.findProject(resolve(path));
+    if (!project) throw new Error('no such project');
+    const value = Number(hours);
+    config.projectAutoClose ??= {};
+    if (value > 0) config.projectAutoClose[project.path] = Math.min(value, 24 * 365);
+    else delete config.projectAutoClose[project.path];
+    saveConfig(config);
     broadcast(stateSnapshot());
   },
 
