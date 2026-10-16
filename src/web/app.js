@@ -1301,6 +1301,12 @@ function openModal(title, items, input = null) {
 // ---------- sidebar ----------
 
 function renderSidebar() {
+  // Mid-drag the sidebar must hold still: a redraw replaces the row under the
+  // pointer, and with other chats busy that happens several times a second.
+  if (sidebarDrag.active) {
+    sidebarDrag.stale = true;
+    return;
+  }
   applyGuestView(); // hosts come and go — with them the answer to "is this window a guest's"
   const root = $('projects');
   root.innerHTML = '';
@@ -2085,6 +2091,7 @@ function renderSearchResults(results, { hasMore, scanned, total, hostId, append 
 // appear, and plain clicks stop navigating so nothing happens by accident.
 
 let editMode = false;
+const sidebarDrag = { active: false, stale: false };
 
 function setEditMode(on) {
   editMode = on;
@@ -2126,6 +2133,7 @@ function makeDraggable(row, group, onDrop, onCopy) {
     // scroll the sidebar and a plain tap does not silently reorder anything.
     const begin = () => {
       dragging = true;
+      sidebarDrag.active = true;
       row.classList.add('dragging');
       row.style.touchAction = 'none';
     };
@@ -2174,8 +2182,13 @@ function makeDraggable(row, group, onDrop, onCopy) {
       window.removeEventListener('pointercancel', onUp);
       const copy = copyTo;
       setCopyTo(null);
+      sidebarDrag.active = false;
       if (copy && ev.type !== 'pointercancel') onCopy(copy.proj.dataset.projectPath, copy.beforeChatId);
       if (moved) onDrop(siblings().map((n) => n.dataset.sortId)); // a tap is not a reorder
+      if (sidebarDrag.stale) {
+        sidebarDrag.stale = false;
+        renderSidebar();
+      }
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
