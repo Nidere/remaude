@@ -1322,6 +1322,9 @@ body.editing .project { outline: 1px dashed var(--border); border-radius: 8px; p
   z-index: 2;
 }
 body.editing .agent-item { display: none; } /* agents are not editable */
+/* a chat carried over another project: dropped there, a copy goes there */
+body.editing .project.drop-target { outline: 2px solid var(--accent); background: var(--bg-3); }
+.dragging.copying { opacity: 0.5; }
 
 /* subagent rows: informational only, nested a level deeper than chats */
 .agent-item {

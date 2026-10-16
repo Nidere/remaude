@@ -2,7 +2,7 @@
 // The format is undocumented and changes between versions — so we read everything
 // best-effort: unknown record types are silently skipped, and we use this only to
 // DISPLAY history (on resume the SDK itself restores the context).
-import { readdirSync, readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, cpSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { takeSenderMark, stripSenderMark } from './sender-mark.js';
@@ -220,6 +220,26 @@ export function sessionFile(cwd, sessionId) {
   if (!dir) return null;
   const file = join(dir, `${sessionId}.jsonl`);
   return existsSync(file) ? file : null;
+}
+
+/**
+ * A copy of a session that belongs to another project: the transcript lands in
+ * that project's folder under a new id, and the old id is rewritten inside it.
+ * The new id is the point — remaude ties titles, threads and tails to session
+ * ids, and two chats sharing one would be taken for the same chat.
+ * The original is left as it was. Returns the new id.
+ */
+export function copySession(fromCwd, sessionId, toCwd, newId) {
+  const file = sessionFile(fromCwd, sessionId);
+  if (!file) throw new Error('the chat has no transcript on disk yet');
+  const dir = join(PROJECTS_DIR, slugFor(toCwd));
+  mkdirSync(dir, { recursive: true });
+  const text = readFileSync(file, 'utf-8').replaceAll(sessionId, newId);
+  writeFileSync(join(dir, `${newId}.jsonl`), text);
+  // subagent transcripts live in a folder named after the session
+  const sub = join(sessionDir(fromCwd), sessionId);
+  if (existsSync(sub)) cpSync(sub, join(dir, newId), { recursive: true });
+  return newId;
 }
 
 /** The first text of a message, whatever shape the content came in. */

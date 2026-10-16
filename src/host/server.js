@@ -34,6 +34,7 @@ import {
   slugFor,
   collectImages,
   isSessionId,
+  copySession,
 } from './transcripts.js';
 import { DEFAULT_PROFILE, createProfile, profileDir, profileEnv } from './profiles.js';
 import { RelayLink } from './relay-link.js';
@@ -2732,6 +2733,41 @@ const handlers = {
     const chats = new Map(ordered.map((id) => [id, project.chats.get(id)]));
     project.chats.clear();
     for (const [k, v] of chats) project.chats.set(k, v);
+    saveOpenChats();
+    broadcast(stateSnapshot());
+  },
+
+  /**
+   * A copy of a chat in another project of this host. The original stays where
+   * it was; the copy opens asleep and wakes in the new folder on its next word.
+   * `beforeChatId` is the row it was dropped on, so it lands where it was put.
+   */
+  copy_chat(ws, { chatId, projectPath, beforeChatId }) {
+    const chat = findChat(chatId);
+    const target = agent.projects.get(resolve(String(projectPath ?? '')));
+    if (!target) throw new Error('no such project');
+    if (resolve(chat.cwd) === target.path) throw new Error('the chat is already in this project');
+    if (chat.status === 'thinking' || chat.status === 'waiting_permission')
+      throw new Error('the chat is busy — wait for its turn to finish and drag it again');
+    const sid = chat.sessionId ?? chat.resumeId;
+    if (!sid) throw new Error('the chat has not said anything yet — there is nothing to copy');
+    const newId = copySession(chat.cwd, sid, target.path, randomUUID());
+    const copy = openSavedSession(target.path, newId, {
+      permissionMode: chat.permissionMode,
+      title: chat.title,
+      model: chat.model,
+      modelRequest: chat.requested,
+      effort: chat.effort,
+      asleep: true,
+    });
+    if (beforeChatId && target.chats.has(beforeChatId) && beforeChatId !== copy.id) {
+      const ids = [...target.chats.keys()].filter((id) => id !== copy.id);
+      ids.splice(ids.indexOf(beforeChatId), 0, copy.id);
+      const chats = new Map(ids.map((id) => [id, target.chats.get(id)]));
+      target.chats.clear();
+      for (const [k, v] of chats) target.chats.set(k, v);
+    }
+    nameSession(copy);
     saveOpenChats();
     broadcast(stateSnapshot());
   },

@@ -1371,6 +1371,8 @@ function renderSidebar() {
 function renderHostProjects(root, hostId, hostState) {
   for (const p of hostState.projects) {
     const proj = el('div', 'project', '');
+    proj.dataset.projectPath = p.path;
+    proj.dataset.hostId = hostId;
 
     const head = el('div', 'project-head', '');
     const name = el('span', 'project-name', p.name ?? p.path.split(/[\\/]/).filter(Boolean).pop());
@@ -1483,8 +1485,12 @@ function renderHostProjects(root, hostId, hostState) {
 
       if (editMode && !hostState.guest) {
         item.dataset.sortId = c.id;
-        makeDraggable(item, `chats-${p.path}`, (chatIds) =>
-          sendTo(hostId, { type: 'reorder_chats', projectPath: p.path, chatIds })
+        makeDraggable(
+          item,
+          `chats-${p.path}`,
+          (chatIds) => sendTo(hostId, { type: 'reorder_chats', projectPath: p.path, chatIds }),
+          // dropped on another project of this host: a copy goes there, this one stays
+          (projectPath, beforeChatId) => sendTo(hostId, { type: 'copy_chat', chatId: c.id, projectPath, beforeChatId })
         );
         item.append(
           editActions({
@@ -2091,8 +2097,11 @@ function setEditMode(on) {
  * Reorder rows by dragging. `group` marks which rows may swap with each other,
  * so chats stay inside their project and projects inside their host.
  * onDrop receives the new order of data-sort-id values within the group.
+ * With onCopy, a row carried over another project of the same host lights that
+ * project up and, dropped there, calls onCopy(projectPath, beforeChatId) —
+ * the row itself stays where it was.
  */
-function makeDraggable(row, group, onDrop) {
+function makeDraggable(row, group, onDrop, onCopy) {
   row.dataset.sortGroup = group;
   row.addEventListener('pointerdown', (e) => {
     if (!editMode || e.button > 0 || e.target.closest('button')) return;
@@ -2104,6 +2113,14 @@ function makeDraggable(row, group, onDrop) {
     const startY = e.clientY;
     let dragging = false;
     let moved = false;
+    const home = row.closest('.project');
+    let copyTo = null; // { proj, beforeChatId } while over a foreign project
+    const setCopyTo = (next) => {
+      if (copyTo?.proj !== next?.proj) copyTo?.proj.classList.remove('drop-target');
+      next?.proj.classList.add('drop-target');
+      row.classList.toggle('copying', !!next);
+      copyTo = next;
+    };
 
     // The drag only begins after a deliberate movement, so a finger can still
     // scroll the sidebar and a plain tap does not silently reorder anything.
@@ -2127,19 +2144,37 @@ function makeDraggable(row, group, onDrop) {
       if (ev.clientY < rectBox.top + 60) box.scrollTop -= 12;
       else if (ev.clientY > rectBox.bottom - 60) box.scrollTop += 12;
 
-      const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(`[data-sort-group="${group}"]`);
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      if (onCopy) {
+        const proj = under?.closest('.project');
+        if (proj && proj !== home && proj.dataset.hostId === home?.dataset.hostId) {
+          const over = under.closest('.chat-item');
+          let before = over;
+          if (over && ev.clientY > over.getBoundingClientRect().top + over.offsetHeight / 2) {
+            before = over.nextElementSibling;
+            while (before && !before.classList.contains('chat-item')) before = before.nextElementSibling;
+          }
+          setCopyTo({ proj, beforeChatId: before?.dataset.chatId ?? null });
+          return;
+        }
+        setCopyTo(null);
+      }
+      const target = under?.closest(`[data-sort-group="${group}"]`);
       if (!target || target === row || target.parentElement !== parent) return;
       const rect = target.getBoundingClientRect();
       const after = ev.clientY > rect.top + rect.height / 2;
       parent.insertBefore(row, after ? target.nextSibling : target);
       moved = true;
     };
-    const onUp = () => {
+    const onUp = (ev) => {
       row.classList.remove('dragging');
       row.style.touchAction = '';
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
+      const copy = copyTo;
+      setCopyTo(null);
+      if (copy && ev.type !== 'pointercancel') onCopy(copy.proj.dataset.projectPath, copy.beforeChatId);
       if (moved) onDrop(siblings().map((n) => n.dataset.sortId)); // a tap is not a reorder
     };
     window.addEventListener('pointermove', onMove);
