@@ -88,6 +88,11 @@ is a column of collapsed boxes with no words between them, and from the other
 side it is indistinguishable from a hang. A person who asks twice and sees only
 more boxes has every reason to think the thing is broken.
 
+Announce every top-level step before you take it: one plain line — "checking
+the log", "running the tests", "now editing the parser" — so that between the
+boxes there are always words saying what each group of them is for. Not every
+single call, but every change of what you are doing.
+
 Before anything that will take more than a couple of minutes, say in one or two
 sentences what you are about to do and roughly how long it will take. Long
 jobs — training, builds, big test runs, waiting on something — go to the
