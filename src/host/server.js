@@ -949,8 +949,62 @@ function resolveDocHref(ws, { from, href, projectPath }) {
   }
   target = resolve(target);
   if (!canReadDoc(ws, target)) throw new Error('that link leads outside this project');
-  if (!existsSync(target) || !statSync(target).isFile()) throw new Error('no such file');
+  if (!existsSync(target) || !statSync(target).isFile()) {
+    // a session often names a file without its folder — `principles.md` for
+    // docs/principles.md — so a name from a chat is looked for in the project
+    const found = from ? null : findInProject(project, decodeURI(rawPath));
+    if (!found || !canReadDoc(ws, found)) throw new Error('no such file');
+    target = found;
+  }
   return { target, anchor };
+}
+
+/** Folders a file named in a chat is never looked for in: copies and machinery. */
+const SEARCH_SKIP = new Set(['node_modules', 'worktrees', 'dist', 'build', 'target', 'out']);
+
+/**
+ * The one file in the project whose path ends with `rel`, nearest the root.
+ * Two equally near are an error naming both — guessing would open the wrong one.
+ */
+function findInProject(project, rel) {
+  const want = rel
+    .split(/[\\/]+/)
+    .filter((s) => s && s !== '.')
+    .map((s) => s.toLowerCase());
+  if (!want.length || want.includes('..')) return null;
+  const tail = want.join(sep);
+  let level = [project];
+  let seen = 0;
+  while (level.length && seen < 20000) {
+    const hits = [];
+    const next = [];
+    for (const dir of level) {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!SEARCH_SKIP.has(e.name.toLowerCase())) next.push(full);
+        } else if (e.isFile() && e.name.toLowerCase() === want[want.length - 1]) {
+          const lower = full.toLowerCase();
+          if (lower.endsWith(sep + tail)) hits.push(full);
+        }
+      }
+      seen++;
+    }
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) {
+      const list = hits.map((h) => h.slice(project.length + 1).replace(/\\/g, '/')).join(', ');
+      throw new Error(`several files named ${want.join('/')}: ${list}`);
+    }
+    level = next;
+  }
+  return null;
 }
 
 /** The pictures a document may show, by extension. */
