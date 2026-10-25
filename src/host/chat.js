@@ -280,6 +280,16 @@ export class Chat extends EventEmitter {
           if (msg.model) this.model = msg.model;
           if (msg.permissionMode) this.permissionMode = msg.permissionMode;
         }
+        this.lastActiveAt = Date.now();
+        // A turn the session starts on its own — a background agent reporting
+        // back — never passes through send(). Left 'idle', the sleep sweep took
+        // it for an hour of quiet and killed the process mid-sentence.
+        if (
+          this.status === 'idle' &&
+          (msg.type === 'stream_event' || msg.type === 'assistant') &&
+          !msg.parent_tool_use_id
+        )
+          this.#setStatus('thinking');
         if (msg.type === 'result') this.#setStatus('idle');
         this.emit('message', msg);
       }
