@@ -951,8 +951,12 @@ function resolveDocHref(ws, { from, href, projectPath }) {
   if (!canReadDoc(ws, target)) throw new Error('that link leads outside this project');
   if (!existsSync(target) || !statSync(target).isFile()) {
     // a session often names a file without its folder — `principles.md` for
-    // docs/principles.md — so a name from a chat is looked for in the project
-    const found = from ? null : findInProject(project, decodeURI(rawPath));
+    // docs/principles.md — so a name from a chat is looked for in the project,
+    // and then in its inbox, where a session's documents to the owner live
+    const rel = decodeURI(rawPath);
+    const found = from
+      ? null
+      : (findInProject(project, rel) ?? findInProject(join(project, '.remaude'), rel, INBOX_SKIP));
     if (!found || !canReadDoc(ws, found)) throw new Error('no such file');
     target = found;
   }
@@ -961,12 +965,14 @@ function resolveDocHref(ws, { from, href, projectPath }) {
 
 /** Folders a file named in a chat is never looked for in: copies and machinery. */
 const SEARCH_SKIP = new Set(['node_modules', 'worktrees', 'dist', 'build', 'target', 'out']);
+/** The same inside the inbox, which also keeps the project's secrets. */
+const INBOX_SKIP = new Set([...SEARCH_SKIP, 'secrets']);
 
 /**
  * The one file in the project whose path ends with `rel`, nearest the root.
  * Two equally near are an error naming both — guessing would open the wrong one.
  */
-function findInProject(project, rel) {
+function findInProject(project, rel, skip = SEARCH_SKIP) {
   const want = rel
     .split(/[\\/]+/)
     .filter((s) => s && s !== '.')
@@ -989,7 +995,7 @@ function findInProject(project, rel) {
         if (e.name.startsWith('.')) continue;
         const full = join(dir, e.name);
         if (e.isDirectory()) {
-          if (!SEARCH_SKIP.has(e.name.toLowerCase())) next.push(full);
+          if (!skip.has(e.name.toLowerCase())) next.push(full);
         } else if (e.isFile() && e.name.toLowerCase() === want[want.length - 1]) {
           const lower = full.toLowerCase();
           if (lower.endsWith(sep + tail)) hits.push(full);
