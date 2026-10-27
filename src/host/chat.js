@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { OwedReply } from './owed-reply.js';
 
 // The remaude level of the system prompt: what is true of every chat in every
 // project on every host, because it describes the product itself. It lives in
@@ -149,6 +150,7 @@ export class Chat extends EventEmitter {
   #onPermissionRequest;
   #extraPrompt; // () => string — the host and project levels, read afresh on every start
   #env; // () => object — which Claude account this session runs as, likewise
+  #owedReply = new OwedReply(); // a message written mid-turn waits for an answer in words
 
   /** Local id; after system:init it is complemented by sessionId (which is what we resume with). */
   id = randomUUID();
@@ -205,6 +207,7 @@ export class Chat extends EventEmitter {
     if (from) this.resumeId = from;
     const session = {};
     this.#session = session;
+    this.#owedReply.reset();
     const q = query({
       prompt: this.#input(session),
       options: {
@@ -222,6 +225,11 @@ export class Chat extends EventEmitter {
         // The host and project levels follow it, read at start rather than at
         // construction, so an edited prompt reaches a chat as soon as it wakes.
         systemPrompt: { type: 'preset', preset: 'claude_code', append: this.#append() },
+        // A hook rather than canUseTool: in bypassPermissions mode the SDK
+        // approves every call without consulting canUseTool at all.
+        hooks: {
+          PreToolUse: [{ hooks: [(input) => this.#holdForReply(input)] }],
+        },
         canUseTool: async (toolName, input, { signal, suggestions }) => {
           // remaude has no interactive questionnaires (and the user hates them) — so we
           // force the model to ask again in plain text. This hook fires even in bypass mode.
@@ -291,6 +299,7 @@ export class Chat extends EventEmitter {
         )
           this.#setStatus('thinking');
         if (msg.type === 'result') this.#setStatus('idle');
+        this.#owedReply.observe(msg);
         this.emit('message', msg);
       }
     } catch (err) {
@@ -306,6 +315,18 @@ export class Chat extends EventEmitter {
         this.#setStatus('sleeping');
       }
     }
+  }
+
+  /** Refuse the model its tools while a message written mid-turn has no answer (see owed-reply.js). */
+  async #holdForReply(input) {
+    if (input.agent_id || !this.#owedReply.owed) return {}; // subagents answer to the model, not the user
+    // the text that would settle it may still be on its way through #pump
+    await new Promise((r) => setImmediate(r));
+    const reason = this.#owedReply.refusal();
+    if (!reason) return {};
+    return {
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason },
+    };
   }
 
   async *#input(session) {
@@ -339,6 +360,7 @@ export class Chat extends EventEmitter {
   async interrupt() {
     if (!this.#query) return; // asleep: there is nothing in flight to stop
     await this.#query.interrupt();
+    this.#owedReply.reset();
     // an aborted turn does not always send a result — without this the chat
     // (and its stop button) would stay "thinking" until something else moves
     this.#setStatus('idle');
