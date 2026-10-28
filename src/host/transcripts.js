@@ -6,6 +6,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync, cpSync, statSync, 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { takeSenderMark, stripSenderMark } from './sender-mark.js';
+import { isContinueNudge } from './owed-reply.js';
 
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 
@@ -94,6 +95,7 @@ export function searchSessionFile(file, needle) {
     if (!title && entry.type === 'ai-title' && typeof entry.title === 'string') title = entry.title;
     if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta || entry.isSidechain) continue;
     if (entry.type === 'user' && entry.origin?.kind) continue;
+    if (entry.type === 'user' && isContinueNudge(entry.message?.content)) continue;
     // a guest's line is machine talk: findable text, not text anyone looks for
     const body = stripSenderMark(plainText(entry.message?.content));
     if (!body) continue;
@@ -267,6 +269,8 @@ export function mapEntry(entry, { defaultAuthor = null, defaultAuthorId = '@owne
   // messages (<command-name>/model</command-name>, <local-command-stdout>…) —
   // that is the terminal talking to itself, not the conversation
   if (entry.type === 'user' && isCliCommandNoise(entry.message.content)) return null;
+  // the host telling a model to carry on after a forced reply (owed-reply.js)
+  if (entry.type === 'user' && isContinueNudge(entry.message.content)) return null;
   // ...and the assistant's replies to those injections are noise too: the harness
   // convention is the literal "No response requested." for turns with no answer
   if (entry.type === 'assistant' && Array.isArray(entry.message.content)) {

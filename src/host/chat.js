@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { OwedReply } from './owed-reply.js';
+import { OwedReply, CONTINUE_NUDGE } from './owed-reply.js';
 
 // The remaude level of the system prompt: what is true of every chat in every
 // project on every host, because it describes the product itself. It lives in
@@ -301,6 +301,9 @@ export class Chat extends EventEmitter {
         if (msg.type === 'result') this.#setStatus('idle');
         this.#owedReply.observe(msg);
         this.emit('message', msg);
+        // the turn ended on a reply the hook pulled out; unless the user has
+        // already written again, put the model back to work (see owed-reply.js)
+        if (msg.type === 'result' && this.#owedReply.takeStalled() && !this.#queue.length) this.send(CONTINUE_NUDGE);
       }
     } catch (err) {
       if (!this.#closed && this.#query === q) this.emit('error', err);

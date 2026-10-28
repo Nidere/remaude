@@ -1,6 +1,7 @@
 // A message folded into a running turn is owed a reply in words: tool calls are
 // refused until the model says something visible, and never for long.
-import { OwedReply, OWED_REPLY_REASON } from '../src/host/owed-reply.js';
+import { OwedReply, OWED_REPLY_REASON, CONTINUE_NUDGE, isContinueNudge } from '../src/host/owed-reply.js';
+import { mapEntry } from '../src/host/transcripts.js';
 
 let failed = 0;
 const eq = (got, want, name) => {
@@ -58,6 +59,47 @@ o.observe(started);
 o.observe(started);
 o.reset();
 eq(o.refusal(), null, 'an interrupt clears it');
+
+// a reply the refusals pulled out, and then the turn simply ends: the host nudges
+o = new OwedReply();
+o.observe(started);
+o.observe(toolUse);
+o.observe(started);
+o.refusal();
+o.observe(said('Answering: yes.'));
+o.observe(result);
+eq(o.takeStalled(), true, 'a turn ending on a forced reply wants a nudge');
+eq(o.takeStalled(), false, 'and only once');
+
+o = new OwedReply();
+o.observe(started);
+o.observe(started);
+o.refusal();
+o.observe(said('Answering: yes.'));
+o.observe(toolUse);
+o.observe(result);
+eq(o.takeStalled(), false, 'a model that went back to work on its own is left alone');
+
+o = new OwedReply();
+o.observe(started);
+o.observe(started);
+o.observe(said('Answering: yes.'));
+o.observe(result);
+eq(o.takeStalled(), false, 'nor is one that answered without being refused');
+
+o = new OwedReply();
+o.observe(started);
+o.observe(started);
+o.refusal();
+o.observe(said('Answering: yes.'));
+o.reset();
+o.observe({ type: 'result', subtype: 'error_during_execution' });
+eq(o.takeStalled(), false, 'nor an interrupted one');
+
+eq(isContinueNudge(CONTINUE_NUDGE), true, 'the nudge knows itself');
+eq(isContinueNudge([{ type: 'text', text: CONTINUE_NUDGE }]), true, 'in blocks too');
+eq(isContinueNudge('carry on'), false, 'and nothing else');
+eq(mapEntry({ type: 'user', message: { role: 'user', content: CONTINUE_NUDGE } }), null, 'the feed never shows it');
 
 if (failed) {
   console.error(`${failed} failed`);
