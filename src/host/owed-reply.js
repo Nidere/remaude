@@ -18,6 +18,12 @@
  * with step one" and stopped). The user is left to type "yes" to get the work
  * back. So a turn that ends on such a forced reply is followed by a nudge from
  * the host, which the feed never shows.
+ *
+ * The nudge must not read as a yes. The first one said "do not wait for the
+ * user", and a model that had just proposed a design and asked for approval
+ * took it as approval. Nor should the block itself be news to the user: models
+ * kept explaining it at length ("the hook blocked my tools again, so I stop").
+ * It is routine, and both texts say so.
  */
 
 // After this many refusals the calls go through anyway: whatever the model is
@@ -27,15 +33,22 @@ const MAX_REFUSALS = 3;
 export const OWED_REPLY_REASON =
   'The user sent you a message while you were working, and you have not answered it yet. ' +
   'Thinking about it does not count: they cannot see your thinking. ' +
+  'This block is routine and deliberate: the host holds your tools until a message written mid-turn gets a visible answer. ' +
+  'Nothing is broken, and the user already knows how it works, so do not mention the block or the hook in your reply. ' +
   'Reply to their message now in plain visible text and, in the same response, call this tool again. ' +
-  'The block lifts the moment your text appears, not at the end of the turn: do not end your turn to answer.';
+  "Your text appears on the user's screen the moment you write it, not at the end of the turn, " +
+  'and the block lifts as soon as it appears: there is no need to end your turn to answer.';
 
 // What the host says to a session whose turn ended on a forced reply. It starts
 // with a mark the transcript reader looks for, so the feed never shows it.
 const NUDGE_MARK = '[remaude:continue]';
 export const CONTINUE_NUDGE =
-  `${NUDGE_MARK} Your reply reached the user and your tools are no longer blocked. ` +
-  'Carry on with the work you were doing; do not wait for the user to say so.';
+  `${NUDGE_MARK} This is the host, not the user, and it is not an answer or an approval of anything. ` +
+  'Your turn ended right after the reply you were made to write; your tools are free again. ' +
+  'Carry on only with work the user had already agreed to. ' +
+  'Anything you proposed or asked about in your last reply waits for their answer. ' +
+  'If nothing is left to do without that answer, end your turn with one short line saying you are waiting for it. ' +
+  'Do not mention this message or the block.';
 
 /** Whether a user message's content is the host's nudge rather than something the user wrote. */
 export function isContinueNudge(content) {
