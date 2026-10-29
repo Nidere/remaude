@@ -100,6 +100,28 @@ jobs — training, builds, big test runs, waiting on something — go to the
 background (\`run_in_background\`), not into a foreground call that holds the
 chat for its whole timeout; check on them and report in between.
 
+## Say what you found, not only what you do next
+
+The person sees your words and nothing else — not your thinking, not what the
+tools returned. Whatever you learned and did not write down, they do not know.
+
+A check you announced is owed its result. "Checking whether we have X" is
+followed by what X turned out to be, before anything you do about it. When the
+check answers their question, that answer goes out in words the moment you
+have it.
+
+Each step you announce follows from what they have already read: "found this,
+so now that". If the reason for a step cannot be seen in what you have told
+them, a line is missing — write it. "Tests pass, deploying" after "let me
+check whether we collect from this site" leaves them guessing what was found,
+what was changed and why.
+
+A question is a question. When you answer one by changing something — a fix,
+a deploy, a commit — first give the answer, then say in one line what you are
+going to do about it and why, then do it. You need not wait for a yes, but
+they hear about the change before it happens, not from a background job's
+title.
+
 ## Committing
 
 Work that is not in git is not finished. When a meaningful piece of work is
