@@ -44,6 +44,7 @@ import { threadMark, threadIdInText } from './thread-mark.js';
 import { withSenderMark } from './sender-mark.js';
 import { AgentRows } from './agent-rows.js';
 import { agentNoticeText } from './agent-notice.js';
+import { judgePermission } from './perm-judge.js';
 import {
   sidecarPath,
   isSidecarPath,
@@ -183,34 +184,70 @@ const backgroundWork = new Map(); // chatId -> [{id, type, description}], live b
 const tails = new Map(); // chatId -> {file, offset, restBuf, seen, ownTexts, listener}
 const tailWaits = new Map(); // chatId -> timer, while the transcript is still to appear
 
+// A chat in bypass is only ever asked when Claude Code's own safety check fires;
+// a separate small session looks at those first (see perm-judge.js). permJudge in
+// host.json switches it off.
+const permJudgeOn = () => config.permJudge !== false;
+
+/** A line from the host itself in a chat's feed — not a message of the session. */
+function hostNotice(chatId, text) {
+  const msg = { type: 'remaude_notice', text, timestamp: new Date().toISOString() };
+  pushHistory(chatId, msg);
+  broadcast({ type: 'chat_message', chatId, msg });
+}
+
 const agent = new HostAgent({
   extraPrompt: systemPromptFor,
   sessionEnv: (projectPath) => profileEnv(profileOf(projectPath)),
-  onPermissionRequest: ({ chat, toolName, input, suggestions, signal }) =>
-    new Promise((resolvePerm) => {
-      const requestId = randomUUID();
-      pendingPermissions.set(requestId, {
-        chatId: chat.id,
+  onPermissionRequest: async ({ chat, toolName, input, suggestions, signal }) => {
+    let note = null;
+    if (chat.permissionMode === 'bypassPermissions' && permJudgeOn()) {
+      const verdict = await judgePermission({
         toolName,
         input,
-        suggestions,
-        resolve: (result) => {
-          pendingPermissions.delete(requestId);
-          broadcast({ type: 'permission_closed', requestId });
-          resolvePerm(result);
-        },
+        cwd: chat.cwd,
+        history: chatHistories.get(chat.id),
+        env: profileEnv(profileOf(chat.cwd)),
+        signal,
       });
-      signal.addEventListener('abort', () => {
-        pendingPermissions.get(requestId)?.resolve({ behavior: 'deny', message: 'aborted' });
-      });
-      broadcast({ type: 'permission_request', requestId, chatId: chat.id, toolName, input, suggestions });
-      relayLink?.push({
-        title: 'remaude: waiting for permission',
-        body: `${toolName} · ${chat.title ?? 'chat'}`,
-        tag: `perm-${chat.id}`,
-      });
-    }),
+      console.log(`perm judge: ${chat.id} ${toolName} -> ${verdict ? `${verdict.decision}: ${verdict.reason}` : 'no verdict'}`);
+      if (signal.aborted) return { behavior: 'deny', message: 'aborted' };
+      if (verdict?.decision === 'allow') {
+        hostNotice(chat.id, `🛡 ${toolName} approved automatically: ${verdict.reason}`);
+        return { behavior: 'allow', updatedInput: input };
+      }
+      note = verdict ? `🛡 ${verdict.reason}` : '🛡 the automatic check gave no answer';
+    }
+    return askPermission({ chat, toolName, input, suggestions, signal, note });
+  },
 });
+
+function askPermission({ chat, toolName, input, suggestions, signal, note }) {
+  return new Promise((resolvePerm) => {
+    const requestId = randomUUID();
+    pendingPermissions.set(requestId, {
+      chatId: chat.id,
+      toolName,
+      input,
+      suggestions,
+      note,
+      resolve: (result) => {
+        pendingPermissions.delete(requestId);
+        broadcast({ type: 'permission_closed', requestId });
+        resolvePerm(result);
+      },
+    });
+    signal.addEventListener('abort', () => {
+      pendingPermissions.get(requestId)?.resolve({ behavior: 'deny', message: 'aborted' });
+    });
+    broadcast({ type: 'permission_request', requestId, chatId: chat.id, toolName, input, suggestions, note });
+    relayLink?.push({
+      title: 'remaude: waiting for permission',
+      body: `${toolName} · ${chat.title ?? 'chat'}`,
+      tag: `perm-${chat.id}`,
+    });
+  });
+}
 
 for (const p of config.projects) {
   try {
@@ -3015,6 +3052,7 @@ const handlers = {
       type: 'settings',
       userName,
       projectsRoot,
+      permJudge: permJudgeOn(),
       relay: {
         paired: Boolean(config.relay?.token),
         connected: relayLink?.connected ?? false,
@@ -3107,7 +3145,10 @@ const handlers = {
     relayLink.approveDevice(code);
   },
 
-  set_settings(ws, { userName: newName, projectsRoot: newRoot }) {
+  set_settings(ws, { userName: newName, projectsRoot: newRoot, permJudge }) {
+    // on is the default, so only "off" is worth writing down
+    if (permJudge === true) delete config.permJudge;
+    if (permJudge === false) config.permJudge = false;
     if (newName) {
       userName = newName;
       config.userName = newName;
@@ -3409,6 +3450,7 @@ function initClient(ws) {
       toolName: p.toolName,
       input: p.input,
       suggestions: p.suggestions,
+      note: p.note,
     });
   }
   if (relayLink) send(ws, { type: 'relay_status', paired: true, connected: relayLink.connected });

@@ -366,13 +366,12 @@ const handlers = {
     appendTo(chatId, el('div', 'error-banner', `error: ${error}`));
   },
 
-  permission_request({ requestId, chatId, toolName, input }) {
+  permission_request({ requestId, chatId, toolName, input, note }) {
     const box = el('div', 'permission');
     box.dataset.requestId = requestId;
-    box.append(
-      el('div', 'perm-tool', `Allow ${toolName}?`),
-      el('pre', '', JSON.stringify(input, null, 2).slice(0, 2000))
-    );
+    box.append(el('div', 'perm-tool', `Allow ${toolName}?`));
+    if (note) box.append(el('div', 'perm-note', note));
+    box.append(el('pre', '', JSON.stringify(input, null, 2).slice(0, 2000)));
     const buttons = el('div', 'perm-buttons');
     const allow = el('button', 'perm-allow', 'Allow');
     const deny = el('button', 'perm-deny', 'Deny');
@@ -679,7 +678,7 @@ const handlers = {
     $('conn-dot').classList.remove('on');
   },
 
-  settings({ userName, projectsRoot, relay, claudeAuth, profiles, profile, serverMode, cli, _host }) {
+  settings({ userName, projectsRoot, permJudge, relay, claudeAuth, profiles, profile, serverMode, cli, _host }) {
     // these belong to the computer that answered, not to the app: with several
     // hosts connected, saving them anywhere else configures a stranger
     settingsHost = hostKey(_host);
@@ -687,6 +686,9 @@ const handlers = {
       knownHosts.find((h) => h.id === settingsHost)?.name ?? 'This computer';
     $('set-username').value = userName ?? '';
     $('set-root').value = projectsRoot ?? '';
+    // an older host does not know the setting: the row would be a switch wired to nothing
+    $('perm-judge-label').hidden = permJudge === undefined;
+    $('set-perm-judge').checked = permJudge !== false;
     // Switching accounts asks the host all over again, and the answer comes back
     // here — into a panel that is already open and may have half an instruction
     // typed into it. Only an opening refills the text.
@@ -984,6 +986,13 @@ function renderSdkMessage(chatId, msg, fromCache = false) {
     if (kind === 'think') chat.streamEl.textContent = chat.streamText;
     else paintStream(chat);
     followStream(chat);
+    return;
+  }
+
+  // the host speaking for itself — the automatic permission check, for one
+  if (msg.type === 'remaude_notice') {
+    chat.feedEl.append(el('div', 'host-notice', msg.text));
+    scrollToBottom();
     return;
   }
 
@@ -3325,6 +3334,7 @@ $('host-settings-save').onclick = () => {
     type: 'set_settings',
     userName: $('set-username').value.trim(),
     projectsRoot: $('set-root').value.trim(),
+    ...($('perm-judge-label').hidden ? {} : { permJudge: $('set-perm-judge').checked }),
   });
   // the instructions live on the same Save, and are only sent when they changed
   const text = $('set-prompt').value;

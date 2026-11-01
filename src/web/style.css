@@ -1176,6 +1176,8 @@ body.guest .project-actions.guest-ok { display: flex !important; }
   padding: 10px 14px;
 }
 .permission .perm-tool { font-weight: 600; color: var(--yellow); }
+/* what the automatic check thought, when it handed the request on */
+.permission .perm-note { margin-top: 6px; font-size: 13px; color: var(--dim); }
 .permission pre {
   margin: 8px 0;
   max-height: 200px;
@@ -1799,7 +1801,8 @@ mark.doc-hl.unseen { border-bottom: 2px solid var(--red); }
 .cmt-list-meta { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* a hidden thread turn leaves only this dim trace in the feed */
-.thread-note { color: var(--dim); font-size: 12px; padding: 2px 10px; align-self: flex-start; }
+.thread-note,
+.host-notice { color: var(--dim); font-size: 12px; padding: 2px 10px; align-self: flex-start; }
 
 /* phones: the popover becomes a bottom sheet, big enough for thumbs */
 @media (max-width: 768px) {
@@ -1856,8 +1859,9 @@ body > .cmt-error {
 /* the hidden attribute loses to any author display rule — restate it explicitly */
 #cmt-pop[hidden], #cmt-list[hidden], #cmt-add[hidden] { display: none; }
 
-/* "keep the screen awake": a checkbox row, not a full-width settings field */
-#wake-label {
+/* "keep the screen awake", "automatic check": checkbox rows, not full-width settings fields */
+#wake-label,
+#perm-judge-label {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1865,9 +1869,11 @@ body > .cmt-error {
   user-select: none;
   margin: 12px 0 10px;
 }
-#wake-label input { display: inline-block; width: auto; margin: 0; }
+#wake-label input,
+#perm-judge-label input { display: inline-block; width: auto; margin: 0; }
 /* the id beats the plain [hidden] rule — restate it, or hiding does nothing */
-#wake-label[hidden] { display: none; }
+#wake-label[hidden],
+#perm-judge-label[hidden] { display: none; }
 
 /* ---------- project file explorer ---------- */
 
