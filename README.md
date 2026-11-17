@@ -93,6 +93,7 @@ Everything below was checked with live probes kept in `experiments/` — executa
 |---|---|---|
 | Multi-turn conversation | `query({ prompt: AsyncIterable<SDKUserMessage> })`, plus `interrupt()` | ✅ |
 | Resuming sessions | `resume: <session-id>`; storage is shared with VS Code and the CLI (`~/.claude/projects/<slug>/<id>.jsonl`). Context is restored and the id is kept — but **past messages are never replayed into the stream**, so transcript history is read from the JSONL directly (`src/host/transcripts.js`, best effort) | ✅ |
+| System prompt across a resume | a resumed session keeps the system prompt it was **started** with: a changed `systemPrompt.append` reaches new chats only (checked 2026-11: started with one codeword, resumed with another, it named the first) | ⚠ |
 | Permission prompts in your own UI | the `canUseTool` callback; still invoked for dialog tools even in bypass mode | ✅ |
 | Permission modes | `permissionMode`: `default` / `acceptEdits` / `plan` / `bypassPermissions` / …; subagents inherit it | ✅ |
 | Streaming | `includePartialMessages: true` → `stream_event` messages, thinking deltas included | ✅ |
