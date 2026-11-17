@@ -2,12 +2,16 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { OwedReply, CONTINUE_NUDGE } from './owed-reply.js';
+import { fileURLToPath } from 'node:url';
 
 // The remaude level of the system prompt: what is true of every chat in every
 // project on every host, because it describes the product itself. It lives in
 // code and changes with the code — the host and project levels, which describe
 // one machine and one folder, are edited from the web UI and arrive as
 // `extraPrompt`.
+// Absolute, because the session reading it works in some other project's folder.
+const EXTENSIONS_SPEC = fileURLToPath(new URL('../../docs/extensions.md', import.meta.url));
+
 const REMAUDE_CONVENTION = `
 ## remaude inbox
 
@@ -67,6 +71,15 @@ those ends every other chat on this machine, and yours mid-sentence with them.
 If your work needs a server, give it a port of its own and stop that one, not
 everything that answers. When the host itself must restart, the owner presses
 ⚙ → Restart server — ask for it instead of doing it.
+
+## Project extensions
+
+A project can give remaude panels of its own: \`.remaude-ext/<id>/manifest.json\`
+in the repository, with an HTML page beside it. remaude shows the page in a
+sandboxed frame behind a 🧩 button in the chats of that project, and feeds it the
+output of a command the manifest names, run by the host in the project folder.
+When you are asked to build one, or find that folder in a project, read the
+format, the protocol and the limits in \`${EXTENSIONS_SPEC}\` first.
 
 ## Asking
 

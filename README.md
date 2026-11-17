@@ -73,7 +73,7 @@ remaude **replaces the VS Code chat UI** rather than mirroring it. VS Code stays
 - one-command macOS installer: the relay serves `install.sh` with its own address baked in.
 
 **Project extensions**
-- a project ships its own panels in `.remaude-ext/` — its HTML in a sandboxed frame, fed by a command the host runs in the project folder after the owner allows it; see [EXTENSIONS.md](EXTENSIONS.md).
+- a project ships its own panels in `.remaude-ext/` — its HTML in a sandboxed frame, fed by a command the host runs in the project folder after the owner allows it; see [docs/extensions.md](docs/extensions.md).
 
 ## Access model
 
