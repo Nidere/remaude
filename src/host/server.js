@@ -809,7 +809,7 @@ function docTitle(file) {
   return null;
 }
 
-function rememberArtifact(path, chatId) {
+function rememberArtifact(path, chatId, { uploaded = false } = {}) {
   const abs = resolve(path);
   ensureInboxIgnored(abs);
   const chat = findChatSafe(chatId);
@@ -819,9 +819,11 @@ function rememberArtifact(path, chatId) {
     chatId,
     sessionId: chat?.sessionId ?? chat?.resumeId ?? null,
     projectPath: chat?.cwd ?? null,
-    title: docTitle(abs),
+    // an upload may be a gigabyte of anything: only a document is opened for its heading
+    title: abs.toLowerCase().endsWith('.md') ? docTitle(abs) : null,
     addedAt: existing?.addedAt ?? Date.now(),
   };
+  if (uploaded || existing?.uploaded) entry.uploaded = true;
   if (existing) Object.assign(existing, entry);
   else artifacts.push(entry);
   saveArtifacts();
@@ -2497,21 +2499,47 @@ const handlers = {
       saveArtifacts();
       return true;
     };
-    // everything handed to this project from a browser, newest first
+    // Everything handed to this project from a browser. An upload is indexed
+    // with the chat it was given to; one from before that was recorded is
+    // matched through the file-chat log if it can be, and otherwise belongs to
+    // the project alone — shown under "project", never guessed into a chat.
     const uploads = [];
+    let adopted = false;
     try {
       const dir = join(project, '.remaude', 'uploads');
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (!entry.isFile() || entry.name === '.gitignore') continue;
         const full = join(dir, entry.name);
+        if (artifactByPath(full)) continue;
+        const known = fileChats[full.toLowerCase()];
         const st = statSync(full);
+        if (known?.chatId) {
+          artifacts.push({
+            path: full,
+            chatId: known.chatId,
+            sessionId: known.sessionId ?? null,
+            projectPath: known.projectPath ?? project,
+            title: entry.name.toLowerCase().endsWith('.md') ? docTitle(full) : null,
+            addedAt: known.at ?? st.mtimeMs,
+            uploaded: true,
+          });
+          adopted = true;
+          continue;
+        }
         uploads.push({ path: full, name: entry.name, size: st.size, addedAt: st.mtimeMs, uploaded: true });
       }
     } catch {
       /* nothing has been handed over here yet */
     }
+    if (adopted) saveArtifacts();
+    const looseUploads = scope === 'project' ? uploads : [];
+    const asUpload = (u) => ({ ...u, projectPath: project, title: u.name.toLowerCase().endsWith('.md') ? docTitle(u.path) : null });
 
-    const mine = artifacts.filter((a) => (scope === 'project' ? resolve(a.projectPath ?? '') === project : inThisChat(a)));
+    const mine = [
+      ...artifacts.filter((a) => (scope === 'project' ? resolve(a.projectPath ?? '') === project : inThisChat(a))),
+      ...looseUploads.map(asUpload),
+    ];
+    // a document is a document whether it was written here or attached: both open in the viewer
     const docs = mine
       .filter((a) => a.path.toLowerCase().endsWith('.md'))
       .map((a) => {
@@ -2530,13 +2558,9 @@ const handlers = {
 
     // anything that is not a document: what was attached here, and whatever
     // else was filed into the inbox
-    const files = [
-      ...uploads,
-      ...mine
-        .filter((a) => !a.path.toLowerCase().endsWith('.md'))
-        .map((a) => ({ ...a, name: a.path.split(/[\\/]/).pop(), size: sizeOf(a.path) })),
-    ]
-      .filter((f, i, all) => all.findIndex((x) => x.path.toLowerCase() === f.path.toLowerCase()) === i)
+    const files = mine
+      .filter((a) => !a.path.toLowerCase().endsWith('.md'))
+      .map((a) => ({ ...a, name: a.path.split(/[\\/]/).pop(), size: a.size ?? sizeOf(a.path) }))
       .sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
 
     send(ws, {
@@ -2710,6 +2734,7 @@ const handlers = {
       throw new Error('empty file');
     }
     rememberFileChat(done.path, chatId); // this chat is the one that was given it
+    rememberArtifact(done.path, chatId, { uploaded: true }); // and its attachments list says so
     send(ws, { type: 'file_uploaded', chatId, uploadId, name: basename(done.path), path: done.path, size: done.bytes });
   },
 

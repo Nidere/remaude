@@ -1999,6 +1999,7 @@ function renderAttachments2() {
     const meta = [
       doc.name,
       doc.missing ? 'missing on disk' : formatSize(doc.size),
+      doc.uploaded ? 'attached here' : null,
       new Date(doc.addedAt).toLocaleDateString(),
     ]
       .filter(Boolean)
@@ -2022,7 +2023,8 @@ function renderAttachments2() {
       attState.docs = attState.docs.filter((d) => d.path !== doc.path);
       renderAttachments2();
     };
-    row.append(drop);
+    // an attachment is not an inbox entry: taking it off the list would only bring it back
+    if (!doc.uploaded) row.append(drop);
 
     if (!doc.missing)
       row.onclick = () =>
