@@ -329,6 +329,10 @@ const handlers = {
       updateComposerButtons(active.status);
       renderActivity(active);
       syncHeaderSelects(active); // the snapshot knows the model and effort; a reload has nothing else
+      // A chat restored on load is never "selected", so it would never ask for
+      // its extensions; and a host that was down or too old said nothing. Ask
+      // until there is an answer — for a project without any it is one readdir.
+      if (extState.chatId !== activeChatId || !extState.exts.length) requestExtensions(activeChatId);
     }
     // the snapshot is also where a project's account comes from, and it can have
     // just changed — or have arrived after the limits it explains
@@ -3308,11 +3312,14 @@ $('pair-btn').onclick = () => {
 // can do is post 'run' — answered with its manifest's command output — and
 // 'open', which shows a file of the project in the viewer.
 
-let extState = { exts: [], current: null, frame: null };
+let extState = { chatId: null, exts: [], current: null, frame: null };
 
 function requestExtensions(chatId) {
-  extState.exts = [];
-  $('ext-btn').hidden = true;
+  if (chatId !== extState.chatId) {
+    extState.chatId = chatId;
+    extState.exts = []; // another project's buttons must not linger while this one answers
+    $('ext-btn').hidden = true;
+  }
   if (!chatId || activeIsGuest()) return; // someone else's machine runs nothing for a guest
   sendTo(chatHostId(chatId), { type: 'ext_list', chatId });
 }

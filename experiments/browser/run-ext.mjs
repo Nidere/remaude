@@ -135,6 +135,18 @@ await page.click('#ext-close');
 await until(() => page.evaluate(`!document.querySelector('#ext-body iframe')`), 'closing left the page running');
 ok('closing the panel drops the page');
 
+// the chat that was open comes back by itself on load, painted from the cached
+// transcript before the host says anything, and never clicked
+await page.evaluate(() => {
+  localStorage.setItem('lastChat', 'chat-1');
+  localStorage.setItem('lastSession', 's1');
+  const msg = { type: 'assistant', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } };
+  localStorage.setItem('transcript', JSON.stringify({ key: 's1', msgs: [msg] }));
+});
+await page.reload({ waitUntil: 'networkidle2' });
+await until(() => page.evaluate(`!document.getElementById('ext-btn').hidden`), 'after a reload the restored chat has no 🧩');
+ok('a chat restored on load shows the button too');
+
 if (problems.length) await fail('errors on the page');
 console.log('\nall ok');
 await done(0);
