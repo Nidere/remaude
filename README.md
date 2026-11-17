@@ -72,6 +72,9 @@ remaude **replaces the VS Code chat UI** rather than mirroring it. VS Code stays
 - server mode: one button moves the host out of the desktop session and signs the owner out, so the machine keeps answering with nobody logged into it, across reboots nobody is there for;
 - one-command macOS installer: the relay serves `install.sh` with its own address baked in.
 
+**Project extensions**
+- a project ships its own panels in `.remaude-ext/` — its HTML in a sandboxed frame, fed by a command the host runs in the project folder after the owner allows it; see [EXTENSIONS.md](EXTENSIONS.md).
+
 ## Access model
 
 Three independent locks:

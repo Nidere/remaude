@@ -38,6 +38,7 @@ import {
 } from './transcripts.js';
 import { DEFAULT_PROFILE, createProfile, profileDir, profileEnv } from './profiles.js';
 import { RelayLink } from './relay-link.js';
+import { listExtensions, manifestOf, buildPage, runCommand, projectFile } from './extensions.js';
 import { TurnTags } from './turn-tags.js';
 import { chatToMarkdown, exportFileName } from './export-md.js';
 import { threadMark, threadIdInText } from './thread-mark.js';
@@ -868,6 +869,27 @@ function rememberFileChat(path, chatId) {
     for (const k of oldest) delete fileChats[k];
   }
   saveFileChats();
+}
+
+// ---------- project extensions ----------
+// A project's extension runs a command from its repository on this machine, so
+// the owner says yes to it once, to the manifest as it is: a changed manifest is
+// a different thing to say yes to. Kept per project and extension id.
+
+const EXT_APPROVED_PATH = join(homedir(), '.remaude', 'ext-approved.json');
+let extApproved = (() => {
+  try {
+    return JSON.parse(readFileSync(EXT_APPROVED_PATH, 'utf-8')) ?? {};
+  } catch {
+    return {};
+  }
+})();
+const extKey = (project, id) => `${resolve(project).toLowerCase()}|${id}`;
+const extIsApproved = (project, m) => !m.command || extApproved[extKey(project, m.id)] === m.hash;
+
+/** The project of a chat the owner has open, for anything an extension asks. */
+function extProject(chatId) {
+  return resolve(findChat(chatId).cwd);
 }
 
 /** How big a file is, or null if it is gone. */
@@ -2600,6 +2622,61 @@ const handlers = {
       base64: text ? null : buf.toString('base64'),
       inInbox: Boolean(artifactByPath(abs)),
     });
+  },
+
+  // ---------- project extensions (see extensions.js) ----------
+
+  ext_list(ws, { chatId }) {
+    const project = extProject(chatId);
+    const exts = listExtensions(project).map((e) => ({ ...e, approved: !e.error && extIsApproved(project, e) }));
+    send(ws, { type: 'ext_list', chatId, project, exts });
+  },
+
+  /** The page, or what the owner is being asked to allow before there is one. */
+  ext_open(ws, { chatId, id }) {
+    const project = extProject(chatId);
+    try {
+      const m = manifestOf(project, String(id));
+      if (!extIsApproved(project, m))
+        return send(ws, { type: 'ext_page', chatId, id: m.id, name: m.name, icon: m.icon, ask: { command: m.command, hash: m.hash } });
+      const { page } = buildPage(project, m.id);
+      send(ws, { type: 'ext_page', chatId, id: m.id, name: m.name, icon: m.icon, page });
+    } catch (e) {
+      send(ws, { type: 'ext_page', chatId, id: String(id), error: String(e.message ?? e) });
+    }
+  },
+
+  ext_approve(ws, { chatId, id, hash }) {
+    const project = extProject(chatId);
+    const m = manifestOf(project, String(id));
+    // what was shown is what gets allowed: an edit in between asks again
+    if (m.hash === hash) {
+      extApproved[extKey(project, m.id)] = m.hash;
+      mkdirSync(dirname(EXT_APPROVED_PATH), { recursive: true });
+      writeFile(EXT_APPROVED_PATH, JSON.stringify(extApproved, null, 2)).catch(() => {});
+    }
+    handlers.ext_open(ws, { chatId, id: m.id });
+  },
+
+  async ext_run(ws, { chatId, id, reqId }) {
+    const project = extProject(chatId);
+    let result;
+    try {
+      const m = manifestOf(project, String(id));
+      result = extIsApproved(project, m)
+        ? await runCommand(project, m.id)
+        : { ok: false, error: 'the manifest changed since it was allowed: reopen the extension', at: Date.now() };
+    } catch (e) {
+      result = { ok: false, error: String(e.message ?? e), at: Date.now() };
+    }
+    send(ws, { type: 'ext_data', chatId, id: String(id), reqId, ...result });
+  },
+
+  /** A file of the project, shown in the viewer because an extension linked to it. */
+  ext_file(ws, { chatId, path }) {
+    const abs = projectFile(extProject(chatId), path);
+    if (!abs) throw new Error('an extension can only open files inside its project');
+    handlers.read_artifact(ws, { path: abs, asText: true });
   },
 
   /**

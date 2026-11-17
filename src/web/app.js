@@ -584,6 +584,24 @@ const handlers = {
       if (img.dataset.key === key) showDocImage(img);
   },
 
+  ext_list({ chatId, exts }) {
+    if (chatId !== activeChatId) return;
+    extState.exts = exts ?? [];
+    $('ext-btn').hidden = !extState.exts.length;
+    if (!$('ext-panel').hidden) renderExtTabs();
+  },
+
+  ext_page(msg) {
+    if (msg.chatId !== activeChatId || msg.id !== extState.current || $('ext-panel').hidden) return;
+    showExtPage(msg);
+  },
+
+  ext_data(msg) {
+    if (msg.chatId !== activeChatId || msg.id !== extState.current) return;
+    const { type, chatId, id, reqId, _host, ...result } = msg;
+    extState.frame?.contentWindow?.postMessage({ remaude: 'data', id: reqId, ...result }, '*');
+  },
+
   artifact_added({ artifact }) {
     if (!$('attachments-panel').hidden) requestAttachments(0);
   },
@@ -755,6 +773,8 @@ const handlers = {
   },
 
   error({ message, inResponseTo }) {
+    // an extension's trouble is shown in its own panel, or nowhere if that is closed
+    if (inResponseTo?.startsWith('ext_')) return extError(message);
     if (inResponseTo === 'upload_file') return failUploads(message); // the attachment reports it
     // an error for something done inside the document viewer must show up there,
     // not as a banner in a chat feed nobody is looking at — and never as a
@@ -852,6 +872,7 @@ function selectChat(chatId) {
   if (chat.mode) setModeSelect(chat.mode);
   renderMeta(chat);
   renderLimits(); // the account changes with the project, and with it the numbers
+  requestExtensions(chatId);
   // Nothing known about this account yet — ask, instead of showing an empty
   // widget. Never on someone else's machine: how much of the owner's allowance
   // is left is not a guest's business, the host says so, and the refusal landed
@@ -3281,6 +3302,107 @@ $('pair-btn').onclick = () => {
   $('set-pair-code').value = '';
 };
 
+// ---------- project extensions ----------
+// A project's own page (.remaude-ext/<id>/ in its repository), shown in a frame
+// with an opaque origin: no cookies, no access to this page, no network. All it
+// can do is post 'run' — answered with its manifest's command output — and
+// 'open', which shows a file of the project in the viewer.
+
+let extState = { exts: [], current: null, frame: null };
+
+function requestExtensions(chatId) {
+  extState.exts = [];
+  $('ext-btn').hidden = true;
+  if (!chatId || activeIsGuest()) return; // someone else's machine runs nothing for a guest
+  sendTo(chatHostId(chatId), { type: 'ext_list', chatId });
+}
+
+function renderExtTabs() {
+  const tabs = $('ext-tabs');
+  tabs.innerHTML = '';
+  for (const ext of extState.exts) {
+    const tab = el('button', `att-tab${ext.id === extState.current ? ' active' : ''}`, `${ext.icon} ${ext.name}`);
+    if (ext.error) tab.title = ext.error;
+    tab.onclick = () => openExtension(ext.id);
+    tabs.append(tab);
+  }
+}
+
+function closeExtFrame() {
+  extState.frame = null;
+  $('ext-body').innerHTML = ''; // the page goes with its timers
+}
+
+function openExtension(id) {
+  extState.current = id;
+  renderExtTabs();
+  closeExtFrame();
+  const ext = extState.exts.find((e) => e.id === id);
+  if (ext?.error) return extError(ext.error);
+  $('ext-body').append(el('div', 'att-empty', 'loading…'));
+  sendTo(chatHostId(activeChatId), { type: 'ext_open', chatId: activeChatId, id });
+}
+
+function extError(message) {
+  if ($('ext-panel').hidden) return;
+  closeExtFrame();
+  const box = el('div', 'ext-ask', '');
+  box.append(el('div', 'ext-error', message));
+  $('ext-body').append(box);
+}
+
+function showExtPage({ id, name, page, ask, error }) {
+  closeExtFrame();
+  if (error) return extError(error);
+  if (ask) {
+    const box = el('div', 'ext-ask', '');
+    box.append(el('div', '', `«${name}» runs this command in the project folder on this machine:`));
+    box.append(el('code', '', Array.isArray(ask.command) ? ask.command.join(' ') : ask.command));
+    box.append(el('div', 'att-empty', "It comes from the project's repository. Allow it once; a changed manifest will ask again."));
+    const yes = el('button', '', 'Allow and open');
+    yes.onclick = () => {
+      yes.disabled = true;
+      sendTo(chatHostId(activeChatId), { type: 'ext_approve', chatId: activeChatId, id, hash: ask.hash });
+    };
+    box.append(yes);
+    $('ext-body').append(box);
+    return;
+  }
+  const frame = document.createElement('iframe');
+  frame.setAttribute('sandbox', 'allow-scripts'); // no allow-same-origin: an opaque origin, nothing of ours
+  frame.srcdoc = page;
+  extState.frame = frame;
+  $('ext-body').append(frame);
+}
+
+window.addEventListener('message', (e) => {
+  const frame = extState.frame;
+  if (!frame || e.source !== frame.contentWindow) return; // only the page we put there
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
+  const hostId = chatHostId(activeChatId);
+  if (d.remaude === 'run')
+    sendTo(hostId, { type: 'ext_run', chatId: activeChatId, id: extState.current, reqId: d.id });
+  else if (d.remaude === 'open' && typeof d.path === 'string')
+    sendTo(hostId, { type: 'ext_file', chatId: activeChatId, path: d.path });
+});
+
+$('ext-btn').onclick = () => {
+  if (!activeChatId || !extState.exts.length) return;
+  $('ext-panel').hidden = false;
+  const id = extState.exts.some((e) => e.id === extState.current) ? extState.current : extState.exts[0].id;
+  openExtension(id);
+  requestExtensions(activeChatId); // the list may have changed on disk since
+};
+$('ext-close').onclick = () => ($('ext-panel').hidden = true);
+$('ext-panel').addEventListener('click', (e) => {
+  if (e.target.id === 'ext-panel') $('ext-panel').hidden = true;
+});
+// however it was closed (button, backdrop, back gesture), the page stops with it
+new MutationObserver(() => {
+  if ($('ext-panel').hidden) closeExtFrame();
+}).observe($('ext-panel'), { attributes: true, attributeFilter: ['hidden'] });
+
 $('att-btn').onclick = openAttachments;
 $('att-close').onclick = () => ($('attachments-panel').hidden = true);
 $('attachments-panel').addEventListener('click', (e) => {
@@ -3299,7 +3421,7 @@ $('doc-close').onclick = () => ($('doc-viewer').hidden = true);
 // On a phone the backdrop around a full-screen panel is a few pixels wide, and
 // the system back gesture would otherwise close the whole app. Every open panel
 // takes a history entry, so "back" closes it instead.
-const PANELS = ['attachments-panel', 'doc-viewer', 'share-panel', 'picker', 'settings', 'host-settings', 'lightbox', 'thread-panel'];
+const PANELS = ['ext-panel', 'attachments-panel', 'doc-viewer', 'share-panel', 'picker', 'settings', 'host-settings', 'lightbox', 'thread-panel'];
 for (const id of PANELS) {
   const node = $(id);
   if (!node) continue;

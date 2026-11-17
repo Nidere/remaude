@@ -60,6 +60,7 @@
           <option value="acceptEdits">auto-accept edits</option>
           <option value="plan">plan</option>
         </select>
+        <button id="ext-btn" title="This project's extensions" hidden>🧩</button>
         <button id="att-btn" title="Attachments: images and documents">📎</button>
         <div id="limits" title="Claude limits"></div>
         <span id="conn-dot" title="connection"></span>
@@ -108,6 +109,16 @@
         <span id="prompt-note">Reaches a chat the next time it starts: an open chat keeps the old text until it sleeps and wakes.</span>
         <button id="prompt-save">Save</button>
       </div>
+    </div>
+  </div>
+
+  <div id="ext-panel" hidden>
+    <div id="ext-box">
+      <div id="ext-head">
+        <div id="ext-tabs"></div>
+        <button id="ext-close">✕</button>
+      </div>
+      <div id="ext-body"></div>
     </div>
   </div>
 
